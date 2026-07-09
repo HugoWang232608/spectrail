@@ -35,9 +35,21 @@ def build_fixed_plan(task_id: str, input_document: str, model_mode: str) -> Plan
                 output="extracted/reqir.validated.json",
             ),
             PlanStep(
-                id="export",
-                tool="json_xlsx_exporter",
+                id="init_review",
+                tool="review_snapshot_builder",
                 depends_on=["validate_source_quote"],
+                output="review/review_log.json",
+            ),
+            PlanStep(
+                id="export_json",
+                tool="json_exporter",
+                depends_on=["init_review"],
+                output="exports/reqir.json",
+            ),
+            PlanStep(
+                id="export_xlsx",
+                tool="xlsx_exporter",
+                depends_on=["export_json"],
                 output="exports/requirements.xlsx",
             ),
         ],

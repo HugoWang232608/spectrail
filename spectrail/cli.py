@@ -94,91 +94,95 @@ def run_extract(args: argparse.Namespace) -> int:
     )
     write_json(output / "run_manifest.json", manifest)
 
-    copied_document = parsed_dir / "document.md"
-    shutil.copyfile(document_path, copied_document)
+    try:
+        copied_document = parsed_dir / "document.md"
+        shutil.copyfile(document_path, copied_document)
 
-    parser = MarkdownParser()
-    blocks = parser.parse_file(document_path)
-    write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
+        parser = MarkdownParser()
+        blocks = parser.parse_file(document_path)
+        write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
 
-    payload = MockModel().generate(document_path.read_text(encoding="utf-8"))
-    extractor = ReqIRExtractor()
-    requirements = extractor.extract(
-        payload=payload,
-        blocks=blocks,
-        document_name=document_path.name,
-        model_mode=args.model_mode,
-    )
-    requirements = normalize_requirements(requirements)
-    write_json(
-        extracted_dir / "reqir.raw.json",
-        {
-            "metadata": {"model_mode": args.model_mode, "document": document_path.name},
-            "items": model_list_dump(requirements),
-        },
-    )
+        payload = MockModel().generate(document_path.read_text(encoding="utf-8"))
+        extractor = ReqIRExtractor()
+        requirements = extractor.extract(
+            payload=payload,
+            blocks=blocks,
+            document_name=document_path.name,
+            model_mode=args.model_mode,
+        )
+        requirements = normalize_requirements(requirements)
+        write_json(
+            extracted_dir / "reqir.raw.json",
+            {
+                "metadata": {"model_mode": args.model_mode, "document": document_path.name},
+                "items": model_list_dump(requirements),
+            },
+        )
 
-    schema_report = SchemaValidator().validate(requirements)
-    if not schema_report.valid:
-        write_json(extracted_dir / "validation_report.json", schema_report.model_dump(mode="json"))
+        schema_report = SchemaValidator().validate(requirements)
+        if not schema_report.valid:
+            write_json(extracted_dir / "validation_report.json", schema_report.model_dump(mode="json"))
+            write_json(
+                output / "run_manifest.json",
+                fail_manifest(manifest, "schema validation failed"),
+            )
+            raise SystemExit("schema validation failed")
+
+        validated_requirements, source_report = SourceQuoteValidator().validate(requirements, blocks)
+        ears_report = BasicEARSValidator().validate(validated_requirements)
+        validation_report = merge_reports(schema_report, source_report, ears_report)
+        write_json(extracted_dir / "validation_report.json", validation_report.model_dump(mode="json"))
+        if not source_report.valid:
+            write_json(
+                output / "run_manifest.json",
+                fail_manifest(manifest, "source quote validation failed"),
+            )
+            raise SystemExit("source quote validation failed")
+
+        write_json(
+            extracted_dir / "reqir.validated.json",
+            {
+                "metadata": {"validation_state": "validated", "document": document_path.name},
+                "items": model_list_dump(validated_requirements),
+            },
+        )
+        write_json(extracted_dir / "source_map.json", build_source_map(validated_requirements))
+        write_json(review_dir / "review_log.json", collect_review_log(validated_requirements))
+        write_json(
+            exports_dir / "reqir.json",
+            {
+                "metadata": {"export_state": "unreviewed_snapshot", "document": document_path.name},
+                "items": model_list_dump(validated_requirements),
+            },
+        )
+        export_requirements_xlsx(validated_requirements, exports_dir / "requirements.xlsx")
         write_json(
             output / "run_manifest.json",
-            fail_manifest(manifest, "schema validation failed"),
+            complete_manifest(
+                manifest,
+                counts={
+                    "blocks": len(blocks),
+                    "raw_requirements": len(requirements),
+                    "validated_requirements": len(validated_requirements),
+                    "source_quote_passed": len(validated_requirements),
+                    "source_quote_failed": len(requirements) - len(validated_requirements),
+                },
+                outputs={
+                    "document": "parsed/document.md",
+                    "blocks": "parsed/blocks.json",
+                    "reqir_raw": "extracted/reqir.raw.json",
+                    "reqir_validated": "extracted/reqir.validated.json",
+                    "source_map": "extracted/source_map.json",
+                    "validation_report": "extracted/validation_report.json",
+                    "review_log": "review/review_log.json",
+                    "reqir_export": "exports/reqir.json",
+                    "xlsx": "exports/requirements.xlsx",
+                },
+            ),
         )
-        raise SystemExit("schema validation failed")
-
-    validated_requirements, source_report = SourceQuoteValidator().validate(requirements, blocks)
-    ears_report = BasicEARSValidator().validate(validated_requirements)
-    validation_report = merge_reports(schema_report, source_report, ears_report)
-    write_json(extracted_dir / "validation_report.json", validation_report.model_dump(mode="json"))
-    if not source_report.valid:
-        write_json(
-            output / "run_manifest.json",
-            fail_manifest(manifest, "source quote validation failed"),
-        )
-        raise SystemExit("source quote validation failed")
-
-    write_json(
-        extracted_dir / "reqir.validated.json",
-        {
-            "metadata": {"validation_state": "validated", "document": document_path.name},
-            "items": model_list_dump(validated_requirements),
-        },
-    )
-    write_json(extracted_dir / "source_map.json", build_source_map(validated_requirements))
-    write_json(review_dir / "review_log.json", collect_review_log(validated_requirements))
-    write_json(
-        exports_dir / "reqir.json",
-        {
-            "metadata": {"export_state": "unreviewed_snapshot", "document": document_path.name},
-            "items": model_list_dump(validated_requirements),
-        },
-    )
-    export_requirements_xlsx(validated_requirements, exports_dir / "requirements.xlsx")
-    write_json(
-        output / "run_manifest.json",
-        complete_manifest(
-            manifest,
-            counts={
-                "blocks": len(blocks),
-                "raw_requirements": len(requirements),
-                "validated_requirements": len(validated_requirements),
-                "source_quote_passed": len(validated_requirements),
-                "source_quote_failed": len(requirements) - len(validated_requirements),
-            },
-            outputs={
-                "document": "parsed/document.md",
-                "blocks": "parsed/blocks.json",
-                "reqir_raw": "extracted/reqir.raw.json",
-                "reqir_validated": "extracted/reqir.validated.json",
-                "source_map": "extracted/source_map.json",
-                "validation_report": "extracted/validation_report.json",
-                "review_log": "review/review_log.json",
-                "reqir_export": "exports/reqir.json",
-                "xlsx": "exports/requirements.xlsx",
-            },
-        ),
-    )
+    except Exception as exc:
+        write_json(output / "run_manifest.json", fail_manifest(manifest, str(exc)))
+        raise
 
     print(f"Generated {len(validated_requirements)} requirements in {output}")
     return 0

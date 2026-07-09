@@ -11,6 +11,8 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
     assert main(["extract", "docs/sample_srs.md", "--model-mode", "mock", "--output", str(output)]) == 0
 
     expected = [
+        output / "plan.json",
+        output / "run_manifest.json",
         output / "parsed" / "blocks.json",
         output / "extracted" / "reqir.raw.json",
         output / "extracted" / "reqir.validated.json",
@@ -25,7 +27,15 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
 
     package = read_json(output / "extracted" / "reqir.validated.json")
     requirements = package["items"]
-    assert len(requirements) >= 10
+    assert len(requirements) >= 14
+
+    plan = read_json(output / "plan.json")
+    assert plan["planner"] == "fixed_workflow_v1"
+
+    run_manifest = read_json(output / "run_manifest.json")
+    assert run_manifest["status"] == "completed"
+    assert run_manifest["counts"]["validated_requirements"] >= 14
+
     for requirement in requirements:
         assert requirement["id"]
         assert requirement["statement"]

@@ -1,3 +1,5 @@
+import pytest
+
 from spectrail.core.models import RequirementIR, SourceSpan
 from spectrail.review.review_state import apply_review_action
 
@@ -36,3 +38,25 @@ def test_non_structural_edit_keeps_status():
 def test_restore_rejected_to_pending():
     requirement = apply_review_action(req("rejected"), "restore")
     assert requirement.review_status == "pending"
+
+
+def test_rejected_cannot_be_approved_without_restore():
+    with pytest.raises(ValueError, match="cannot approve"):
+        apply_review_action(req("rejected"), "approve")
+
+
+def test_edit_rejects_sources_patch():
+    with pytest.raises(ValueError, match="unsupported edit field"):
+        apply_review_action(
+            req(),
+            "edit",
+            {
+                "sources": [
+                    {
+                        "document_id": "doc_001",
+                        "block_id": "blk_0002",
+                        "quote": "new quote",
+                    }
+                ]
+            },
+        )

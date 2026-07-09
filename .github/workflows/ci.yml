@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Run P0 mock pipeline
+        run: python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo
+      - name: Re-run validation
+        run: python -m spectrail validate outputs/demo/extracted/reqir.raw.json --blocks outputs/demo/parsed/blocks.json --output outputs/demo/extracted/validation_report.json
+      - name: Run tests
+        run: pytest

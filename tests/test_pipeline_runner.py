@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from spectrail.core.io import read_json
+from spectrail.llm.errors import ModelConfigurationError
 from spectrail.pipeline import PipelineResult, PipelineRunner, UnsupportedModelModeError
 
 
@@ -37,4 +38,12 @@ def test_pipeline_runner_failure_marks_manifest_failed(tmp_path: Path):
 
 def test_pipeline_runner_rejects_unsupported_model_mode(tmp_path: Path):
     with pytest.raises(UnsupportedModelModeError):
-        PipelineRunner().extract("docs/sample_srs.md", tmp_path / "demo", model_mode="recorded")
+        PipelineRunner().extract("docs/sample_srs.md", tmp_path / "demo", model_mode="unknown")
+
+
+def test_pipeline_runner_live_requires_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("SPECTRAIL_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("SPECTRAIL_LLM_MODEL", "test-model")
+
+    with pytest.raises(ModelConfigurationError):
+        PipelineRunner().extract("docs/sample_srs.md", tmp_path / "demo", model_mode="live")

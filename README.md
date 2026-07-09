@@ -196,3 +196,26 @@ PDF page numbers are best-effort source context; bbox highlighting is not implem
 ```
 
 See [docs/p2_docx_pdf_best_effort.md](docs/p2_docx_pdf_best_effort.md) for details.
+
+## P3 LLM Adapter Demo
+
+SpecTrail P3 adds a model-client layer with deterministic `mock`, replayable `recorded`, and locally configured `live` modes. All modes still pass through ReqIR extraction and source quote validation before export.
+
+Run the sample-aligned recorded mode:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode recorded \
+  --recorded-fixture fixtures/recorded/sample_srs_reqir_response.json \
+  --output outputs/demo_recorded
+```
+
+Run live mode with an OpenAI-compatible provider:
+
+```bash
+export SPECTRAIL_LLM_API_KEY=...
+export SPECTRAIL_LLM_MODEL=...
+python -m spectrail extract docs/sample_srs.md --model-mode live --output outputs/demo_live
+```
+
+Recorded fixtures are tied to their source document blocks; the default recorded fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads. See [docs/p3_llm_extraction_adapter.md](docs/p3_llm_extraction_adapter.md) for details.

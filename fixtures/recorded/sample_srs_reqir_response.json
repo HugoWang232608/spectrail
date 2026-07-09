@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "source_document": "docs/sample_srs.md",
+    "source_format": "markdown",
+    "model_name": "recorded-sample-fixture",
+    "prompt_version": "reqir_extraction_v1",
+    "recorded_at": "2026-07-10T00:00:00Z"
+  },
+  "raw_text": "```json\n{\"items\":[{\"title\":\"用户账号管理\",\"type\":\"functional\",\"ears_pattern\":\"ubiquitous\",\"statement\":\"系统应允许管理员创建、停用和恢复普通用户账号。\",\"subject\":\"系统\",\"response\":\"允许管理员创建、停用和恢复普通用户账号\",\"source_block_id\":\"blk_0006\",\"source_quote\":\"管理员应能够创建、停用和恢复普通用户账号。\",\"confidence\":0.92,\"tags\":[\"user-management\"]},{\"title\":\"用户登录认证\",\"type\":\"functional\",\"ears_pattern\":\"event_driven\",\"statement\":\"当用户输入正确账号密码时，系统应完成身份验证并建立会话。\",\"subject\":\"系统\",\"condition\":\"用户输入正确账号密码\",\"response\":\"完成身份验证并建立会话\",\"source_block_id\":\"blk_0008\",\"source_quote\":\"用户输入正确账号密码后，系统应完成身份验证并建立会话。\",\"confidence\":0.94,\"tags\":[\"authentication\"]}]}\n```",
+  "payload": null
+}

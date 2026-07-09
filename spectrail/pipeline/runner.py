@@ -11,7 +11,9 @@ from spectrail.exporters.source_map_exporter import build_source_map
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.extractors.ears_normalizer import normalize_requirements
 from spectrail.extractors.reqir_extractor import ReqIRExtractor
-from spectrail.llm.mock_model import MockModel
+from spectrail.llm.base import ModelRequest
+from spectrail.llm.factory import create_model_client
+from spectrail.llm.prompt_builder import PROMPT_VERSION, build_reqir_prompt
 from spectrail.parsers.registry import parse_document
 from spectrail.review.review_log import collect_review_log
 from spectrail.validators.ears_validator import BasicEARSValidator
@@ -50,13 +52,13 @@ class PipelineRunner:
         output_dir: str | Path,
         model_mode: str = "mock",
         model_name: str | None = None,
+        recorded_fixture: str | Path | None = None,
+        dump_prompt: bool = False,
     ) -> PipelineResult:
-        if model_mode != "mock":
+        if model_mode not in {"mock", "recorded", "live"}:
             raise UnsupportedModelModeError(
-                "P0 currently supports --model-mode mock for deterministic local runs"
+                "P3 currently supports --model-mode mock, recorded, or live for local runs"
             )
-
-        del model_name
 
         document = Path(document_path)
         output = Path(output_dir)
@@ -92,7 +94,28 @@ class PipelineRunner:
             blocks = parsed_document.blocks
             write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
 
-            payload = MockModel().generate(parsed_document.text)
+            model_request = ModelRequest(
+                document_text=parsed_document.text,
+                blocks=blocks,
+                document_name=document.name,
+                source_format=parsed_document.source_format,
+                parser_name=parsed_document.parser_name,
+                model_mode=model_mode,
+                model_name=model_name,
+                metadata={"prompt_version": PROMPT_VERSION},
+            )
+            prompt = build_reqir_prompt(model_request)
+            if dump_prompt:
+                (extracted_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
+            model_client = create_model_client(
+                model_mode=model_mode,
+                model_name=model_name,
+                recorded_fixture=recorded_fixture,
+            )
+            model_response = model_client.generate(model_request)
+            payload = model_response.payload
+            if model_response.raw_text:
+                (extracted_dir / "model_response.raw.txt").write_text(model_response.raw_text, encoding="utf-8")
             extractor = ReqIRExtractor()
             requirements = extractor.extract(
                 payload=payload,
@@ -106,10 +129,13 @@ class PipelineRunner:
                 {
                     "metadata": {
                         "model_mode": model_mode,
+                        "model_name": model_response.model_name,
+                        "prompt_version": model_response.metadata.get("prompt_version", PROMPT_VERSION),
                         "document": document.name,
                         "source_format": parsed_document.source_format,
                         "parser": parsed_document.parser_name,
                         "parser_warnings": parsed_document.warnings,
+                        "llm": model_response.metadata,
                     },
                     "items": model_list_dump(requirements),
                 },

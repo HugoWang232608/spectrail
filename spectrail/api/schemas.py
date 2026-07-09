@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class TaskCreateRequest(BaseModel):
     goal: str = "extract_requirements"
-    model_mode: Literal["mock"] = "mock"
+    model_mode: Literal["mock", "recorded"] = "mock"
 
 
 class TaskResponse(BaseModel):

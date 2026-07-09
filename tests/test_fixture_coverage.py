@@ -1,5 +1,6 @@
 from spectrail.core.io import read_json
 from spectrail.extractors.reqir_extractor import ReqIRExtractor
+from spectrail.llm.base import ModelRequest
 from spectrail.llm.mock_model import MockModel
 from spectrail.parsers.markdown_parser import MarkdownParser
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
@@ -7,7 +8,17 @@ from spectrail.validators.source_quote_validator import SourceQuoteValidator
 
 def test_mock_fixture_covers_markdown_block_types():
     blocks = MarkdownParser().parse_file("docs/sample_srs.md")
-    payload = MockModel().generate("")
+    response = MockModel().generate(
+        ModelRequest(
+            document_text="",
+            blocks=blocks,
+            document_name="sample_srs.md",
+            source_format="markdown",
+            parser_name="markdown_parser_v1",
+            model_mode="mock",
+        )
+    )
+    payload = response.payload
     requirements = ReqIRExtractor().extract(
         payload=payload,
         blocks=blocks,

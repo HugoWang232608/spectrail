@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from spectrail.core.io import model_list_dump, read_json, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
+from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
@@ -27,6 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("document", help="input document path (.md, .markdown, .docx, or text-based .pdf)")
     extract_parser.add_argument("--model-mode", choices=["mock", "recorded", "live"], default="mock")
     extract_parser.add_argument("--model-name", default=None)
+    extract_parser.add_argument("--recorded-fixture", default=None)
+    extract_parser.add_argument("--dump-prompt", action="store_true")
     extract_parser.add_argument("--output", default="outputs/demo")
     extract_parser.set_defaults(func=run_extract)
 
@@ -67,8 +70,10 @@ def run_extract(args: argparse.Namespace) -> int:
             output_dir=args.output,
             model_mode=args.model_mode,
             model_name=args.model_name,
+            recorded_fixture=args.recorded_fixture,
+            dump_prompt=args.dump_prompt,
         )
-    except (PipelineError, DocumentParseError) as exc:
+    except (PipelineError, DocumentParseError, ModelError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"Generated {result.validated_count} requirements in {result.output_dir}")
     return 0

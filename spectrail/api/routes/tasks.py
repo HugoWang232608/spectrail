@@ -10,6 +10,12 @@ from spectrail.api.schemas import (
     TaskRunResponse,
     TaskStatusResponse,
 )
+from spectrail.llm.errors import (
+    ModelConfigurationError,
+    ModelError,
+    ModelProviderError,
+    ModelResponseParseError,
+)
 from spectrail.parsers import DocumentParseError, UnsupportedDocumentTypeError
 from spectrail.pipeline import PipelineValidationError, PipelineRunner, UnsupportedModelModeError
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
@@ -76,6 +82,18 @@ def run_task(
     except UnsupportedModelModeError as exc:
         _mark_task_failed(store, task_id)
         raise _error(400, "INVALID_MODEL_MODE", str(exc)) from exc
+    except ModelConfigurationError as exc:
+        _mark_task_failed(store, task_id)
+        raise _error(400, "INVALID_MODEL_CONFIGURATION", str(exc)) from exc
+    except ModelResponseParseError as exc:
+        _mark_task_failed(store, task_id)
+        raise _error(422, "MODEL_RESPONSE_PARSE_FAILED", str(exc)) from exc
+    except ModelProviderError as exc:
+        _mark_task_failed(store, task_id)
+        raise _error(502, "MODEL_PROVIDER_FAILED", str(exc)) from exc
+    except ModelError as exc:
+        _mark_task_failed(store, task_id)
+        raise _error(500, "MODEL_FAILED", str(exc)) from exc
     except UnsupportedDocumentTypeError as exc:
         _mark_task_failed(store, task_id)
         raise _error(400, "INVALID_DOCUMENT", str(exc)) from exc

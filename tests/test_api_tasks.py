@@ -146,7 +146,7 @@ def test_api_run_marks_task_failed_when_model_mode_is_rejected(api_client: TestC
     )
     assert uploaded.status_code == 200
 
-    api_client.app.state.task_store.update_task(task_id, model_mode="recorded")
+    api_client.app.state.task_store.update_task(task_id, model_mode="unknown")
 
     run = api_client.post(f"/api/tasks/{task_id}/run")
     assert run.status_code == 400

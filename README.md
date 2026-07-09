@@ -171,6 +171,22 @@ python -m spectrail extract docs/sample_srs.docx --model-mode mock --output outp
 python -m spectrail extract docs/sample_srs_text.pdf --model-mode mock --output outputs/demo_pdf
 ```
 
+Sample files:
+
+```text
+docs/sample_srs.md        Project-authored Markdown sample
+docs/sample_srs.docx      DOCX demo generated from docs/sample_srs.md blocks
+docs/sample_srs_text.pdf  Text PDF demo generated from docs/sample_srs.md blocks
+```
+
+The external PDF fixture `tests/fixtures/ieee29148_srs_example.pdf` is downloaded from:
+
+```text
+https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf
+```
+
+It is used only for parser smoke testing with a real text-based SRS PDF; the mock end-to-end pipeline demos use the project-authored `docs/sample_srs.*` files so source block IDs stay aligned with `fixtures/mock_reqir_response.json`.
+
 P2 boundaries:
 
 ```text

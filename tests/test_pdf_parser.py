@@ -33,6 +33,21 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
 
 
+def test_text_pdf_parser_extracts_included_ieee29148_fixture():
+    path = Path("tests/fixtures/ieee29148_srs_example.pdf")
+
+    parsed = TextPdfParser().parse(path)
+
+    assert parsed.document_name == "ieee29148_srs_example.pdf"
+    assert parsed.source_format == "pdf"
+    assert parsed.metadata["page_count"] == 11
+    assert len(parsed.blocks) >= 30
+    assert parsed.warnings == []
+    assert {block.page for block in parsed.blocks}
+    assert all(block.metadata["page"] == block.page for block in parsed.blocks)
+    assert len(parsed.text) > 1000
+
+
 def test_text_pdf_parser_records_warning_for_empty_page_and_continues(tmp_path: Path):
     path = tmp_path / "partly-empty.pdf"
     document = fitz.open()

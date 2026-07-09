@@ -51,6 +51,26 @@ def test_pipeline_extract_text_pdf_mock_with_page_sources(tmp_path: Path):
         assert source["page"] == blocks_by_id[source["block_id"]]["page"]
 
 
+def test_pipeline_extract_included_sample_docx(tmp_path: Path):
+    result = PipelineRunner().extract("docs/sample_srs.docx", tmp_path / "demo_docx")
+
+    manifest = read_json(result.manifest_path)
+    assert manifest["status"] == "completed"
+    assert result.validated_count >= 14
+    assert result.xlsx_path.exists()
+
+
+def test_pipeline_extract_included_sample_text_pdf(tmp_path: Path):
+    result = PipelineRunner().extract("docs/sample_srs_text.pdf", tmp_path / "demo_pdf")
+
+    manifest = read_json(result.manifest_path)
+    reqir = read_json(result.exported_reqir_path)
+    assert manifest["status"] == "completed"
+    assert result.validated_count >= 14
+    assert result.xlsx_path.exists()
+    assert any(item["sources"][0]["page"] is not None for item in reqir["items"])
+
+
 def _write_docx_from_blocks(path: Path, blocks: list) -> None:
     document = Document()
     for block in blocks:

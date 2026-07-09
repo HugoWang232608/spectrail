@@ -72,12 +72,17 @@ def test_extractor_normalizes_live_enum_drift():
     assert requirement.sources[0].quote == "The system shall reject unsafe access."
     assert requirement.metadata["extractor_version"] == "reqir_extractor_v1"
     assert requirement.tags == ["security"]
-    assert requirement.metadata["enum_normalizations"] == [
+    assert requirement.metadata["field_normalizations"] == [
         {"field": "confidence", "input": "high", "normalized": "0.9"},
         {"field": "type", "input": "data", "normalized": "unknown"},
         {"field": "ears_pattern", "input": "unwanted", "normalized": "unwanted_behavior"},
         {"field": "priority", "input": "urgent", "normalized": "unknown"},
         {"field": "verification_method", "input": "review", "normalized": "unknown"},
+        {
+            "field": "source_quote",
+            "input": "- The system shall reject unsafe access.",
+            "normalized": "The system shall reject unsafe access.",
+        },
     ]
 
 
@@ -107,3 +112,8 @@ def test_extractor_marks_unknown_confidence_for_recheck():
     assert requirement.confidence == 0.0
     assert requirement.review_status == "needs_recheck"
     assert requirement.sources[0].quote == "The system shall show source quotes."
+    assert {
+        "field": "source_quote",
+        "input": "| Label | The system shall show source quotes. |",
+        "normalized": "The system shall show source quotes.",
+    } in requirement.metadata["field_normalizations"]

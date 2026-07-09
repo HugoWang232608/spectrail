@@ -99,32 +99,33 @@ class ReqIRExtractor:
         for field in ("statement", "source_block_id", "source_quote"):
             if not item.get(field):
                 raise ValueError(f"item {index} missing required field: {field}")
-        enum_normalizations: list[dict[str, str]] = []
-        confidence = _normalize_confidence(item.get("confidence", 0.0), enum_normalizations)
+        field_normalizations: list[dict[str, str]] = []
+        confidence = _normalize_confidence(item.get("confidence", 0.0), field_normalizations)
         requirement_type = _normalize_enum(
             item.get("type", "unknown"),
             TYPE_ALIASES,
             "type",
-            enum_normalizations,
+            field_normalizations,
         )
         ears_pattern = _normalize_enum(
             item.get("ears_pattern", "unknown"),
             EARS_PATTERN_ALIASES,
             "ears_pattern",
-            enum_normalizations,
+            field_normalizations,
         )
         priority = _normalize_enum(
             item.get("priority", "unknown"),
             PRIORITY_ALIASES,
             "priority",
-            enum_normalizations,
+            field_normalizations,
         )
         verification_method = _normalize_enum(
             item.get("verification_method", "unknown"),
             VERIFICATION_METHOD_ALIASES,
             "verification_method",
-            enum_normalizations,
+            field_normalizations,
         )
+        source_quote = _normalize_source_quote(str(item["source_quote"]), field_normalizations)
 
         source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
@@ -137,7 +138,7 @@ class ReqIRExtractor:
             section=section,
             section_path=section_path,
             block_id=source_block_id,
-            quote=_normalize_source_quote(str(item["source_quote"])),
+            quote=source_quote,
         )
         metadata = {
             "source_block_id": source_block_id,
@@ -145,9 +146,9 @@ class ReqIRExtractor:
             "extractor_version": self.extractor_version,
             "raw_item_index": index - 1,
         }
-        if enum_normalizations:
-            metadata["enum_normalizations"] = enum_normalizations
-        review_status = "needs_recheck" if _has_unknown_normalization(enum_normalizations) else "pending"
+        if field_normalizations:
+            metadata["field_normalizations"] = field_normalizations
+        review_status = "needs_recheck" if _has_unknown_normalization(field_normalizations) else "pending"
 
         try:
             return RequirementIR(
@@ -175,13 +176,13 @@ def _normalize_enum(
     value: Any,
     aliases: dict[str, str],
     field: str,
-    enum_normalizations: list[dict[str, str]],
+    field_normalizations: list[dict[str, str]],
 ) -> str:
     raw = str(value or "unknown")
     normalized_key = raw.strip().lower().replace(" ", "_")
     normalized = aliases.get(normalized_key, "unknown")
     if normalized != raw:
-        enum_normalizations.append({"field": field, "input": raw, "normalized": normalized})
+        field_normalizations.append({"field": field, "input": raw, "normalized": normalized})
     return normalized
 
 
@@ -193,11 +194,11 @@ def _normalize_tags(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _has_unknown_normalization(enum_normalizations: list[dict[str, str]]) -> bool:
-    return any(normalization["normalized"] == "unknown" for normalization in enum_normalizations)
+def _has_unknown_normalization(field_normalizations: list[dict[str, str]]) -> bool:
+    return any(normalization["normalized"] == "unknown" for normalization in field_normalizations)
 
 
-def _normalize_confidence(value: Any, enum_normalizations: list[dict[str, str]]) -> float:
+def _normalize_confidence(value: Any, field_normalizations: list[dict[str, str]]) -> float:
     if isinstance(value, (int, float)):
         return float(value)
 
@@ -205,22 +206,25 @@ def _normalize_confidence(value: Any, enum_normalizations: list[dict[str, str]])
     normalized_key = raw.strip().lower().replace(" ", "_")
     if normalized_key in CONFIDENCE_ALIASES:
         normalized = CONFIDENCE_ALIASES[normalized_key]
-        enum_normalizations.append({"field": "confidence", "input": raw, "normalized": str(normalized)})
+        field_normalizations.append({"field": "confidence", "input": raw, "normalized": str(normalized)})
         return normalized
 
     try:
         return float(raw)
     except ValueError:
-        enum_normalizations.append({"field": "confidence", "input": raw, "normalized": "unknown"})
+        field_normalizations.append({"field": "confidence", "input": raw, "normalized": "unknown"})
         return 0.0
 
 
-def _normalize_source_quote(value: str) -> str:
-    quote = value.strip()
+def _normalize_source_quote(value: str, field_normalizations: list[dict[str, str]]) -> str:
+    raw = value
+    quote = raw.strip()
     if quote.startswith("- "):
         quote = quote[2:].strip()
     if quote.startswith("|") and quote.endswith("|"):
         cells = [cell.strip() for cell in quote.strip("|").split("|")]
         if cells:
             quote = cells[-1]
+    if quote != raw:
+        field_normalizations.append({"field": "source_quote", "input": raw, "normalized": quote})
     return quote

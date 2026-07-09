@@ -7,11 +7,14 @@ class SchemaValidator:
     def validate(self, requirements: list[RequirementIR]) -> ValidationReport:
         report = ValidationReport(valid=True)
         for requirement in requirements:
-            for normalization in requirement.metadata.get("enum_normalizations", []):
+            normalizations = requirement.metadata.get("field_normalizations")
+            if normalizations is None:
+                normalizations = requirement.metadata.get("enum_normalizations", [])
+            for normalization in normalizations:
                 report.add_issue(
                     ValidationIssue(
                         level="warning",
-                        code="MODEL_ENUM_NORMALIZED",
+                        code="MODEL_FIELD_NORMALIZED",
                         message=(
                             f"normalized {normalization.get('field')} from "
                             f"{normalization.get('input')} to {normalization.get('normalized')}"

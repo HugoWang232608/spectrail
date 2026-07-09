@@ -43,7 +43,7 @@ def test_pipeline_runner_extract_recorded_full_fixture_covers_enum_drift(tmp_pat
     assert any(item["ears_pattern"] == "unwanted_behavior" and item["review_status"] == "pending" for item in reqir["items"])
 
     report = read_json(result.output_dir / "extracted" / "validation_report.json")
-    assert any(issue["code"] == "MODEL_ENUM_NORMALIZED" for issue in report["issues"])
+    assert any(issue["code"] == "MODEL_FIELD_NORMALIZED" for issue in report["issues"])
 
 
 def test_pipeline_runner_writes_model_parser_metadata_to_manifest_and_plan(tmp_path: Path):
@@ -97,3 +97,34 @@ def test_pipeline_runner_writes_model_response_json_before_extractor_failure(tmp
     }
     report = read_json(tmp_path / "bad_output" / "extracted" / "validation_report.json")
     assert report["issues"][0]["code"] == "MODEL_OUTPUT_VALIDATION_FAILED"
+
+
+def test_pipeline_runner_reports_source_quote_normalization(tmp_path: Path):
+    fixture = tmp_path / "quote_recorded.json"
+    fixture.write_text(
+        (
+            '{"metadata":{"model_name":"quote-fixture"},"raw_text":"```json\\n'
+            '{\\"items\\":[{'
+            '\\"statement\\":\\"管理员应能够创建、停用和恢复普通用户账号。\\",'
+            '\\"source_block_id\\":\\"blk_0006\\",'
+            '\\"source_quote\\":\\"- 管理员应能够创建、停用和恢复普通用户账号。\\",'
+            '\\"confidence\\":0.9'
+            '}]}\\n```"}'
+        ),
+        encoding="utf-8",
+    )
+
+    result = PipelineRunner().extract(
+        "docs/sample_srs.md",
+        tmp_path / "quote_output",
+        model_mode="recorded",
+        recorded_fixture=fixture,
+    )
+
+    report = read_json(result.output_dir / "extracted" / "validation_report.json")
+    assert any(
+        issue["code"] == "MODEL_FIELD_NORMALIZED"
+        and issue["metadata"]["field"] == "source_quote"
+        and issue["metadata"]["input"].startswith("- ")
+        for issue in report["issues"]
+    )

@@ -190,7 +190,7 @@ function App() {
           <UploadPanel
             disabled={!task}
             filename={task?.task.original_filename ?? null}
-            busy={busyAction === 'upload'}
+            busy={busy}
             onUpload={handleUpload}
           />
           <RunPanel

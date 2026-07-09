@@ -98,6 +98,8 @@ curl -L http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx \
 
 ## P1b Review UI Demo
 
+See the full walkthrough in [docs/p1b_review_ui.md](docs/p1b_review_ui.md).
+
 Install Python and frontend dependencies:
 
 ```bash

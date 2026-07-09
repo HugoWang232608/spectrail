@@ -3,19 +3,22 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   API_BASE_URL,
   createTask,
+  getBlocks,
   getReqIR,
   getTask,
   runTask,
   uploadDocument,
   reviewRequirement
 } from './api/client'
-import type { ApiError, ReqIRPackage, ReviewRequest, TaskStatusResponse } from './api/types'
+import type { ApiError, DocumentBlock, ReqIRPackage, ReviewRequest, TaskStatusResponse } from './api/types'
 import ErrorBanner from './components/ErrorBanner'
+import ExportPanel from './components/ExportPanel'
 import ReqIRDetail from './components/ReqIRDetail'
 import ReqIRTable, { type ReviewStatusFilter } from './components/ReqIRTable'
 import ReviewActions from './components/ReviewActions'
 import ReviewSummary from './components/ReviewSummary'
 import RunPanel from './components/RunPanel'
+import SourceViewer from './components/SourceViewer'
 import StatusPanel from './components/StatusPanel'
 import TaskPanel from './components/TaskPanel'
 import UploadPanel from './components/UploadPanel'
@@ -26,6 +29,7 @@ function App() {
   const [taskIdInput, setTaskIdInput] = useState('')
   const [task, setTask] = useState<TaskStatusResponse | null>(null)
   const [reqir, setReqir] = useState<ReqIRPackage | null>(null)
+  const [blocks, setBlocks] = useState<DocumentBlock[]>([])
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null)
   const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatusFilter>('all')
   const [requirementSearch, setRequirementSearch] = useState('')
@@ -59,6 +63,7 @@ function App() {
       setTask(loaded)
       setTaskIdInput(created.task_id)
       setReqir(null)
+      setBlocks([])
       setSelectedRequirementId(null)
     })
   }
@@ -91,6 +96,7 @@ function App() {
       await uploadDocument(task.task_id, file)
       setTask(await getTask(task.task_id))
       setReqir(null)
+      setBlocks([])
       setSelectedRequirementId(null)
     })
   }
@@ -124,12 +130,17 @@ function App() {
   async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
     if (loaded.status !== 'completed') {
       setReqir(null)
+      setBlocks([])
       setSelectedRequirementId(null)
       return
     }
 
-    const packagePayload = await getReqIR(loaded.task_id)
+    const [packagePayload, blocksPayload] = await Promise.all([
+      getReqIR(loaded.task_id),
+      getBlocks(loaded.task_id)
+    ])
     setReqir(packagePayload)
+    setBlocks(blocksPayload.items)
     setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
   }
 
@@ -179,6 +190,7 @@ function App() {
             running={busyAction === 'run'}
             onRun={handleRun}
           />
+          <ExportPanel taskId={task?.task_id ?? null} completed={task?.status === 'completed'} />
         </div>
 
         <div className="main-stack">
@@ -202,6 +214,7 @@ function App() {
                 onReview={handleReview}
               />
               <ReqIRDetail requirement={selectedRequirement} />
+              <SourceViewer requirement={selectedRequirement} blocks={blocks} />
             </div>
           </div>
         </div>

@@ -193,6 +193,10 @@ button:disabled {
   background: #eef1f5;
 }
 
+a {
+  color: inherit;
+}
+
 .primary-button {
   width: 100%;
   border-color: #1f6f68;
@@ -265,6 +269,23 @@ button:disabled {
 .status-badge.needs_recheck {
   color: #665014;
   background: #fff2c6;
+}
+
+.status-badge.PASS_EXACT,
+.status-badge.PASS_NORMALIZED {
+  color: #14534d;
+  background: #dff3ee;
+}
+
+.status-badge.WARNING_FUZZY,
+.status-badge.UNVERIFIED {
+  color: #665014;
+  background: #fff2c6;
+}
+
+.status-badge.FAIL_NOT_FOUND {
+  color: #8a2a2a;
+  background: #fde4e1;
 }
 
 .count-pill {
@@ -431,6 +452,10 @@ dd {
   min-width: 0;
 }
 
+.source-panel {
+  min-width: 0;
+}
+
 .action-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -453,6 +478,72 @@ dd {
 
 .span-two {
   grid-column: 1 / -1;
+}
+
+.export-row {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.download-button {
+  display: grid;
+  min-height: 38px;
+  place-items: center;
+  border: 1px solid #1f6f68;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #ffffff;
+  background: #1f6f68;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.source-content {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.source-meta {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.source-meta div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.quote-box,
+.block-box {
+  display: grid;
+  gap: 8px;
+}
+
+.quote-box p,
+.block-box p {
+  margin: 0;
+  border: 1px solid #e1e5eb;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+mark {
+  border-radius: 4px;
+  padding: 1px 2px;
+  color: #1d2430;
+  background: #fff1a8;
+}
+
+.muted-text {
+  color: #667085;
 }
 
 .requirements-heading {

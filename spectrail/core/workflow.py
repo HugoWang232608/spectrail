@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from spectrail.core.models import PlanSpec, PlanStep
+
+
+def build_fixed_plan(task_id: str, input_document: str, model_mode: str) -> PlanSpec:
+    return PlanSpec(
+        task_id=task_id,
+        goal="extract_requirements",
+        planner="fixed_workflow_v1",
+        model_mode=model_mode,
+        input_document=input_document,
+        steps=[
+            PlanStep(id="parse", tool="markdown_parser", output="parsed/blocks.json"),
+            PlanStep(
+                id="extract",
+                tool="reqir_extractor",
+                depends_on=["parse"],
+                output="extracted/reqir.raw.json",
+            ),
+            PlanStep(
+                id="normalize_ears",
+                tool="ears_normalizer",
+                depends_on=["extract"],
+            ),
+            PlanStep(
+                id="validate_schema",
+                tool="schema_validator",
+                depends_on=["normalize_ears"],
+            ),
+            PlanStep(
+                id="validate_source_quote",
+                tool="source_quote_validator",
+                depends_on=["validate_schema"],
+                output="extracted/reqir.validated.json",
+            ),
+            PlanStep(
+                id="export",
+                tool="json_xlsx_exporter",
+                depends_on=["validate_source_quote"],
+                output="exports/requirements.xlsx",
+            ),
+        ],
+    )

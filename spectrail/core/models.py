@@ -102,6 +102,7 @@ class PlanStep(BaseModel):
     id: str
     tool: str
     depends_on: list[str] = Field(default_factory=list)
+    output: str | None = None
     input_ref: dict = Field(default_factory=dict)
     config: dict = Field(default_factory=dict)
     reason: str | None = None
@@ -111,6 +112,8 @@ class PlanSpec(BaseModel):
     task_id: str
     goal: str
     planner: str = "fixed_workflow_v1"
+    model_mode: str
+    input_document: str
     steps: list[PlanStep]
 
 

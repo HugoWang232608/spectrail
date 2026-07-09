@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from spectrail.api.routes import exports, review, tasks
+from spectrail.api.routes import exports, review, sources, tasks
 from spectrail.tasks import LocalTaskStore
 
 
@@ -13,6 +13,7 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
     app.include_router(tasks.router, prefix="/api")
     app.include_router(review.router, prefix="/api")
     app.include_router(exports.router, prefix="/api")
+    app.include_router(sources.router, prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

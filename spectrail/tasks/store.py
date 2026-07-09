@@ -25,6 +25,10 @@ class TaskNotReadyError(TaskStoreError):
     pass
 
 
+class BlocksNotFoundError(TaskStoreError):
+    pass
+
+
 class LocalTaskStore:
     def __init__(self, root: str | Path = "outputs/tasks") -> None:
         self.root = Path(root)
@@ -119,6 +123,15 @@ class LocalTaskStore:
             raise TaskNotReadyError(f"reqir export missing: {task_id}")
         return read_json(reqir_path)
 
+    def read_blocks(self, task_id: str) -> list[dict[str, Any]]:
+        task = self.get_task(task_id)
+        if task.get("status") != "completed":
+            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        blocks_path = self.get_task_dir(task_id) / "parsed" / "blocks.json"
+        if not blocks_path.exists():
+            raise BlocksNotFoundError(f"blocks not found: {task_id}")
+        return [_normalize_block(block) for block in read_json(blocks_path)]
+
     def get_export_path(self, task_id: str, filename: str) -> Path:
         if filename not in {"reqir.json", "requirements.xlsx"}:
             raise FileNotFoundError(filename)
@@ -134,3 +147,11 @@ class LocalTaskStore:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_block(block: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(block)
+    order_index = normalized.pop("order_index", None)
+    if "order" not in normalized and order_index is not None:
+        normalized["order"] = order_index
+    return normalized

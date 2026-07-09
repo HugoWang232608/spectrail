@@ -95,3 +95,45 @@ Download Excel:
 curl -L http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx \
   -o requirements.xlsx
 ```
+
+## P1b Review UI Demo
+
+Install Python and frontend dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
+cd frontend
+npm install
+```
+
+Start the API from the repository root:
+
+```bash
+uvicorn spectrail.api.app:app --reload
+```
+
+Start the UI:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`, then run this flow:
+
+```text
+Create Task
+Upload docs/sample_srs.md
+Run Pipeline
+Select a ReqIR row
+Review source quote and highlighted block text
+Approve / reject / restore or edit statement / tags / priority
+Download reqir.json or requirements.xlsx
+```
+
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
+```

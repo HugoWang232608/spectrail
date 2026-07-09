@@ -30,6 +30,7 @@ function App() {
   const [task, setTask] = useState<TaskStatusResponse | null>(null)
   const [reqir, setReqir] = useState<ReqIRPackage | null>(null)
   const [blocks, setBlocks] = useState<DocumentBlock[]>([])
+  const [blocksError, setBlocksError] = useState<ApiError | null>(null)
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null)
   const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatusFilter>('all')
   const [requirementSearch, setRequirementSearch] = useState('')
@@ -64,6 +65,7 @@ function App() {
       setTaskIdInput(created.task_id)
       setReqir(null)
       setBlocks([])
+      setBlocksError(null)
       setSelectedRequirementId(null)
     })
   }
@@ -97,6 +99,7 @@ function App() {
       setTask(await getTask(task.task_id))
       setReqir(null)
       setBlocks([])
+      setBlocksError(null)
       setSelectedRequirementId(null)
     })
   }
@@ -131,17 +134,23 @@ function App() {
     if (loaded.status !== 'completed') {
       setReqir(null)
       setBlocks([])
+      setBlocksError(null)
       setSelectedRequirementId(null)
       return
     }
 
-    const [packagePayload, blocksPayload] = await Promise.all([
-      getReqIR(loaded.task_id),
-      getBlocks(loaded.task_id)
-    ])
+    const packagePayload = await getReqIR(loaded.task_id)
     setReqir(packagePayload)
-    setBlocks(blocksPayload.items)
     setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
+
+    try {
+      const blocksPayload = await getBlocks(loaded.task_id)
+      setBlocks(blocksPayload.items)
+      setBlocksError(null)
+    } catch (caught) {
+      setBlocks([])
+      setBlocksError(toApiError(caught))
+    }
   }
 
   async function perform(action: Exclude<BusyAction, null>, taskAction: () => Promise<void>) {
@@ -214,7 +223,11 @@ function App() {
                 onReview={handleReview}
               />
               <ReqIRDetail requirement={selectedRequirement} />
-              <SourceViewer requirement={selectedRequirement} blocks={blocks} />
+              <SourceViewer
+                requirement={selectedRequirement}
+                blocks={blocks}
+                blocksError={blocksError}
+              />
             </div>
           </div>
         </div>

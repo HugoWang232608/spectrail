@@ -506,6 +506,20 @@ dd {
   margin-top: 16px;
 }
 
+.source-switcher {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.source-switcher span {
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .source-meta {
   display: grid;
   gap: 10px;

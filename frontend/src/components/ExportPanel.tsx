@@ -26,10 +26,10 @@ function ExportPanel({ taskId, completed }: ExportPanelProps) {
           </>
         ) : (
           <>
-            <a className="download-button" href={getExportUrl(taskId, 'reqir.json')}>
+            <a className="download-button" href={getExportUrl(taskId, 'reqir.json')} download>
               Download reqir.json
             </a>
-            <a className="download-button" href={getExportUrl(taskId, 'requirements.xlsx')}>
+            <a className="download-button" href={getExportUrl(taskId, 'requirements.xlsx')} download>
               Download requirements.xlsx
             </a>
           </>

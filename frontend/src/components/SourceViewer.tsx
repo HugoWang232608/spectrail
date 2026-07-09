@@ -1,13 +1,22 @@
-import type { DocumentBlock, RequirementIR, SourceSpan } from '../api/types'
+import { useEffect, useState } from 'react'
+
+import type { ApiError, DocumentBlock, RequirementIR, SourceSpan } from '../api/types'
 
 type SourceViewerProps = {
   requirement: RequirementIR | null
   blocks: DocumentBlock[]
+  blocksError: ApiError | null
 }
 
-function SourceViewer({ requirement, blocks }: SourceViewerProps) {
-  const source = requirement?.sources[0] ?? null
+function SourceViewer({ requirement, blocks, blocksError }: SourceViewerProps) {
+  const [sourceIndex, setSourceIndex] = useState(0)
+  const sources = requirement?.sources ?? []
+  const source = sources[sourceIndex] ?? null
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
+
+  useEffect(() => {
+    setSourceIndex(0)
+  }, [requirement?.id])
 
   return (
     <section className="panel source-panel" aria-labelledby="source-heading">
@@ -18,6 +27,26 @@ function SourceViewer({ requirement, blocks }: SourceViewerProps) {
 
       {source ? (
         <div className="source-content">
+          <div className="source-switcher">
+            <button
+              type="button"
+              disabled={sourceIndex === 0}
+              onClick={() => setSourceIndex((current) => Math.max(0, current - 1))}
+            >
+              Previous
+            </button>
+            <span>
+              {sourceIndex + 1} / {sources.length}
+            </span>
+            <button
+              type="button"
+              disabled={sourceIndex >= sources.length - 1}
+              onClick={() => setSourceIndex((current) => Math.min(sources.length - 1, current + 1))}
+            >
+              Next
+            </button>
+          </div>
+
           <dl className="source-meta">
             <SourceItem label="Block" value={source.block_id} />
             <SourceItem label="Section" value={source.section_path?.join(' / ') || source.section || 'None'} />
@@ -31,7 +60,11 @@ function SourceViewer({ requirement, blocks }: SourceViewerProps) {
 
           <div className="block-box">
             <h3>Block Text</h3>
-            {block ? (
+            {blocksError ? (
+              <p className="muted-text">
+                Block context unavailable: {blocksError.code} {blocksError.message}
+              </p>
+            ) : block ? (
               <p>{renderHighlightedBlock(block.text, source)}</p>
             ) : (
               <p className="muted-text">Block text not found.</p>
@@ -75,4 +108,3 @@ function renderHighlightedBlock(text: string, source: SourceSpan) {
 }
 
 export default SourceViewer
-

@@ -73,8 +73,10 @@ def run_task(
     except TaskNotReadyError as exc:
         raise _error(409, "DOCUMENT_NOT_UPLOADED", str(exc)) from exc
     except UnsupportedModelModeError as exc:
+        _mark_task_failed(store, task_id)
         raise _error(400, "INVALID_MODEL_MODE", str(exc)) from exc
     except PipelineValidationError as exc:
+        _mark_task_failed(store, task_id)
         raise _error(422, "PIPELINE_VALIDATION_FAILED", str(exc)) from exc
     except Exception as exc:
         try:
@@ -120,6 +122,15 @@ def _task_response(task: dict) -> dict:
         "status": task["status"],
         "output_dir": task["output_dir"],
     }
+
+
+def _mark_task_failed(store: LocalTaskStore, task_id: str) -> None:
+    try:
+        manifest = store.read_manifest(task_id)
+        status = manifest.get("status", "failed") if manifest else "failed"
+        store.update_task(task_id, status=status)
+    except Exception:
+        return
 
 
 def _error(status_code: int, code: str, message: str) -> HTTPException:

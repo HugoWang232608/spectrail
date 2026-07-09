@@ -55,3 +55,25 @@ def test_api_upload_rejects_non_markdown(api_client: TestClient):
     )
     assert uploaded.status_code == 400
     assert uploaded.json()["detail"]["code"] == "INVALID_DOCUMENT"
+
+
+def test_api_run_marks_task_failed_when_model_mode_is_rejected(api_client: TestClient):
+    created = api_client.post("/api/tasks", json={})
+    task_id = created.json()["task_id"]
+
+    sample = Path("docs/sample_srs.md")
+    uploaded = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={"file": (sample.name, sample.read_bytes(), "text/markdown")},
+    )
+    assert uploaded.status_code == 200
+
+    api_client.app.state.task_store.update_task(task_id, model_mode="recorded")
+
+    run = api_client.post(f"/api/tasks/{task_id}/run")
+    assert run.status_code == 400
+    assert run.json()["detail"]["code"] == "INVALID_MODEL_MODE"
+
+    status = api_client.get(f"/api/tasks/{task_id}")
+    assert status.status_code == 200
+    assert status.json()["status"] == "failed"

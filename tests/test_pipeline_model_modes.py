@@ -46,6 +46,38 @@ def test_pipeline_runner_extract_recorded_full_fixture_covers_enum_drift(tmp_pat
     assert any(issue["code"] == "MODEL_FIELD_NORMALIZED" for issue in report["issues"])
 
 
+def test_pipeline_runner_replays_sanitized_live_output_with_textual_confidence(tmp_path: Path):
+    result = PipelineRunner().extract(
+        "docs/sample_srs.md",
+        tmp_path / "demo_recorded_live_output",
+        model_mode="recorded",
+        recorded_fixture="fixtures/recorded/sample_srs_live_deepseek_response.json",
+    )
+
+    assert result.validated_count == 15
+    manifest = read_json(result.manifest_path)
+    assert manifest["status"] == "completed"
+    assert manifest["counts"]["source_quote_failed"] == 0
+    assert manifest["model"]["name"] == "DeepSeek-V4-Flash"
+
+    reqir = read_json(result.output_dir / "extracted" / "reqir.validated.json")
+    assert {item["confidence"] for item in reqir["items"]} == {0.9}
+
+    report = read_json(result.output_dir / "extracted" / "validation_report.json")
+    assert report["valid"] is True
+    assert sum(
+        issue["code"] == "MODEL_FIELD_NORMALIZED"
+        and issue["metadata"]["field"] == "confidence"
+        and issue["metadata"]["input"] == "high"
+        for issue in report["issues"]
+    ) == 15
+    assert any(
+        issue["code"] == "MODEL_FIELD_NORMALIZED"
+        and issue["metadata"]["field"] == "source_quote"
+        for issue in report["issues"]
+    )
+
+
 def test_pipeline_runner_writes_model_parser_metadata_to_manifest_and_plan(tmp_path: Path):
     result = PipelineRunner().extract(
         "docs/sample_srs.md",

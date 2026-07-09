@@ -39,6 +39,15 @@ python -m spectrail extract docs/sample_srs.md \
   --output outputs/demo_recorded_full
 ```
 
+Replay the sanitized live-mode success sample:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode recorded \
+  --recorded-fixture fixtures/recorded/sample_srs_live_deepseek_response.json \
+  --output outputs/demo_recorded_live_output
+```
+
 The default recorded fixture is only for sample-aligned testing. It should not be treated as a model for arbitrary uploaded documents, because source grounding is block-level: `source_block_id` and `source_quote` must match the current `blocks.json`.
 
 The full fixture covers multiple requirement types and EARS patterns, omitted optional fields, missing tags, and common model-output drift such as `unwanted`, unknown type labels, textual confidence values, or source quotes with Markdown list/table markers. Such drift is normalized before Pydantic model construction and reported as `MODEL_FIELD_NORMALIZED` warnings in `validation_report.json`.

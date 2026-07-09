@@ -51,3 +51,47 @@ Run tests:
 ```bash
 pytest
 ```
+
+## P1 API Demo
+
+Start the local API:
+
+```bash
+uvicorn spectrail.api.app:app --reload
+```
+
+Create a task:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"goal":"extract_requirements","model_mode":"mock"}'
+```
+
+Upload Markdown:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/documents \
+  -F "file=@docs/sample_srs.md"
+```
+
+Run the pipeline:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/run
+```
+
+Review a requirement:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/review \
+  -H "Content-Type: application/json" \
+  -d '{"requirement_id":"REQ-0001","action":"approve","reviewer":"local"}'
+```
+
+Download Excel:
+
+```bash
+curl -L http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx \
+  -o requirements.xlsx
+```

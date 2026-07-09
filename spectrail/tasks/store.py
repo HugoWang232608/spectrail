@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.tasks.ids import new_task_id
+
+
+class TaskStoreError(Exception):
+    pass
+
+
+class TaskNotFoundError(TaskStoreError):
+    pass
+
+
+class InvalidDocumentError(TaskStoreError):
+    pass
+
+
+class TaskNotReadyError(TaskStoreError):
+    pass
+
+
+class LocalTaskStore:
+    def __init__(self, root: str | Path = "outputs/tasks") -> None:
+        self.root = Path(root)
+
+    def create_task(self, goal: str = "extract_requirements", model_mode: str = "mock") -> dict[str, Any]:
+        ensure_dir(self.root)
+        task_id = new_task_id()
+        task_dir = self.root / task_id
+        while task_dir.exists():
+            task_id = new_task_id()
+            task_dir = self.root / task_id
+
+        ensure_dir(task_dir / "input")
+        now = _now_iso()
+        task = {
+            "task_id": task_id,
+            "goal": goal,
+            "model_mode": model_mode,
+            "status": "created",
+            "created_at": now,
+            "updated_at": now,
+            "input_document": None,
+            "original_filename": None,
+            "output_dir": task_dir.as_posix(),
+        }
+        write_json(task_dir / "task.json", task)
+        return task
+
+    def get_task_dir(self, task_id: str) -> Path:
+        task_dir = self.root / task_id
+        if not (task_dir / "task.json").exists():
+            raise TaskNotFoundError(f"task not found: {task_id}")
+        return task_dir
+
+    def get_task(self, task_id: str) -> dict[str, Any]:
+        return read_json(self.get_task_dir(task_id) / "task.json")
+
+    def save_document(self, task_id: str, filename: str, content: bytes) -> Path:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".md", ".markdown"}:
+            raise InvalidDocumentError("only .md and .markdown files are supported")
+
+        task_dir = self.get_task_dir(task_id)
+        input_dir = ensure_dir(task_dir / "input")
+        document_path = input_dir / "original.md"
+        document_path.write_bytes(content)
+        self.update_task(
+            task_id,
+            status="uploaded",
+            input_document=document_path.relative_to(task_dir).as_posix(),
+            original_filename=Path(filename).name,
+        )
+        return document_path
+
+    def copy_document(self, task_id: str, source: str | Path) -> Path:
+        source_path = Path(source)
+        document_path = self.save_document(task_id, source_path.name, source_path.read_bytes())
+        return document_path
+
+    def get_input_document(self, task_id: str) -> Path:
+        task_dir = self.get_task_dir(task_id)
+        task = self.get_task(task_id)
+        input_document = task.get("input_document")
+        if not input_document:
+            raise TaskNotReadyError(f"task has no uploaded document: {task_id}")
+        document_path = task_dir / input_document
+        if not document_path.exists():
+            raise TaskNotReadyError(f"uploaded document missing: {task_id}")
+        return document_path
+
+    def update_task(self, task_id: str, **patch: object) -> dict[str, Any]:
+        task_dir = self.get_task_dir(task_id)
+        task = read_json(task_dir / "task.json")
+        task.update(patch)
+        task["updated_at"] = _now_iso()
+        write_json(task_dir / "task.json", task)
+        return task
+
+    def read_manifest(self, task_id: str) -> dict[str, Any] | None:
+        task_dir = self.get_task_dir(task_id)
+        manifest_path = task_dir / "run_manifest.json"
+        if not manifest_path.exists():
+            return None
+        return read_json(manifest_path)
+
+    def read_reqir(self, task_id: str) -> dict[str, Any]:
+        task = self.get_task(task_id)
+        if task.get("status") != "completed":
+            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        reqir_path = self.get_task_dir(task_id) / "exports" / "reqir.json"
+        if not reqir_path.exists():
+            raise TaskNotReadyError(f"reqir export missing: {task_id}")
+        return read_json(reqir_path)
+
+    def get_export_path(self, task_id: str, filename: str) -> Path:
+        if filename not in {"reqir.json", "requirements.xlsx"}:
+            raise FileNotFoundError(filename)
+        return self.get_task_dir(task_id) / "exports" / filename
+
+    def reset_output_from_pipeline(self, task_id: str) -> None:
+        task_dir = self.get_task_dir(task_id)
+        for name in ["parsed", "extracted", "review", "exports"]:
+            target = task_dir / name
+            if target.exists():
+                shutil.rmtree(target)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

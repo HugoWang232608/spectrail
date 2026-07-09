@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import {
   API_BASE_URL,
@@ -10,6 +10,9 @@ import {
 } from './api/client'
 import type { ApiError, ReqIRPackage, TaskStatusResponse } from './api/types'
 import ErrorBanner from './components/ErrorBanner'
+import ReqIRDetail from './components/ReqIRDetail'
+import ReqIRTable, { type ReviewStatusFilter } from './components/ReqIRTable'
+import ReviewSummary from './components/ReviewSummary'
 import RunPanel from './components/RunPanel'
 import StatusPanel from './components/StatusPanel'
 import TaskPanel from './components/TaskPanel'
@@ -21,10 +24,31 @@ function App() {
   const [taskIdInput, setTaskIdInput] = useState('')
   const [task, setTask] = useState<TaskStatusResponse | null>(null)
   const [reqir, setReqir] = useState<ReqIRPackage | null>(null)
+  const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null)
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatusFilter>('all')
+  const [requirementSearch, setRequirementSearch] = useState('')
   const [error, setError] = useState<ApiError | null>(null)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
 
   const busy = busyAction !== null
+  const requirements = reqir?.items ?? []
+  const filteredRequirements = useMemo(
+    () => filterRequirements(requirements, reviewStatusFilter, requirementSearch),
+    [requirements, reviewStatusFilter, requirementSearch]
+  )
+  const selectedRequirement =
+    filteredRequirements.find((requirement) => requirement.id === selectedRequirementId) ?? null
+
+  useEffect(() => {
+    if (filteredRequirements.length === 0) {
+      setSelectedRequirementId(null)
+      return
+    }
+
+    if (!filteredRequirements.some((requirement) => requirement.id === selectedRequirementId)) {
+      setSelectedRequirementId(filteredRequirements[0].id)
+    }
+  }, [filteredRequirements, selectedRequirementId])
 
   async function handleCreateTask() {
     await perform('create', async () => {
@@ -33,6 +57,7 @@ function App() {
       setTask(loaded)
       setTaskIdInput(created.task_id)
       setReqir(null)
+      setSelectedRequirementId(null)
     })
   }
 
@@ -45,7 +70,7 @@ function App() {
     await perform('load', async () => {
       const loaded = await getTask(nextTaskId)
       setTask(loaded)
-      setReqir(loaded.status === 'completed' ? await getReqIR(nextTaskId) : null)
+      await loadReqIRIfCompleted(loaded)
     })
   }
 
@@ -64,6 +89,7 @@ function App() {
       await uploadDocument(task.task_id, file)
       setTask(await getTask(task.task_id))
       setReqir(null)
+      setSelectedRequirementId(null)
     })
   }
 
@@ -76,8 +102,20 @@ function App() {
       await runTask(task.task_id)
       const loaded = await getTask(task.task_id)
       setTask(loaded)
-      setReqir(loaded.status === 'completed' ? await getReqIR(task.task_id) : null)
+      await loadReqIRIfCompleted(loaded)
     })
+  }
+
+  async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
+    if (loaded.status !== 'completed') {
+      setReqir(null)
+      setSelectedRequirementId(null)
+      return
+    }
+
+    const packagePayload = await getReqIR(loaded.task_id)
+    setReqir(packagePayload)
+    setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
   }
 
   async function perform(action: Exclude<BusyAction, null>, taskAction: () => Promise<void>) {
@@ -127,10 +165,49 @@ function App() {
           />
         </div>
 
-        <StatusPanel task={task} reqir={reqir} />
+        <div className="main-stack">
+          <StatusPanel task={task} reqir={reqir} />
+          <ReviewSummary requirements={requirements} />
+
+          <div className="review-grid">
+            <ReqIRTable
+              requirements={filteredRequirements}
+              selectedId={selectedRequirementId}
+              statusFilter={reviewStatusFilter}
+              searchQuery={requirementSearch}
+              onStatusFilterChange={setReviewStatusFilter}
+              onSearchQueryChange={setRequirementSearch}
+              onSelect={(requirement) => setSelectedRequirementId(requirement.id)}
+            />
+            <ReqIRDetail requirement={selectedRequirement} />
+          </div>
+        </div>
       </section>
     </main>
   )
+}
+
+function filterRequirements(
+  requirements: ReqIRPackage['items'],
+  statusFilter: ReviewStatusFilter,
+  searchQuery: string
+) {
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+
+  return requirements.filter((requirement) => {
+    if (statusFilter !== 'all' && requirement.review_status !== statusFilter) {
+      return false
+    }
+
+    if (!normalizedQuery) {
+      return true
+    }
+
+    return (
+      (requirement.title ?? '').toLowerCase().includes(normalizedQuery) ||
+      requirement.statement.toLowerCase().includes(normalizedQuery)
+    )
+  })
 }
 
 function toApiError(value: unknown): ApiError {

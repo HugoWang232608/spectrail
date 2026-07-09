@@ -5,6 +5,7 @@ from pathlib import Path
 
 from spectrail.core.ids import block_id
 from spectrail.core.models import DocumentBlock
+from spectrail.parsers.base import DocumentParseError, ParsedDocument
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -112,3 +113,35 @@ class MarkdownParser:
     def _is_table_line(line: str) -> bool:
         stripped = line.strip()
         return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+class MarkdownDocumentParser:
+    parser_name = "markdown_parser_v1"
+    source_format = "markdown"
+
+    def parse(self, path: str | Path, document_id: str = "doc_001") -> ParsedDocument:
+        source_path = Path(path)
+        try:
+            text = source_path.read_text(encoding="utf-8")
+            blocks = MarkdownParser().parse_text(text, document_id=document_id)
+        except FileNotFoundError:
+            raise
+        except UnicodeDecodeError as exc:
+            raise DocumentParseError(f"markdown document is not valid UTF-8: {source_path.name}") from exc
+        except OSError as exc:
+            raise DocumentParseError(f"failed to read markdown document: {source_path.name}") from exc
+
+        for block in blocks:
+            block.metadata.setdefault("source_format", self.source_format)
+            block.metadata.setdefault("parser", self.parser_name)
+
+        return ParsedDocument(
+            document_id=document_id,
+            document_name=source_path.name,
+            source_format=self.source_format,
+            parser_name=self.parser_name,
+            text=text,
+            blocks=blocks,
+            warnings=[],
+            metadata={"source_path": source_path.as_posix()},
+        )

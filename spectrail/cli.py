@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from spectrail.core.io import model_list_dump, read_json, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
+from spectrail.parsers import DocumentParseError
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
 from spectrail.validators.ears_validator import BasicEARSValidator
@@ -22,8 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="spectrail")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    extract_parser = subparsers.add_parser("extract", help="run Markdown -> ReqIR pipeline")
-    extract_parser.add_argument("document")
+    extract_parser = subparsers.add_parser("extract", help="run document -> ReqIR pipeline")
+    extract_parser.add_argument("document", help="input document path (.md or .markdown in P2 commit 1)")
     extract_parser.add_argument("--model-mode", choices=["mock", "recorded", "live"], default="mock")
     extract_parser.add_argument("--model-name", default=None)
     extract_parser.add_argument("--output", default="outputs/demo")
@@ -67,7 +68,7 @@ def run_extract(args: argparse.Namespace) -> int:
             model_mode=args.model_mode,
             model_name=args.model_name,
         )
-    except PipelineError as exc:
+    except (PipelineError, DocumentParseError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"Generated {result.validated_count} requirements in {result.output_dir}")
     return 0

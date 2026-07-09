@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.extractors.ears_normalizer import normalize_requirements
 from spectrail.extractors.reqir_extractor import ReqIRExtractor
 from spectrail.llm.mock_model import MockModel
-from spectrail.parsers.markdown_parser import MarkdownParser
+from spectrail.parsers.registry import parse_document
 from spectrail.review.review_log import collect_review_log
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
@@ -88,14 +87,12 @@ class PipelineRunner:
         write_json(manifest_path, manifest)
 
         try:
-            copied_document = parsed_dir / "document.md"
-            shutil.copyfile(document, copied_document)
-
-            parser = MarkdownParser()
-            blocks = parser.parse_file(document)
+            parsed_document = parse_document(document, document_id="doc_001")
+            (parsed_dir / "document.md").write_text(parsed_document.text, encoding="utf-8")
+            blocks = parsed_document.blocks
             write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
 
-            payload = MockModel().generate(document.read_text(encoding="utf-8"))
+            payload = MockModel().generate(parsed_document.text)
             extractor = ReqIRExtractor()
             requirements = extractor.extract(
                 payload=payload,
@@ -107,7 +104,13 @@ class PipelineRunner:
             write_json(
                 extracted_dir / "reqir.raw.json",
                 {
-                    "metadata": {"model_mode": model_mode, "document": document.name},
+                    "metadata": {
+                        "model_mode": model_mode,
+                        "document": document.name,
+                        "source_format": parsed_document.source_format,
+                        "parser": parsed_document.parser_name,
+                        "parser_warnings": parsed_document.warnings,
+                    },
                     "items": model_list_dump(requirements),
                 },
             )
@@ -129,7 +132,12 @@ class PipelineRunner:
             write_json(
                 validated_reqir_path,
                 {
-                    "metadata": {"validation_state": "validated", "document": document.name},
+                    "metadata": {
+                        "validation_state": "validated",
+                        "document": document.name,
+                        "source_format": parsed_document.source_format,
+                        "parser": parsed_document.parser_name,
+                    },
                     "items": model_list_dump(validated_requirements),
                 },
             )
@@ -138,7 +146,12 @@ class PipelineRunner:
             write_json(
                 exported_reqir_path,
                 {
-                    "metadata": {"export_state": "unreviewed_snapshot", "document": document.name},
+                    "metadata": {
+                        "export_state": "unreviewed_snapshot",
+                        "document": document.name,
+                        "source_format": parsed_document.source_format,
+                        "parser": parsed_document.parser_name,
+                    },
                     "items": model_list_dump(validated_requirements),
                 },
             )

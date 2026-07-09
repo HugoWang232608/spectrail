@@ -1,6 +1,6 @@
 # SpecTrail
 
-SpecTrail P0 is a local, Markdown-first pipeline that turns a requirements document into grounded ReqIR JSON and Excel exports.
+SpecTrail is a local-first pipeline that turns requirements documents into grounded ReqIR JSON and Excel exports. It currently supports Markdown, DOCX, and text-based PDF inputs with human review and source quote validation.
 
 ## P0 Demo
 
@@ -139,3 +139,44 @@ Build the frontend:
 cd frontend
 npm run build
 ```
+
+## P2 DOCX / Text PDF Demo
+
+SpecTrail P2 adds best-effort input adapters for DOCX and text-based PDF files. The downstream pipeline is the same as Markdown:
+
+```text
+DOCX / text PDF
+  -> parsed/document.md + parsed/blocks.json
+  -> mock ReqIR extraction
+  -> source quote validation
+  -> reqir.json + requirements.xlsx
+```
+
+Install runtime and dev dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Run the dynamic end-to-end format tests:
+
+```bash
+pytest tests/test_pipeline_document_formats.py tests/test_api_tasks.py
+```
+
+Run the included DOCX and text-based PDF demo files:
+
+```bash
+python -m spectrail extract docs/sample_srs.docx --model-mode mock --output outputs/demo_docx
+python -m spectrail extract docs/sample_srs_text.pdf --model-mode mock --output outputs/demo_pdf
+```
+
+P2 boundaries:
+
+```text
+Supported: Markdown, DOCX, text-based PDF
+Not supported: scanned PDF, OCR, complex two-column layout recovery, image/chart understanding
+PDF page numbers are best-effort source context; bbox highlighting is not implemented
+```
+
+See [docs/p2_docx_pdf_best_effort.md](docs/p2_docx_pdf_best_effort.md) for details.

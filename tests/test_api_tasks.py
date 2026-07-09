@@ -1,6 +1,10 @@
 from pathlib import Path
 
+import fitz
+from docx import Document
 from fastapi.testclient import TestClient
+
+from spectrail.parsers.markdown_parser import MarkdownParser
 
 
 def test_api_task_flow(api_client: TestClient):
@@ -70,6 +74,55 @@ def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):
     assert uploaded_pdf.json()["filename"] == "sample.pdf"
 
 
+def test_api_run_docx_task_completed(api_client: TestClient, tmp_path: Path):
+    document_path = tmp_path / "sample_srs.docx"
+    _write_docx_from_sample_blocks(document_path)
+
+    task_id = _create_and_upload(
+        api_client,
+        document_path,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    run = api_client.post(f"/api/tasks/{task_id}/run")
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert run.json()["manifest"]["counts"]["validated_requirements"] >= 14
+
+    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    assert reqir.status_code == 200
+    assert len(reqir.json()["items"]) >= 14
+
+    xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    assert xlsx.status_code == 200
+    assert xlsx.content
+
+
+def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClient, tmp_path: Path):
+    document_path = tmp_path / "sample_srs_text.pdf"
+    _write_pdf_from_sample_blocks(document_path)
+
+    task_id = _create_and_upload(api_client, document_path, "application/pdf")
+
+    run = api_client.post(f"/api/tasks/{task_id}/run")
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert run.json()["manifest"]["counts"]["validated_requirements"] >= 14
+
+    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    blocks = api_client.get(f"/api/tasks/{task_id}/blocks")
+    xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    assert reqir.status_code == 200
+    assert blocks.status_code == 200
+    assert xlsx.status_code == 200
+
+    block_index = {block["block_id"]: block for block in blocks.json()["items"]}
+    assert any(item["sources"][0]["page"] is not None for item in reqir.json()["items"])
+    for item in reqir.json()["items"]:
+        source = item["sources"][0]
+        assert source["page"] == block_index[source["block_id"]]["page"]
+
+
 def test_api_upload_rejects_unsupported_extension(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
@@ -102,3 +155,35 @@ def test_api_run_marks_task_failed_when_model_mode_is_rejected(api_client: TestC
     status = api_client.get(f"/api/tasks/{task_id}")
     assert status.status_code == 200
     assert status.json()["status"] == "failed"
+
+
+def _create_and_upload(api_client: TestClient, document_path: Path, media_type: str) -> str:
+    created = api_client.post("/api/tasks", json={})
+    task_id = created.json()["task_id"]
+    uploaded = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={"file": (document_path.name, document_path.read_bytes(), media_type)},
+    )
+    assert uploaded.status_code == 200
+    return task_id
+
+
+def _write_docx_from_sample_blocks(path: Path) -> None:
+    document = Document()
+    for block in MarkdownParser().parse_file("docs/sample_srs.md"):
+        if block.type == "heading":
+            document.add_heading(block.text, level=int(block.metadata.get("level", 1)))
+        elif block.type == "list":
+            document.add_paragraph(block.text, style="List Bullet")
+        else:
+            document.add_paragraph(block.text)
+    document.save(path)
+
+
+def _write_pdf_from_sample_blocks(path: Path) -> None:
+    document = fitz.open()
+    for block in MarkdownParser().parse_file("docs/sample_srs.md"):
+        page = document.new_page(width=2000, height=400)
+        page.insert_text((72, 72), block.text, fontsize=8, fontname="china-s")
+    document.save(path)
+    document.close()

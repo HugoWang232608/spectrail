@@ -22,6 +22,7 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "Rules:\n"
         "- source_block_id must be one of the provided block IDs.\n"
         "- source_quote must be an exact substring from the chosen block text.\n"
+        "- confidence must be a number from 0.0 to 1.0, not textual labels such as high/medium/low.\n"
         "- Use unknown for unsupported enum values instead of inventing new enum labels.\n"
         "- Do not invent requirements not supported by source text.\n\n"
         f"Document: {request.document_name}\n"

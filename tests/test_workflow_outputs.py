@@ -22,6 +22,8 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
         "export_json",
         "export_xlsx",
     ]
+    assert plan["steps"][0]["tool"] == "document_parser_registry"
+    assert plan["steps"][0]["config"]["selected_parser"] == "markdown_parser_v1"
 
     manifest = read_json(output / "run_manifest.json")
     requirements = read_json(output / "extracted" / "reqir.validated.json")["items"]
@@ -29,6 +31,9 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     assert manifest["counts"]["validated_requirements"] == len(requirements)
     assert manifest["counts"]["validated_requirements"] >= 14
     assert manifest["outputs"]["reqir_export"] == "exports/reqir.json"
+    assert manifest["model"]["mode"] == "mock"
+    assert manifest["model"]["prompt_version"] == "reqir_extraction_v1"
+    assert manifest["parser"]["parser_name"] == "markdown_parser_v1"
 
 
 def test_extract_failure_marks_manifest_failed(tmp_path: Path):

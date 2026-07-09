@@ -3,8 +3,51 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from spectrail.core.ids import requirement_id
 from spectrail.core.models import DocumentBlock, RequirementIR, SourceSpan
+
+
+TYPE_ALIASES = {
+    "functional": "functional",
+    "non_functional": "non_functional",
+    "non-functional": "non_functional",
+    "nonfunctional": "non_functional",
+    "interface": "interface",
+    "constraint": "constraint",
+    "business": "business",
+    "unknown": "unknown",
+}
+EARS_PATTERN_ALIASES = {
+    "ubiquitous": "ubiquitous",
+    "event_driven": "event_driven",
+    "event-driven": "event_driven",
+    "event": "event_driven",
+    "state_driven": "state_driven",
+    "state-driven": "state_driven",
+    "state": "state_driven",
+    "optional": "optional",
+    "unwanted": "unwanted_behavior",
+    "unwanted_behavior": "unwanted_behavior",
+    "unwanted_behaviour": "unwanted_behavior",
+    "unwanted-behavior": "unwanted_behavior",
+    "unwanted-behaviour": "unwanted_behavior",
+    "unknown": "unknown",
+}
+PRIORITY_ALIASES = {
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "unknown": "unknown",
+}
+VERIFICATION_METHOD_ALIASES = {
+    "test": "test",
+    "inspection": "inspection",
+    "analysis": "analysis",
+    "demonstration": "demonstration",
+    "unknown": "unknown",
+}
 
 
 class ReqIRExtractor:
@@ -55,6 +98,32 @@ class ReqIRExtractor:
         except (TypeError, ValueError) as exc:
             raise ValueError(f"item {index} confidence is not numeric") from exc
 
+        enum_normalizations: list[dict[str, str]] = []
+        requirement_type = _normalize_enum(
+            item.get("type", "unknown"),
+            TYPE_ALIASES,
+            "type",
+            enum_normalizations,
+        )
+        ears_pattern = _normalize_enum(
+            item.get("ears_pattern", "unknown"),
+            EARS_PATTERN_ALIASES,
+            "ears_pattern",
+            enum_normalizations,
+        )
+        priority = _normalize_enum(
+            item.get("priority", "unknown"),
+            PRIORITY_ALIASES,
+            "priority",
+            enum_normalizations,
+        )
+        verification_method = _normalize_enum(
+            item.get("verification_method", "unknown"),
+            VERIFICATION_METHOD_ALIASES,
+            "verification_method",
+            enum_normalizations,
+        )
+
         source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
         section_path = list(source_block.section_path) if source_block else []
@@ -68,25 +137,54 @@ class ReqIRExtractor:
             block_id=source_block_id,
             quote=str(item["source_quote"]),
         )
-        return RequirementIR(
-            id=requirement_id(index),
-            title=item.get("title"),
-            type=item.get("type", "unknown"),
-            ears_pattern=item.get("ears_pattern", "unknown"),
-            statement=str(item["statement"]),
-            subject=item.get("subject"),
-            condition=item.get("condition"),
-            response=item.get("response"),
-            priority=item.get("priority", "unknown"),
-            verification_method=item.get("verification_method", "unknown"),
-            sources=[source],
-            confidence=confidence,
-            review_status="pending",
-            tags=list(item.get("tags", [])),
-            metadata={
-                "source_block_id": source_block_id,
-                "model_mode": model_mode,
-                "extractor_version": self.extractor_version,
-                "raw_item_index": index - 1,
-            },
-        )
+        metadata = {
+            "source_block_id": source_block_id,
+            "model_mode": model_mode,
+            "extractor_version": self.extractor_version,
+            "raw_item_index": index - 1,
+        }
+        if enum_normalizations:
+            metadata["enum_normalizations"] = enum_normalizations
+
+        try:
+            return RequirementIR(
+                id=requirement_id(index),
+                title=item.get("title"),
+                type=requirement_type,
+                ears_pattern=ears_pattern,
+                statement=str(item["statement"]),
+                subject=item.get("subject"),
+                condition=item.get("condition"),
+                response=item.get("response"),
+                priority=priority,
+                verification_method=verification_method,
+                sources=[source],
+                confidence=confidence,
+                review_status="pending",
+                tags=_normalize_tags(item.get("tags", [])),
+                metadata=metadata,
+            )
+        except ValidationError as exc:
+            raise ValueError(f"item {index} failed ReqIR schema validation: {exc}") from exc
+
+
+def _normalize_enum(
+    value: Any,
+    aliases: dict[str, str],
+    field: str,
+    enum_normalizations: list[dict[str, str]],
+) -> str:
+    raw = str(value or "unknown")
+    normalized_key = raw.strip().lower().replace(" ", "_")
+    normalized = aliases.get(normalized_key, "unknown")
+    if normalized != raw:
+        enum_normalizations.append({"field": field, "input": raw, "normalized": normalized})
+    return normalized
+
+
+def _normalize_tags(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(tag) for tag in value]
+    return [str(value)]

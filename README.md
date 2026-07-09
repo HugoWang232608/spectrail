@@ -210,6 +210,15 @@ python -m spectrail extract docs/sample_srs.md \
   --output outputs/demo_recorded
 ```
 
+Run the fuller recorded regression fixture:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode recorded \
+  --recorded-fixture fixtures/recorded/sample_srs_reqir_response_full.json \
+  --output outputs/demo_recorded_full
+```
+
 Run live mode with an OpenAI-compatible provider:
 
 ```bash

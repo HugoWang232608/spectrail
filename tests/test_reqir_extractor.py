@@ -33,3 +33,43 @@ def test_extractor_enriches_source_with_block_page_and_copied_section_path():
     assert source.page == 3
     assert source.section_path == section_path
     assert source.section_path is not section_path
+
+
+def test_extractor_normalizes_live_enum_drift():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="paragraph",
+            text="The system shall reject unsafe access.",
+            order=1,
+        )
+    ]
+    payload = {
+        "items": [
+            {
+                "statement": "The system shall reject unsafe access.",
+                "type": "data",
+                "ears_pattern": "unwanted",
+                "priority": "urgent",
+                "verification_method": "review",
+                "source_block_id": "blk_0001",
+                "source_quote": "The system shall reject unsafe access.",
+                "tags": "security",
+            }
+        ]
+    }
+
+    requirement = ReqIRExtractor().extract(payload, blocks, document_name="sample.md", model_mode="live")[0]
+
+    assert requirement.type == "unknown"
+    assert requirement.ears_pattern == "unwanted_behavior"
+    assert requirement.priority == "unknown"
+    assert requirement.verification_method == "unknown"
+    assert requirement.tags == ["security"]
+    assert requirement.metadata["enum_normalizations"] == [
+        {"field": "type", "input": "data", "normalized": "unknown"},
+        {"field": "ears_pattern", "input": "unwanted", "normalized": "unwanted_behavior"},
+        {"field": "priority", "input": "urgent", "normalized": "unknown"},
+        {"field": "verification_method", "input": "review", "normalized": "unknown"},
+    ]

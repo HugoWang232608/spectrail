@@ -11,7 +11,11 @@ def build_fixed_plan(task_id: str, input_document: str, model_mode: str) -> Plan
         model_mode=model_mode,
         input_document=input_document,
         steps=[
-            PlanStep(id="parse", tool="markdown_parser", output="parsed/blocks.json"),
+            PlanStep(
+                id="parse",
+                tool="document_parser_registry",
+                output="parsed/blocks.json",
+            ),
             PlanStep(
                 id="extract",
                 tool="reqir_extractor",

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from spectrail.core.io import ensure_dir, model_list_dump, write_json
 from spectrail.core.manifest import complete_manifest, fail_manifest, init_manifest
-from spectrail.core.models import ValidationReport
+from spectrail.core.models import ValidationIssue, ValidationReport
 from spectrail.core.workflow import build_fixed_plan
 from spectrail.exporters.source_map_exporter import build_source_map
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
@@ -90,6 +90,12 @@ class PipelineRunner:
 
         try:
             parsed_document = parse_document(document, document_id="doc_001")
+            plan.steps[0].config = {
+                "selected_parser": parsed_document.parser_name,
+                "source_format": parsed_document.source_format,
+                "warnings": parsed_document.warnings,
+            }
+            write_json(plan_path, plan.model_dump(mode="json"))
             (parsed_dir / "document.md").write_text(parsed_document.text, encoding="utf-8")
             blocks = parsed_document.blocks
             write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
@@ -117,12 +123,25 @@ class PipelineRunner:
             if model_response.raw_text:
                 (extracted_dir / "model_response.raw.txt").write_text(model_response.raw_text, encoding="utf-8")
             extractor = ReqIRExtractor()
-            requirements = extractor.extract(
-                payload=payload,
-                blocks=blocks,
-                document_name=document.name,
-                model_mode=model_mode,
-            )
+            try:
+                requirements = extractor.extract(
+                    payload=payload,
+                    blocks=blocks,
+                    document_name=document.name,
+                    model_mode=model_mode,
+                )
+            except ValueError as exc:
+                report = ValidationReport(valid=False)
+                report.add_issue(
+                    ValidationIssue(
+                        level="error",
+                        code="MODEL_OUTPUT_VALIDATION_FAILED",
+                        message=str(exc),
+                    )
+                )
+                write_json(extracted_dir / "validation_report.json", report.model_dump(mode="json"))
+                write_json(manifest_path, fail_manifest(manifest, str(exc)))
+                raise PipelineValidationError(str(exc)) from exc
             requirements = normalize_requirements(requirements)
             write_json(
                 extracted_dir / "reqir.raw.json",
@@ -182,29 +201,41 @@ class PipelineRunner:
                 },
             )
             export_requirements_xlsx(validated_requirements, xlsx_path)
+            completed_manifest = complete_manifest(
+                manifest,
+                counts={
+                    "blocks": len(blocks),
+                    "raw_requirements": len(requirements),
+                    "validated_requirements": len(validated_requirements),
+                    "source_quote_passed": len(validated_requirements),
+                    "source_quote_failed": len(requirements) - len(validated_requirements),
+                },
+                outputs={
+                    "document": "parsed/document.md",
+                    "blocks": "parsed/blocks.json",
+                    "reqir_raw": "extracted/reqir.raw.json",
+                    "reqir_validated": "extracted/reqir.validated.json",
+                    "source_map": "extracted/source_map.json",
+                    "validation_report": "extracted/validation_report.json",
+                    "review_log": "review/review_log.json",
+                    "reqir_export": "exports/reqir.json",
+                    "xlsx": "exports/requirements.xlsx",
+                },
+            )
+            completed_manifest["model"] = {
+                "mode": model_mode,
+                "name": model_response.model_name,
+                "prompt_version": model_response.metadata.get("prompt_version", PROMPT_VERSION),
+                "recorded_fixture": model_response.metadata.get("fixture_path") if model_mode == "recorded" else None,
+            }
+            completed_manifest["parser"] = {
+                "source_format": parsed_document.source_format,
+                "parser_name": parsed_document.parser_name,
+                "warnings": parsed_document.warnings,
+            }
             write_json(
                 manifest_path,
-                complete_manifest(
-                    manifest,
-                    counts={
-                        "blocks": len(blocks),
-                        "raw_requirements": len(requirements),
-                        "validated_requirements": len(validated_requirements),
-                        "source_quote_passed": len(validated_requirements),
-                        "source_quote_failed": len(requirements) - len(validated_requirements),
-                    },
-                    outputs={
-                        "document": "parsed/document.md",
-                        "blocks": "parsed/blocks.json",
-                        "reqir_raw": "extracted/reqir.raw.json",
-                        "reqir_validated": "extracted/reqir.validated.json",
-                        "source_map": "extracted/source_map.json",
-                        "validation_report": "extracted/validation_report.json",
-                        "review_log": "review/review_log.json",
-                        "reqir_export": "exports/reqir.json",
-                        "xlsx": "exports/requirements.xlsx",
-                    },
-                ),
+                completed_manifest,
             )
         except Exception as exc:
             write_json(manifest_path, fail_manifest(manifest, str(exc)))

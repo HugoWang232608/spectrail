@@ -30,7 +30,40 @@ python -m spectrail extract docs/sample_srs.md \
   --dump-prompt
 ```
 
+Run the fuller recorded regression fixture:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode recorded \
+  --recorded-fixture fixtures/recorded/sample_srs_reqir_response_full.json \
+  --output outputs/demo_recorded_full
+```
+
 The default recorded fixture is only for sample-aligned testing. It should not be treated as a model for arbitrary uploaded documents, because source grounding is block-level: `source_block_id` and `source_quote` must match the current `blocks.json`.
+
+The full fixture covers multiple requirement types and EARS patterns, omitted optional fields, missing tags, and common enum drift such as `unwanted` or unknown type labels. Such drift is normalized before Pydantic model construction and reported as `MODEL_ENUM_NORMALIZED` warnings in `validation_report.json`.
+
+## Audit Metadata
+
+`run_manifest.json` includes model and parser context:
+
+```json
+{
+  "model": {
+    "mode": "recorded",
+    "name": "recorded-sample-fixture",
+    "prompt_version": "reqir_extraction_v1",
+    "recorded_fixture": "fixtures/recorded/sample_srs_reqir_response.json"
+  },
+  "parser": {
+    "source_format": "markdown",
+    "parser_name": "markdown_parser_v1",
+    "warnings": []
+  }
+}
+```
+
+`plan.json` uses `document_parser_registry` for the parse step and records the selected parser after parsing.
 
 ## Live Mode
 

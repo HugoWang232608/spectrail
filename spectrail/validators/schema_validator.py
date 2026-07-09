@@ -7,6 +7,19 @@ class SchemaValidator:
     def validate(self, requirements: list[RequirementIR]) -> ValidationReport:
         report = ValidationReport(valid=True)
         for requirement in requirements:
+            for normalization in requirement.metadata.get("enum_normalizations", []):
+                report.add_issue(
+                    ValidationIssue(
+                        level="warning",
+                        code="MODEL_ENUM_NORMALIZED",
+                        message=(
+                            f"normalized {normalization.get('field')} from "
+                            f"{normalization.get('input')} to {normalization.get('normalized')}"
+                        ),
+                        requirement_id=requirement.id,
+                        metadata=normalization,
+                    )
+                )
             if not requirement.id.strip():
                 report.add_issue(self._error("SCHEMA_ID_EMPTY", "id must not be empty", requirement.id))
             if not requirement.statement.strip():

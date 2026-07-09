@@ -35,6 +35,9 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     assert manifest["model"]["prompt_version"] == "reqir_extraction_v1"
     assert manifest["parser"]["parser_name"] == "markdown_parser_v1"
 
+    raw = read_json(output / "extracted" / "reqir.raw.json")
+    assert raw["items"][0]["metadata"]["extractor_version"] == "reqir_extractor_v1"
+
 
 def test_extract_failure_marks_manifest_failed(tmp_path: Path):
     output = tmp_path / "demo"

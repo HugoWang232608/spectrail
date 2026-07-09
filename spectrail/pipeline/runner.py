@@ -120,6 +120,7 @@ class PipelineRunner:
             )
             model_response = model_client.generate(model_request)
             payload = model_response.payload
+            write_json(extracted_dir / "model_response.json", payload)
             if model_response.raw_text:
                 (extracted_dir / "model_response.raw.txt").write_text(model_response.raw_text, encoding="utf-8")
             extractor = ReqIRExtractor()

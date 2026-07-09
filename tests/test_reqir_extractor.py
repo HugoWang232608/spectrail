@@ -66,6 +66,8 @@ def test_extractor_normalizes_live_enum_drift():
     assert requirement.ears_pattern == "unwanted_behavior"
     assert requirement.priority == "unknown"
     assert requirement.verification_method == "unknown"
+    assert requirement.review_status == "needs_recheck"
+    assert requirement.metadata["extractor_version"] == "reqir_extractor_v1"
     assert requirement.tags == ["security"]
     assert requirement.metadata["enum_normalizations"] == [
         {"field": "type", "input": "data", "normalized": "unknown"},

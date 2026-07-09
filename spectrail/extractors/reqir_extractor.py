@@ -51,7 +51,7 @@ VERIFICATION_METHOD_ALIASES = {
 
 
 class ReqIRExtractor:
-    extractor_version = "p0_mock_v1"
+    extractor_version = "reqir_extractor_v1"
 
     def extract(
         self,
@@ -145,6 +145,7 @@ class ReqIRExtractor:
         }
         if enum_normalizations:
             metadata["enum_normalizations"] = enum_normalizations
+        review_status = "needs_recheck" if _has_unknown_normalization(enum_normalizations) else "pending"
 
         try:
             return RequirementIR(
@@ -160,7 +161,7 @@ class ReqIRExtractor:
                 verification_method=verification_method,
                 sources=[source],
                 confidence=confidence,
-                review_status="pending",
+                review_status=review_status,
                 tags=_normalize_tags(item.get("tags", [])),
                 metadata=metadata,
             )
@@ -188,3 +189,7 @@ def _normalize_tags(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(tag) for tag in value]
     return [str(value)]
+
+
+def _has_unknown_normalization(enum_normalizations: list[dict[str, str]]) -> bool:
+    return any(normalization["normalized"] == "unknown" for normalization in enum_normalizations)

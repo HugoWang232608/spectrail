@@ -144,6 +144,18 @@ input {
   background: #ffffff;
 }
 
+textarea {
+  min-width: 0;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #c9d0da;
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: #1d2430;
+  background: #ffffff;
+  line-height: 1.45;
+}
+
 select {
   min-width: 0;
   width: 100%;
@@ -155,6 +167,12 @@ select {
 }
 
 input:disabled {
+  color: #8a94a6;
+  background: #eef1f5;
+}
+
+textarea:disabled,
+select:disabled {
   color: #8a94a6;
   background: #eef1f5;
 }
@@ -398,9 +416,43 @@ dd {
   align-items: start;
 }
 
+.detail-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
 .requirements-panel,
 .detail-panel {
   min-width: 0;
+}
+
+.actions-panel {
+  min-width: 0;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.edit-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.span-two {
+  grid-column: 1 / -1;
 }
 
 .requirements-heading {
@@ -530,6 +582,11 @@ pre {
   }
 
   .review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-row,
+  .edit-grid {
     grid-template-columns: 1fr;
   }
 

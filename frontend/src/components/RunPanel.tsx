@@ -1,10 +1,11 @@
 type RunPanelProps = {
   disabled: boolean
   busy: boolean
+  running: boolean
   onRun: () => void
 }
 
-function RunPanel({ disabled, busy, onRun }: RunPanelProps) {
+function RunPanel({ disabled, busy, running, onRun }: RunPanelProps) {
   return (
     <section className="panel compact-panel" aria-labelledby="run-heading">
       <div className="panel-heading">
@@ -12,11 +13,10 @@ function RunPanel({ disabled, busy, onRun }: RunPanelProps) {
       </div>
 
       <button type="button" className="primary-button" disabled={disabled || busy} onClick={onRun}>
-        {busy ? 'Running' : 'Run Pipeline'}
+        {running ? 'Running' : 'Run Pipeline'}
       </button>
     </section>
   )
 }
 
 export default RunPanel
-

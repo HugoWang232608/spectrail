@@ -6,19 +6,21 @@ import {
   getReqIR,
   getTask,
   runTask,
-  uploadDocument
+  uploadDocument,
+  reviewRequirement
 } from './api/client'
-import type { ApiError, ReqIRPackage, TaskStatusResponse } from './api/types'
+import type { ApiError, ReqIRPackage, ReviewRequest, TaskStatusResponse } from './api/types'
 import ErrorBanner from './components/ErrorBanner'
 import ReqIRDetail from './components/ReqIRDetail'
 import ReqIRTable, { type ReviewStatusFilter } from './components/ReqIRTable'
+import ReviewActions from './components/ReviewActions'
 import ReviewSummary from './components/ReviewSummary'
 import RunPanel from './components/RunPanel'
 import StatusPanel from './components/StatusPanel'
 import TaskPanel from './components/TaskPanel'
 import UploadPanel from './components/UploadPanel'
 
-type BusyAction = 'create' | 'load' | 'upload' | 'run' | null
+type BusyAction = 'create' | 'load' | 'upload' | 'run' | 'review' | null
 
 function App() {
   const [taskIdInput, setTaskIdInput] = useState('')
@@ -37,18 +39,18 @@ function App() {
     [requirements, reviewStatusFilter, requirementSearch]
   )
   const selectedRequirement =
-    filteredRequirements.find((requirement) => requirement.id === selectedRequirementId) ?? null
+    requirements.find((requirement) => requirement.id === selectedRequirementId) ?? null
 
   useEffect(() => {
-    if (filteredRequirements.length === 0) {
+    if (requirements.length === 0) {
       setSelectedRequirementId(null)
       return
     }
 
-    if (!filteredRequirements.some((requirement) => requirement.id === selectedRequirementId)) {
-      setSelectedRequirementId(filteredRequirements[0].id)
+    if (!selectedRequirementId || !requirements.some((requirement) => requirement.id === selectedRequirementId)) {
+      setSelectedRequirementId(filteredRequirements[0]?.id ?? requirements[0].id)
     }
-  }, [filteredRequirements, selectedRequirementId])
+  }, [filteredRequirements, requirements, selectedRequirementId])
 
   async function handleCreateTask() {
     await perform('create', async () => {
@@ -106,6 +108,19 @@ function App() {
     })
   }
 
+  async function handleReview(request: ReviewRequest) {
+    if (!task) {
+      return
+    }
+
+    await perform('review', async () => {
+      await reviewRequirement(task.task_id, request)
+      const packagePayload = await getReqIR(task.task_id)
+      setReqir(packagePayload)
+      setSelectedRequirementId(request.requirement_id)
+    })
+  }
+
   async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
     if (loaded.status !== 'completed') {
       setReqir(null)
@@ -160,7 +175,8 @@ function App() {
           />
           <RunPanel
             disabled={!task || !task.task.input_document}
-            busy={busyAction === 'run'}
+            busy={busy}
+            running={busyAction === 'run'}
             onRun={handleRun}
           />
         </div>
@@ -179,7 +195,14 @@ function App() {
               onSearchQueryChange={setRequirementSearch}
               onSelect={(requirement) => setSelectedRequirementId(requirement.id)}
             />
-            <ReqIRDetail requirement={selectedRequirement} />
+            <div className="detail-stack">
+              <ReviewActions
+                requirement={selectedRequirement}
+                busy={busy}
+                onReview={handleReview}
+              />
+              <ReqIRDetail requirement={selectedRequirement} />
+            </div>
           </div>
         </div>
       </section>

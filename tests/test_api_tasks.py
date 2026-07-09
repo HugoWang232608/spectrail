@@ -45,13 +45,38 @@ def test_api_task_requires_uploaded_document(api_client: TestClient):
     assert run.json()["detail"]["code"] == "DOCUMENT_NOT_UPLOADED"
 
 
-def test_api_upload_rejects_non_markdown(api_client: TestClient):
+def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):
+    created = api_client.post("/api/tasks", json={})
+    task_id = created.json()["task_id"]
+
+    uploaded_docx = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={
+            "file": (
+                "sample.docx",
+                b"docx bytes",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert uploaded_docx.status_code == 200
+    assert uploaded_docx.json()["filename"] == "sample.docx"
+
+    uploaded_pdf = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={"file": ("sample.pdf", b"%PDF", "application/pdf")},
+    )
+    assert uploaded_pdf.status_code == 200
+    assert uploaded_pdf.json()["filename"] == "sample.pdf"
+
+
+def test_api_upload_rejects_unsupported_extension(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
 
     uploaded = api_client.post(
         f"/api/tasks/{task_id}/documents",
-        files={"file": ("sample.pdf", b"%PDF", "application/pdf")},
+        files={"file": ("sample.rtf", b"{\\rtf1}", "application/rtf")},
     )
     assert uploaded.status_code == 400
     assert uploaded.json()["detail"]["code"] == "INVALID_DOCUMENT"

@@ -15,7 +15,7 @@ function UploadPanel({ disabled, filename, busy, onUpload }: UploadPanelProps) {
       <label className="file-drop">
         <input
           type="file"
-          accept=".md,.markdown,text/markdown"
+          accept=".md,.markdown,.docx,.pdf,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
           disabled={disabled || busy}
           onChange={(event) => {
             const file = event.target.files?.[0]
@@ -25,11 +25,10 @@ function UploadPanel({ disabled, filename, busy, onUpload }: UploadPanelProps) {
             }
           }}
         />
-        <span>{filename ?? 'Select Markdown'}</span>
+        <span>{filename ?? 'Select Document'}</span>
       </label>
     </section>
   )
 }
 
 export default UploadPanel
-

@@ -89,8 +89,11 @@ function App() {
     }
 
     const filename = file.name.toLowerCase()
-    if (!filename.endsWith('.md') && !filename.endsWith('.markdown')) {
-      setError({ code: 'INVALID_DOCUMENT', message: 'only .md and .markdown files are supported' })
+    if (!isSupportedDocument(filename)) {
+      setError({
+        code: 'INVALID_DOCUMENT',
+        message: 'only .md, .markdown, .docx, and text-based .pdf files are supported'
+      })
       return
     }
 
@@ -234,6 +237,10 @@ function App() {
       </section>
     </main>
   )
+}
+
+function isSupportedDocument(filename: string) {
+  return ['.md', '.markdown', '.docx', '.pdf'].some((suffix) => filename.endsWith(suffix))
 }
 
 function filterRequirements(

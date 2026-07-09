@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser("extract", help="run document -> ReqIR pipeline")
-    extract_parser.add_argument("document", help="input document path (.md or .markdown in P2 commit 1)")
+    extract_parser.add_argument("document", help="input document path (.md, .markdown, .docx, or text-based .pdf)")
     extract_parser.add_argument("--model-mode", choices=["mock", "recorded", "live"], default="mock")
     extract_parser.add_argument("--model-name", default=None)
     extract_parser.add_argument("--output", default="outputs/demo")

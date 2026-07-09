@@ -15,22 +15,37 @@ def test_task_store_creates_task_and_saves_document(tmp_path: Path):
     assert store.get_task(task["task_id"])["status"] == "created"
 
     document = store.save_document(task["task_id"], "sample.markdown", b"# SRS\n")
-    assert document.name == "original.md"
+    assert document.name == "original.markdown"
     assert document.read_text(encoding="utf-8") == "# SRS\n"
 
     updated = store.get_task(task["task_id"])
     assert updated["status"] == "uploaded"
-    assert updated["input_document"] == "input/original.md"
+    assert updated["input_document"] == "input/original.markdown"
     assert updated["original_filename"] == "sample.markdown"
+    assert updated["input_format"] == "markdown"
     assert store.get_input_document(task["task_id"]) == document
 
 
-def test_task_store_rejects_non_markdown_upload(tmp_path: Path):
+def test_task_store_saves_supported_document_suffixes(tmp_path: Path):
+    store = LocalTaskStore(tmp_path / "tasks")
+    task = store.create_task()
+
+    docx = store.save_document(task["task_id"], "sample.docx", b"docx bytes")
+    assert docx.name == "original.docx"
+    assert store.get_task(task["task_id"])["input_format"] == "docx"
+
+    pdf = store.save_document(task["task_id"], "sample.pdf", b"pdf bytes")
+    assert pdf.name == "original.pdf"
+    assert store.get_task(task["task_id"])["input_document"] == "input/original.pdf"
+    assert store.get_task(task["task_id"])["input_format"] == "pdf"
+
+
+def test_task_store_rejects_unsupported_upload(tmp_path: Path):
     store = LocalTaskStore(tmp_path / "tasks")
     task = store.create_task()
 
     with pytest.raises(InvalidDocumentError):
-        store.save_document(task["task_id"], "sample.pdf", b"%PDF")
+        store.save_document(task["task_id"], "sample.rtf", b"{\\rtf1}")
 
 
 def test_task_store_missing_task_and_unready_state(tmp_path: Path):

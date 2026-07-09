@@ -20,10 +20,10 @@ def test_parse_document_returns_markdown_parsed_document():
     assert parsed.blocks[0].metadata["parser"] == "markdown_parser_v1"
 
 
-def test_parse_document_rejects_future_suffixes_until_parser_is_registered(tmp_path: Path):
-    document = tmp_path / "sample.pdf"
-    document.write_bytes(b"%PDF-1.4\n")
+def test_parse_document_rejects_unknown_suffix(tmp_path: Path):
+    document = tmp_path / "sample.rtf"
+    document.write_text("{\\rtf1}", encoding="utf-8")
 
-    assert SUPPORTED_DOCUMENT_SUFFIXES == {".md", ".markdown"}
+    assert SUPPORTED_DOCUMENT_SUFFIXES == {".md", ".markdown", ".docx", ".pdf"}
     with pytest.raises(UnsupportedDocumentTypeError):
         parse_document(document)

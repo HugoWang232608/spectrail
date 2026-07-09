@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.parsers import SUPPORTED_DOCUMENT_SUFFIXES
 from spectrail.tasks.ids import new_task_id
 
 
@@ -68,18 +69,20 @@ class LocalTaskStore:
 
     def save_document(self, task_id: str, filename: str, content: bytes) -> Path:
         suffix = Path(filename).suffix.lower()
-        if suffix not in {".md", ".markdown"}:
-            raise InvalidDocumentError("only .md and .markdown files are supported")
+        if suffix not in SUPPORTED_DOCUMENT_SUFFIXES:
+            supported = ", ".join(sorted(SUPPORTED_DOCUMENT_SUFFIXES))
+            raise InvalidDocumentError(f"only {supported} files are supported")
 
         task_dir = self.get_task_dir(task_id)
         input_dir = ensure_dir(task_dir / "input")
-        document_path = input_dir / "original.md"
+        document_path = input_dir / f"original{suffix}"
         document_path.write_bytes(content)
         self.update_task(
             task_id,
             status="uploaded",
             input_document=document_path.relative_to(task_dir).as_posix(),
             original_filename=Path(filename).name,
+            input_format=_input_format(suffix),
         )
         return document_path
 
@@ -155,3 +158,9 @@ def _normalize_block(block: dict[str, Any]) -> dict[str, Any]:
     if "order" not in normalized and order_index is not None:
         normalized["order"] = order_index
     return normalized
+
+
+def _input_format(suffix: str) -> str:
+    if suffix in {".md", ".markdown"}:
+        return "markdown"
+    return suffix.lstrip(".")

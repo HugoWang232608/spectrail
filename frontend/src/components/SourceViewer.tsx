@@ -13,6 +13,7 @@ function SourceViewer({ requirement, blocks, blocksError }: SourceViewerProps) {
   const sources = requirement?.sources ?? []
   const source = sources[sourceIndex] ?? null
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
+  const page = source?.page ?? block?.page ?? null
 
   useEffect(() => {
     setSourceIndex(0)
@@ -49,6 +50,7 @@ function SourceViewer({ requirement, blocks, blocksError }: SourceViewerProps) {
 
           <dl className="source-meta">
             <SourceItem label="Block" value={source.block_id} />
+            <SourceItem label="Page" value={page != null ? String(page) : 'None'} />
             <SourceItem label="Section" value={source.section_path?.join(' / ') || source.section || 'None'} />
             <SourceItem label="Score" value={source.match_score != null ? source.match_score.toFixed(3) : 'None'} />
           </dl>

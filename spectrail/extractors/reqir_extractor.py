@@ -57,11 +57,12 @@ class ReqIRExtractor:
 
         source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
-        section_path = source_block.section_path if source_block else []
+        section_path = list(source_block.section_path) if source_block else []
         section = " > ".join(section_path) if section_path else None
         source = SourceSpan(
             document_id=source_block.document_id if source_block else "doc_001",
             document_name=document_name,
+            page=source_block.page if source_block else None,
             section=section,
             section_path=section_path,
             block_id=source_block_id,

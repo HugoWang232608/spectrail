@@ -10,7 +10,7 @@ from spectrail.api.schemas import (
     TaskRunResponse,
     TaskStatusResponse,
 )
-from spectrail.pipeline import PipelineRunner
+from spectrail.pipeline import PipelineValidationError, PipelineRunner, UnsupportedModelModeError
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
 from spectrail.tasks.store import InvalidDocumentError, TaskNotReadyError
 
@@ -35,19 +35,18 @@ async def upload_document(
 ) -> dict:
     try:
         content = await file.read()
-        task = store.get_task(task_id)
-        document_path = store.save_document(task_id, file.filename or "document.md", content)
+        store.get_task(task_id)
+        store.save_document(task_id, file.filename or "document.md", content)
         task = store.get_task(task_id)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except InvalidDocumentError as exc:
         raise _error(400, "INVALID_DOCUMENT", str(exc)) from exc
 
-    del document_path
     return {
         "task_id": task_id,
         "status": task["status"],
-        "filename": task["input_document"].split("/")[-1],
+        "filename": task["original_filename"],
     }
 
 
@@ -73,6 +72,10 @@ def run_task(
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "DOCUMENT_NOT_UPLOADED", str(exc)) from exc
+    except UnsupportedModelModeError as exc:
+        raise _error(400, "INVALID_MODEL_MODE", str(exc)) from exc
+    except PipelineValidationError as exc:
+        raise _error(422, "PIPELINE_VALIDATION_FAILED", str(exc)) from exc
     except Exception as exc:
         try:
             store.update_task(task_id, status="failed")

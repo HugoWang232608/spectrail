@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from spectrail.api.deps import get_task_store
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
+from spectrail.tasks.store import TaskNotReadyError
 
 
 router = APIRouter(tags=["exports"])
@@ -38,9 +39,14 @@ def _download_export(
     store: LocalTaskStore,
 ) -> FileResponse:
     try:
+        task = store.get_task(task_id)
+        if task.get("status") != "completed":
+            raise TaskNotReadyError(f"task is not completed: {task_id}")
         path = store.get_export_path(task_id, filename)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
+    except TaskNotReadyError as exc:
+        raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
     if not path.exists():

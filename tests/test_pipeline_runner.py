@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from spectrail.core.io import read_json
-from spectrail.pipeline import PipelineResult, PipelineRunner
+from spectrail.pipeline import PipelineResult, PipelineRunner, UnsupportedModelModeError
 
 
 def test_pipeline_runner_extract_generates_outputs(tmp_path: Path):
@@ -33,3 +33,8 @@ def test_pipeline_runner_failure_marks_manifest_failed(tmp_path: Path):
     manifest = read_json(output / "run_manifest.json")
     assert manifest["status"] == "failed"
     assert manifest["error"]
+
+
+def test_pipeline_runner_rejects_unsupported_model_mode(tmp_path: Path):
+    with pytest.raises(UnsupportedModelModeError):
+        PipelineRunner().extract("docs/sample_srs.md", tmp_path / "demo", model_mode="recorded")

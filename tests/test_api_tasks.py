@@ -19,6 +19,7 @@ def test_api_task_flow(api_client: TestClient):
     )
     assert uploaded.status_code == 200
     assert uploaded.json()["status"] == "uploaded"
+    assert uploaded.json()["filename"] == sample.name
 
     run = api_client.post(f"/api/tasks/{task_id}/run")
     assert run.status_code == 200

@@ -20,6 +20,18 @@ from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
 
 
+class PipelineError(ValueError):
+    pass
+
+
+class UnsupportedModelModeError(PipelineError):
+    pass
+
+
+class PipelineValidationError(PipelineError):
+    pass
+
+
 @dataclass(frozen=True)
 class PipelineResult:
     task_id: str
@@ -41,7 +53,9 @@ class PipelineRunner:
         model_name: str | None = None,
     ) -> PipelineResult:
         if model_mode != "mock":
-            raise SystemExit("P0 currently supports --model-mode mock for deterministic local runs")
+            raise UnsupportedModelModeError(
+                "P0 currently supports --model-mode mock for deterministic local runs"
+            )
 
         del model_name
 
@@ -102,7 +116,7 @@ class PipelineRunner:
             if not schema_report.valid:
                 write_json(extracted_dir / "validation_report.json", schema_report.model_dump(mode="json"))
                 write_json(manifest_path, fail_manifest(manifest, "schema validation failed"))
-                raise SystemExit("schema validation failed")
+                raise PipelineValidationError("schema validation failed")
 
             validated_requirements, source_report = SourceQuoteValidator().validate(requirements, blocks)
             ears_report = BasicEARSValidator().validate(validated_requirements)
@@ -110,7 +124,7 @@ class PipelineRunner:
             write_json(extracted_dir / "validation_report.json", validation_report.model_dump(mode="json"))
             if not source_report.valid:
                 write_json(manifest_path, fail_manifest(manifest, "source quote validation failed"))
-                raise SystemExit("source quote validation failed")
+                raise PipelineValidationError("source quote validation failed")
 
             write_json(
                 validated_reqir_path,

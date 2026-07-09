@@ -1,3 +1,15 @@
-from spectrail.pipeline.runner import PipelineResult, PipelineRunner
+from spectrail.pipeline.runner import (
+    PipelineError,
+    PipelineResult,
+    PipelineRunner,
+    PipelineValidationError,
+    UnsupportedModelModeError,
+)
 
-__all__ = ["PipelineResult", "PipelineRunner"]
+__all__ = [
+    "PipelineError",
+    "PipelineResult",
+    "PipelineRunner",
+    "PipelineValidationError",
+    "UnsupportedModelModeError",
+]

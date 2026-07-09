@@ -8,7 +8,7 @@ from pydantic import TypeAdapter
 from spectrail.core.io import model_list_dump, read_json, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
-from spectrail.pipeline import PipelineRunner
+from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
@@ -60,12 +60,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_extract(args: argparse.Namespace) -> int:
-    result = PipelineRunner().extract(
-        document_path=args.document,
-        output_dir=args.output,
-        model_mode=args.model_mode,
-        model_name=args.model_name,
-    )
+    try:
+        result = PipelineRunner().extract(
+            document_path=args.document,
+            output_dir=args.output,
+            model_mode=args.model_mode,
+            model_name=args.model_name,
+        )
+    except PipelineError as exc:
+        raise SystemExit(str(exc)) from exc
     print(f"Generated {result.validated_count} requirements in {result.output_dir}")
     return 0
 

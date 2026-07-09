@@ -18,10 +18,10 @@ def test_api_exports_download_files(api_client: TestClient, completed_api_task: 
     assert workbook["Requirements"].max_row >= 15
 
 
-def test_api_export_missing_returns_404(api_client: TestClient):
+def test_api_export_before_completion_returns_409(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
 
     response = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
-    assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "EXPORT_NOT_FOUND"
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TASK_NOT_COMPLETED"

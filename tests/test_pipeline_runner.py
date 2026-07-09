@@ -42,8 +42,10 @@ def test_pipeline_runner_rejects_unsupported_model_mode(tmp_path: Path):
 
 
 def test_pipeline_runner_live_requires_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    document = Path("docs/sample_srs.md").resolve()
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("SPECTRAIL_LLM_API_KEY", raising=False)
     monkeypatch.setenv("SPECTRAIL_LLM_MODEL", "test-model")
 
     with pytest.raises(ModelConfigurationError):
-        PipelineRunner().extract("docs/sample_srs.md", tmp_path / "demo", model_mode="live")
+        PipelineRunner().extract(document, tmp_path / "demo", model_mode="live")

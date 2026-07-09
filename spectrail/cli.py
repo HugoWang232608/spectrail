@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--model-name", default=None)
     extract_parser.add_argument("--recorded-fixture", default=None)
     extract_parser.add_argument("--dump-prompt", action="store_true")
+    extract_parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="live mode only: skip TLS certificate verification for provider requests",
+    )
     extract_parser.add_argument("--output", default="outputs/demo")
     extract_parser.set_defaults(func=run_extract)
 
@@ -72,6 +77,7 @@ def run_extract(args: argparse.Namespace) -> int:
             model_name=args.model_name,
             recorded_fixture=args.recorded_fixture,
             dump_prompt=args.dump_prompt,
+            insecure=args.insecure,
         )
     except (PipelineError, DocumentParseError, ModelError) as exc:
         raise SystemExit(str(exc)) from exc

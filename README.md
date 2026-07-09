@@ -222,9 +222,15 @@ python -m spectrail extract docs/sample_srs.md \
 Run live mode with an OpenAI-compatible provider:
 
 ```bash
-export SPECTRAIL_LLM_API_KEY=...
-export SPECTRAIL_LLM_MODEL=...
+cp .env.example .env
+# edit .env and set SPECTRAIL_LLM_API_KEY / SPECTRAIL_LLM_MODEL
 python -m spectrail extract docs/sample_srs.md --model-mode live --output outputs/demo_live
+```
+
+If your local provider uses a self-signed certificate chain and you accept that risk for local testing, add `--insecure`:
+
+```bash
+python -m spectrail extract docs/sample_srs.md --model-mode live --output outputs/demo_live --insecure
 ```
 
 Recorded fixtures are tied to their source document blocks; the default recorded fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads. See [docs/p3_llm_extraction_adapter.md](docs/p3_llm_extraction_adapter.md) for details.

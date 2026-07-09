@@ -54,6 +54,7 @@ class PipelineRunner:
         model_name: str | None = None,
         recorded_fixture: str | Path | None = None,
         dump_prompt: bool = False,
+        insecure: bool = False,
     ) -> PipelineResult:
         if model_mode not in {"mock", "recorded", "live"}:
             raise UnsupportedModelModeError(
@@ -108,7 +109,7 @@ class PipelineRunner:
                 parser_name=parsed_document.parser_name,
                 model_mode=model_mode,
                 model_name=model_name,
-                metadata={"prompt_version": PROMPT_VERSION},
+                metadata={"prompt_version": PROMPT_VERSION, "insecure": insecure},
             )
             prompt = build_reqir_prompt(model_request)
             if dump_prompt:

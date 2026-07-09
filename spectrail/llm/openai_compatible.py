@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import ssl
 import urllib.error
 import urllib.request
 from typing import Any
@@ -32,7 +34,7 @@ class OpenAICompatibleModel:
         self.timeout_seconds = timeout_seconds
 
     def generate(self, request: ModelRequest) -> ModelResponse:
-        config = self._load_config()
+        config = self._load_config(insecure=bool(request.metadata.get("insecure")))
         prompt = build_reqir_prompt(request)
         raw_text = self._complete(prompt=prompt, config=config)
         payload = parse_model_response(raw_text)
@@ -46,19 +48,21 @@ class OpenAICompatibleModel:
                 "base_url": config["base_url"],
                 "model_name": config["model_name"],
                 "prompt_version": PROMPT_VERSION,
+                "tls_verify": config["tls_verify"],
             },
         )
 
-    def _load_config(self) -> dict[str, Any]:
-        api_key = self.api_key or os.environ.get("SPECTRAIL_LLM_API_KEY")
+    def _load_config(self, *, insecure: bool = False) -> dict[str, Any]:
+        dotenv = _load_dotenv(Path(".env"))
+        api_key = self.api_key or os.environ.get("SPECTRAIL_LLM_API_KEY") or dotenv.get("SPECTRAIL_LLM_API_KEY")
         if not api_key:
             raise ModelConfigurationError("SPECTRAIL_LLM_API_KEY is required for live mode")
 
-        model_name = self.model_name or os.environ.get("SPECTRAIL_LLM_MODEL")
+        model_name = self.model_name or os.environ.get("SPECTRAIL_LLM_MODEL") or dotenv.get("SPECTRAIL_LLM_MODEL")
         if not model_name:
             raise ModelConfigurationError("SPECTRAIL_LLM_MODEL is required for live mode")
 
-        timeout_raw = os.environ.get("SPECTRAIL_LLM_TIMEOUT_SECONDS")
+        timeout_raw = os.environ.get("SPECTRAIL_LLM_TIMEOUT_SECONDS") or dotenv.get("SPECTRAIL_LLM_TIMEOUT_SECONDS")
         timeout_seconds = self.timeout_seconds
         if timeout_seconds is None and timeout_raw:
             try:
@@ -69,8 +73,12 @@ class OpenAICompatibleModel:
         return {
             "api_key": api_key,
             "model_name": model_name,
-            "base_url": self.base_url or os.environ.get("SPECTRAIL_LLM_BASE_URL") or DEFAULT_BASE_URL,
+            "base_url": self.base_url
+            or os.environ.get("SPECTRAIL_LLM_BASE_URL")
+            or dotenv.get("SPECTRAIL_LLM_BASE_URL")
+            or DEFAULT_BASE_URL,
             "timeout_seconds": timeout_seconds or 60.0,
+            "tls_verify": not insecure,
         }
 
     def _complete(self, *, prompt: str, config: dict[str, Any]) -> str:
@@ -90,8 +98,9 @@ class OpenAICompatibleModel:
             },
             method="POST",
         )
+        context = None if config["tls_verify"] else ssl._create_unverified_context()
         try:
-            with urllib.request.urlopen(request, timeout=config["timeout_seconds"]) as response:
+            with urllib.request.urlopen(request, timeout=config["timeout_seconds"], context=context) as response:
                 provider_payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise ModelProviderError(f"provider request failed with HTTP {exc.code}") from exc
@@ -107,3 +116,20 @@ class OpenAICompatibleModel:
         if not isinstance(content, str) or not content.strip():
             raise ModelProviderError("provider response content was empty")
         return content
+
+
+def _load_dotenv(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and value:
+            values[key] = value
+    return values

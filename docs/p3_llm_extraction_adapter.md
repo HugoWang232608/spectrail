@@ -70,10 +70,19 @@ The full fixture covers multiple requirement types and EARS patterns, omitted op
 Configure an OpenAI-compatible provider:
 
 ```bash
-export SPECTRAIL_LLM_API_KEY=...
-export SPECTRAIL_LLM_MODEL=...
-export SPECTRAIL_LLM_BASE_URL=https://api.openai.com/v1/chat/completions
+cp .env.example .env
 ```
+
+Then edit `.env`:
+
+```text
+SPECTRAIL_LLM_API_KEY=...
+SPECTRAIL_LLM_MODEL=...
+SPECTRAIL_LLM_BASE_URL=https://api.openai.com/v1/chat/completions
+SPECTRAIL_LLM_TIMEOUT_SECONDS=60
+```
+
+Shell environment variables still work and take precedence over `.env` values.
 
 Run live extraction:
 
@@ -82,6 +91,16 @@ python -m spectrail extract docs/sample_srs.md \
   --model-mode live \
   --output outputs/demo_live \
   --dump-prompt
+```
+
+For local providers with self-signed certificate chains, `--insecure` disables TLS certificate verification for the provider request:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode live \
+  --output outputs/demo_live \
+  --dump-prompt \
+  --insecure
 ```
 
 `outputs/` may contain prompt text and raw model responses. Do not commit live outputs that include private documents.

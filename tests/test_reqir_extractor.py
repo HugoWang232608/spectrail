@@ -54,8 +54,9 @@ def test_extractor_normalizes_live_enum_drift():
                 "priority": "urgent",
                 "verification_method": "review",
                 "source_block_id": "blk_0001",
-                "source_quote": "The system shall reject unsafe access.",
+                "source_quote": "- The system shall reject unsafe access.",
                 "tags": "security",
+                "confidence": "high",
             }
         ]
     }
@@ -67,11 +68,42 @@ def test_extractor_normalizes_live_enum_drift():
     assert requirement.priority == "unknown"
     assert requirement.verification_method == "unknown"
     assert requirement.review_status == "needs_recheck"
+    assert requirement.confidence == 0.9
+    assert requirement.sources[0].quote == "The system shall reject unsafe access."
     assert requirement.metadata["extractor_version"] == "reqir_extractor_v1"
     assert requirement.tags == ["security"]
     assert requirement.metadata["enum_normalizations"] == [
+        {"field": "confidence", "input": "high", "normalized": "0.9"},
         {"field": "type", "input": "data", "normalized": "unknown"},
         {"field": "ears_pattern", "input": "unwanted", "normalized": "unwanted_behavior"},
         {"field": "priority", "input": "urgent", "normalized": "unknown"},
         {"field": "verification_method", "input": "review", "normalized": "unknown"},
     ]
+
+
+def test_extractor_marks_unknown_confidence_for_recheck():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="paragraph",
+            text="The system shall show source quotes.",
+            order=1,
+        )
+    ]
+    payload = {
+        "items": [
+            {
+                "statement": "The system shall show source quotes.",
+                "source_block_id": "blk_0001",
+                "source_quote": "| Label | The system shall show source quotes. |",
+                "confidence": "certain",
+            }
+        ]
+    }
+
+    requirement = ReqIRExtractor().extract(payload, blocks, document_name="sample.md", model_mode="live")[0]
+
+    assert requirement.confidence == 0.0
+    assert requirement.review_status == "needs_recheck"
+    assert requirement.sources[0].quote == "The system shall show source quotes."

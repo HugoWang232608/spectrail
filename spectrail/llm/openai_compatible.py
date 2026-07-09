@@ -102,6 +102,10 @@ class OpenAICompatibleModel:
         try:
             with urllib.request.urlopen(request, timeout=config["timeout_seconds"], context=context) as response:
                 provider_payload = json.loads(response.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                f"provider request timed out after {config['timeout_seconds']} seconds"
+            ) from exc
         except urllib.error.HTTPError as exc:
             raise ModelProviderError(f"provider request failed with HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:

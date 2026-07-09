@@ -48,6 +48,12 @@ VERIFICATION_METHOD_ALIASES = {
     "demonstration": "demonstration",
     "unknown": "unknown",
 }
+CONFIDENCE_ALIASES = {
+    "high": 0.9,
+    "medium": 0.6,
+    "low": 0.3,
+    "unknown": 0.0,
+}
 
 
 class ReqIRExtractor:
@@ -93,12 +99,8 @@ class ReqIRExtractor:
         for field in ("statement", "source_block_id", "source_quote"):
             if not item.get(field):
                 raise ValueError(f"item {index} missing required field: {field}")
-        try:
-            confidence = float(item.get("confidence", 0.0))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"item {index} confidence is not numeric") from exc
-
         enum_normalizations: list[dict[str, str]] = []
+        confidence = _normalize_confidence(item.get("confidence", 0.0), enum_normalizations)
         requirement_type = _normalize_enum(
             item.get("type", "unknown"),
             TYPE_ALIASES,
@@ -135,7 +137,7 @@ class ReqIRExtractor:
             section=section,
             section_path=section_path,
             block_id=source_block_id,
-            quote=str(item["source_quote"]),
+            quote=_normalize_source_quote(str(item["source_quote"])),
         )
         metadata = {
             "source_block_id": source_block_id,
@@ -193,3 +195,32 @@ def _normalize_tags(value: Any) -> list[str]:
 
 def _has_unknown_normalization(enum_normalizations: list[dict[str, str]]) -> bool:
     return any(normalization["normalized"] == "unknown" for normalization in enum_normalizations)
+
+
+def _normalize_confidence(value: Any, enum_normalizations: list[dict[str, str]]) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value or "unknown")
+    normalized_key = raw.strip().lower().replace(" ", "_")
+    if normalized_key in CONFIDENCE_ALIASES:
+        normalized = CONFIDENCE_ALIASES[normalized_key]
+        enum_normalizations.append({"field": "confidence", "input": raw, "normalized": str(normalized)})
+        return normalized
+
+    try:
+        return float(raw)
+    except ValueError:
+        enum_normalizations.append({"field": "confidence", "input": raw, "normalized": "unknown"})
+        return 0.0
+
+
+def _normalize_source_quote(value: str) -> str:
+    quote = value.strip()
+    if quote.startswith("- "):
+        quote = quote[2:].strip()
+    if quote.startswith("|") and quote.endswith("|"):
+        cells = [cell.strip() for cell in quote.strip("|").split("|")]
+        if cells:
+            quote = cells[-1]
+    return quote

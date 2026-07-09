@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from spectrail.llm.base import ModelRequest
-from spectrail.llm.errors import ModelConfigurationError
+from spectrail.llm.errors import ModelConfigurationError, ModelProviderError
 from spectrail.llm.openai_compatible import OpenAICompatibleModel
 from spectrail.parsers.markdown_parser import MarkdownParser
 
@@ -63,6 +63,20 @@ def test_openai_compatible_model_can_disable_tls_verification(monkeypatch, tmp_p
     config = OpenAICompatibleModel()._load_config(insecure=True)
 
     assert config["tls_verify"] is False
+
+
+def test_openai_compatible_model_wraps_timeout(monkeypatch):
+    def raise_timeout(*args, **kwargs):
+        raise TimeoutError
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_timeout)
+
+    with pytest.raises(ModelProviderError, match="timed out after 3"):
+        OpenAICompatibleModel(
+            api_key="test-key",
+            model_name="test-model",
+            timeout_seconds=3,
+        ).generate(_request())
 
 
 def _request() -> ModelRequest:

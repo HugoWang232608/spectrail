@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "model_name": "recorded-ieee29148-selected"
+  },
+  "items": [
+    {
+      "title": "Create empty document",
+      "type": "functional",
+      "ears_pattern": "ubiquitous",
+      "statement": "The application shall allow users to create a new empty document.",
+      "subject": "The application",
+      "response": "allow users to create a new empty document",
+      "source_block_id": "blk_0016",
+      "source_quote": "The application shall allow users to create a new empty document.",
+      "confidence": 0.99,
+      "tags": ["file-operations"]
+    }
+  ]
+}

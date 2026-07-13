@@ -40,6 +40,64 @@ def test_api_task_flow(api_client: TestClient):
     assert len(reqir.json()["items"]) >= 14
 
 
+def test_api_forced_chunking_exposes_chunk_and_quarantine_artifacts(api_client: TestClient):
+    created = api_client.post(
+        "/api/tasks",
+        json={
+            "model_mode": "mock",
+            "chunking_mode": "force",
+            "max_rendered_prompt_chars": 1600,
+            "overlap_blocks": 1,
+            "validation_policy": "quarantine",
+        },
+    )
+    assert created.status_code == 200
+    task_id = created.json()["task_id"]
+
+    sample = Path("docs/sample_srs.md")
+    uploaded = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={"file": (sample.name, sample.read_bytes(), "text/markdown")},
+    )
+    assert uploaded.status_code == 200
+
+    run = api_client.post(f"/api/tasks/{task_id}/run")
+    assert run.status_code == 200
+    assert run.json()["manifest"]["counts"]["chunks"] >= 3
+
+    chunks = api_client.get(f"/api/tasks/{task_id}/chunks")
+    quarantined = api_client.get(f"/api/tasks/{task_id}/quarantined")
+    assert chunks.status_code == 200
+    assert len(chunks.json()) >= 3
+    assert quarantined.status_code == 200
+    assert quarantined.json()["items"] == []
+
+
+def test_api_rejects_invalid_chunking_configuration(api_client: TestClient):
+    response = api_client.post(
+        "/api/tasks",
+        json={"max_rendered_prompt_chars": 999, "overlap_blocks": 6},
+    )
+    assert response.status_code == 422
+
+
+def test_completed_with_warnings_remains_readable_reviewable_and_exportable(
+    api_client: TestClient, completed_api_task: dict
+):
+    task_id = completed_api_task["task_id"]
+    api_client.app.state.task_store.update_task(task_id, status="completed_with_warnings")
+    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    assert reqir.status_code == 200
+    requirement_id = reqir.json()["items"][0]["id"]
+    reviewed = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={"requirement_id": requirement_id, "action": "approve"},
+    )
+    exported = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    assert reviewed.status_code == 200
+    assert exported.status_code == 200
+
+
 def test_api_task_requires_uploaded_document(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]

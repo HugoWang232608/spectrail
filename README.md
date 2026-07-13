@@ -47,16 +47,18 @@ The generated workbook contains 17 columns, including the normalized statement, 
 flowchart LR
     A[Markdown / DOCX / text PDF] --> B[Parser Registry]
     B --> C[Canonical text + DocumentBlock]
-    C --> D{Model mode}
-    D --> E[Mock]
-    D --> F[Recorded]
-    D --> G[Live OpenAI-compatible]
-    E --> H[ReqIR Extractor]
-    F --> H
-    G --> H
-    H --> I[Schema / EARS / source quote validation]
-    I --> J[Review UI + review log]
-    J --> K[ReqIR JSON / Excel / source map]
+    C --> D[Section-aware chunk planner]
+    D --> E{Model mode}
+    E --> F[Mock]
+    E --> G[Recorded]
+    E --> H[Live OpenAI-compatible]
+    F --> I[Per-item ReqIR extraction]
+    G --> I
+    H --> I
+    I --> J[Deterministic aggregation]
+    J --> K[Schema / EARS / source quote validation]
+    K --> L[Review UI + review log]
+    L --> M[ReqIR JSON / Excel / source map]
 ```
 
 ## Quick start
@@ -300,3 +302,30 @@ python -m spectrail extract docs/sample_srs.md --model-mode live --output output
 ```
 
 Recorded fixtures are tied to their source document blocks; the default recorded fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads. See [docs/p3_llm_extraction_adapter.md](docs/p3_llm_extraction_adapter.md) for details.
+
+## P4 Evaluation and chunked extraction
+
+P4 adds deterministic, section-aware chunking for long documents, overlap-safe candidate aggregation, per-item model-output isolation, request fingerprints, quarantine mode, and a checked-in evaluation quality gate.
+
+Force a small prompt budget to exercise the multi-chunk path:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode mock \
+  --chunking force \
+  --max-rendered-prompt-chars 1600 \
+  --overlap-blocks 1 \
+  --validation-policy quarantine \
+  --output outputs/demo_chunked
+```
+
+Run the baseline evaluation case:
+
+```bash
+python -m spectrail evaluate eval/cases/sample_srs/case.json \
+  --output outputs/evaluation
+```
+
+The evaluation command exits non-zero when a checked threshold fails, making it suitable for CI. See [docs/p4_evaluation_chunking.md](docs/p4_evaluation_chunking.md) for artifact formats, statuses, API parameters, and validation behavior.
+
+The checked evaluation suite currently covers the original single-pass sample, a three-chunk long-document mock run, strict replay of the same long document from a request-fingerprint-bound Recorded bundle, and a selected-scope case over the included IEEE 29148 text PDF. All four gate source alignment recall, requirement exact recall, and export grounding at `1.0`.

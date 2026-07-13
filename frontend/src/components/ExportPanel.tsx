@@ -2,11 +2,11 @@ import { getExportUrl } from '../api/client'
 
 type ExportPanelProps = {
   taskId: string | null
-  completed: boolean
+  available: boolean
 }
 
-function ExportPanel({ taskId, completed }: ExportPanelProps) {
-  const disabled = !taskId || !completed
+function ExportPanel({ taskId, available }: ExportPanelProps) {
+  const disabled = !taskId || !available
 
   return (
     <section className="panel compact-panel export-panel" aria-labelledby="export-heading">

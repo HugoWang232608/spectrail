@@ -22,6 +22,8 @@ def init_manifest(
         "counts": {},
         "outputs": {},
         "error": None,
+        "warning_codes": [],
+        "zero_result_reason": None,
     }
 
 
@@ -29,15 +31,21 @@ def complete_manifest(
     manifest: dict[str, Any],
     counts: dict[str, int],
     outputs: dict[str, str],
+    *,
+    status: str = "completed",
+    warning_codes: list[str] | None = None,
+    zero_result_reason: str | None = None,
 ) -> dict[str, Any]:
     updated = dict(manifest)
     updated.update(
         {
-            "status": "completed",
+            "status": status,
             "completed_at": _now_iso(),
             "counts": counts,
             "outputs": outputs,
             "error": None,
+            "warning_codes": warning_codes or [],
+            "zero_result_reason": zero_result_reason,
         }
     )
     return updated

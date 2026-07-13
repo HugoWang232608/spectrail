@@ -1,6 +1,7 @@
 import type {
   ApiError,
   BlocksResponse,
+  DocumentChunk,
   DocumentUploadResponse,
   ReqIRPackage,
   ReviewRequest,
@@ -43,6 +44,14 @@ export async function getReqIR(taskId: string): Promise<ReqIRPackage> {
 
 export async function getBlocks(taskId: string): Promise<BlocksResponse> {
   return request<BlocksResponse>(`/tasks/${taskId}/blocks`)
+}
+
+export async function getChunks(taskId: string): Promise<DocumentChunk[]> {
+  return request<DocumentChunk[]>(`/tasks/${taskId}/chunks`)
+}
+
+export async function getQuarantined(taskId: string): Promise<ReqIRPackage> {
+  return request<ReqIRPackage>(`/tasks/${taskId}/quarantined`)
 }
 
 export async function reviewRequirement(
@@ -99,4 +108,3 @@ async function readApiError(response: Response): Promise<ApiError> {
 function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }
-

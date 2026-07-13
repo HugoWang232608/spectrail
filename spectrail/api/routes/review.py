@@ -19,9 +19,7 @@ def review_requirement(
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        task = store.get_task(task_id)
-        if task.get("status") != "completed":
-            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        store.require_readable_task(task_id)
         task_dir = store.get_task_dir(task_id)
         updated = apply_review_to_package(
             reqir_path=task_dir / "exports" / "reqir.json",

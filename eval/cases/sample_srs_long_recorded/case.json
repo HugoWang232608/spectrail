@@ -1,0 +1,20 @@
+{
+  "name": "sample_srs_long_recorded_bundle",
+  "document": "eval/cases/sample_srs_long/document.md",
+  "gold": "eval/cases/sample_srs/gold.json",
+  "model_mode": "recorded",
+  "recorded_fixture": "fixtures/recorded/chunked/sample_srs_long",
+  "chunking_mode": "force",
+  "max_rendered_prompt_chars": 4000,
+  "overlap_blocks": 1,
+  "validation_policy": "strict",
+  "allowed_pipeline_statuses": ["completed"],
+  "allowed_zero_result_reasons": [null],
+  "thresholds": {
+    "source_alignment_precision_min": 1.0,
+    "source_alignment_recall_min": 1.0,
+    "requirement_exact_precision_min": 1.0,
+    "requirement_exact_recall_min": 1.0,
+    "export_grounding_pass_rate_min": 1.0
+  }
+}

@@ -58,3 +58,16 @@ def test_task_store_missing_task_and_unready_state(tmp_path: Path):
     assert store.read_manifest(task["task_id"]) is None
     with pytest.raises(TaskNotReadyError):
         store.get_input_document(task["task_id"])
+
+
+def test_task_store_completed_with_warnings_is_readable(tmp_path: Path):
+    store = LocalTaskStore(tmp_path / "tasks")
+    task = store.create_task()
+    task_dir = store.get_task_dir(task["task_id"])
+    (task_dir / "exports").mkdir()
+    (task_dir / "exports" / "reqir.json").write_text(
+        '{"metadata": {}, "items": []}', encoding="utf-8"
+    )
+    store.update_task(task["task_id"], status="completed_with_warnings")
+
+    assert store.read_reqir(task["task_id"])["items"] == []

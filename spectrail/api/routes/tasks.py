@@ -30,7 +30,17 @@ def create_task(
     request: TaskCreateRequest,
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
-    task = store.create_task(goal=request.goal, model_mode=request.model_mode)
+    task = store.create_task(
+        goal=request.goal,
+        model_mode=request.model_mode,
+        pipeline_config={
+            "chunking_mode": request.chunking_mode,
+            "max_rendered_prompt_chars": request.max_rendered_prompt_chars,
+            "overlap_blocks": request.overlap_blocks,
+            "validation_policy": request.validation_policy,
+            "fail_fast": request.fail_fast,
+        },
+    )
     return _task_response(task)
 
 
@@ -68,10 +78,16 @@ def run_task(
         task_dir = store.get_task_dir(task_id)
         store.update_task(task_id, status="running")
         store.reset_output_from_pipeline(task_id)
+        config = task.get("pipeline_config", {})
         result = PipelineRunner().extract(
             document_path=document,
             output_dir=task_dir,
             model_mode=task["model_mode"],
+            chunking_mode=config.get("chunking_mode", "auto"),
+            max_rendered_prompt_chars=config.get("max_rendered_prompt_chars", 16000),
+            overlap_blocks=config.get("overlap_blocks", 1),
+            validation_policy=config.get("validation_policy", "strict"),
+            fail_fast=config.get("fail_fast", False),
         )
         manifest = store.read_manifest(task_id) or {}
         store.update_task(task_id, status=manifest.get("status", "completed"))
@@ -135,6 +151,32 @@ def get_reqir(
 ) -> dict:
     try:
         return store.read_reqir(task_id)
+    except TaskNotFoundError as exc:
+        raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
+    except TaskNotReadyError as exc:
+        raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+
+
+@router.get("/tasks/{task_id}/chunks")
+def get_chunks(
+    task_id: str,
+    store: LocalTaskStore = Depends(get_task_store),
+) -> list[dict]:
+    try:
+        return store.read_chunks(task_id)
+    except TaskNotFoundError as exc:
+        raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
+    except TaskNotReadyError as exc:
+        raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+
+
+@router.get("/tasks/{task_id}/quarantined")
+def get_quarantined(
+    task_id: str,
+    store: LocalTaskStore = Depends(get_task_store),
+) -> dict:
+    try:
+        return store.read_quarantined(task_id)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:

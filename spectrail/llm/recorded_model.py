@@ -6,6 +6,7 @@ from typing import Any
 from spectrail.core.io import read_json
 from spectrail.llm.base import ModelRequest, ModelResponse
 from spectrail.llm.errors import ModelConfigurationError
+from spectrail.llm.prompt_builder import CHUNKED_PROMPT_VERSION, PROMPT_VERSION, build_reqir_prompt
 from spectrail.llm.response_parser import parse_model_response
 
 
@@ -16,11 +17,17 @@ class RecordedModel:
         self.fixture_path = Path(fixture_path)
 
     def generate(self, request: ModelRequest) -> ModelResponse:
-        del request
         if not self.fixture_path.exists():
             raise ModelConfigurationError(f"recorded fixture not found: {self.fixture_path}")
 
-        fixture = read_json(self.fixture_path)
+        prompt = build_reqir_prompt(request)
+        fixture_path = self.fixture_path
+        if fixture_path.is_dir():
+            fixture_path = self._bundle_fixture(request, fixture_path)
+        elif request.metadata.get("chunk_count", 1) > 1:
+            raise ModelConfigurationError("RECORDED_FIXTURE_NOT_CHUNK_AWARE")
+
+        fixture = read_json(fixture_path)
         if not isinstance(fixture, dict):
             raise ModelConfigurationError("recorded fixture must be a JSON object")
 
@@ -36,11 +43,49 @@ class RecordedModel:
             model_mode=self.model_mode,
             model_name=metadata.get("model_name", "recorded-fixture"),
             raw_text=raw_text if isinstance(raw_text, str) else None,
+            prompt=prompt,
             metadata={
                 **metadata,
-                "fixture_path": self.fixture_path.as_posix(),
+                "fixture_path": fixture_path.as_posix(),
+                "prompt_version": request.metadata.get(
+                    "prompt_version",
+                    CHUNKED_PROMPT_VERSION if request.metadata.get("chunked") else PROMPT_VERSION,
+                ),
             },
         )
+
+    @staticmethod
+    def _bundle_fixture(request: ModelRequest, bundle_path: Path) -> Path:
+        manifest_path = bundle_path / "manifest.json"
+        if not manifest_path.exists():
+            raise ModelConfigurationError(f"recorded bundle manifest not found: {manifest_path}")
+        manifest = read_json(manifest_path)
+        bundle_profile = manifest.get("metadata", {}).get("request_profile")
+        request_profile = request.request_profile.to_dict() if request.request_profile else None
+        if not isinstance(bundle_profile, dict):
+            raise ModelConfigurationError("RECORDED_REQUEST_PROFILE_MISSING")
+        if request_profile != bundle_profile:
+            raise ModelConfigurationError("RECORDED_REQUEST_PROFILE_MISMATCH")
+        request_fingerprint = request.metadata.get("request_fingerprint")
+        chunk_fingerprint = request.metadata.get("chunk_fingerprint")
+        chunk_id = request.metadata.get("chunk_id")
+        for response in manifest.get("responses", []):
+            if response.get("request_fingerprint") != request_fingerprint:
+                continue
+            if (
+                response.get("chunk_id") != chunk_id
+                or response.get("chunk_fingerprint") != chunk_fingerprint
+            ):
+                raise ModelConfigurationError("RECORDED_CHUNK_MISMATCH")
+            if response.get("block_ids") != [block.block_id for block in request.blocks]:
+                raise ModelConfigurationError("RECORDED_CHUNK_MISMATCH")
+            fixture_path = bundle_path / response["fixture"]
+            if not fixture_path.exists():
+                raise ModelConfigurationError("RECORDED_RESPONSE_NOT_FOUND")
+            return fixture_path
+        if any(response.get("chunk_id") == chunk_id for response in manifest.get("responses", [])):
+            raise ModelConfigurationError("RECORDED_REQUEST_MISMATCH")
+        raise ModelConfigurationError("RECORDED_RESPONSE_NOT_FOUND")
 
 
 def _metadata_from_fixture(fixture: dict[str, Any]) -> dict[str, Any]:

@@ -16,6 +16,13 @@ export type TaskRecord = {
   input_document: string | null
   original_filename: string | null
   output_dir: string
+  pipeline_config: {
+    chunking_mode?: 'auto' | 'force' | 'off'
+    max_rendered_prompt_chars?: number
+    overlap_blocks?: number
+    validation_policy?: 'strict' | 'quarantine'
+    fail_fast?: boolean
+  }
 }
 
 export type TaskManifest = {
@@ -29,6 +36,8 @@ export type TaskManifest = {
   counts: Record<string, number>
   outputs: Record<string, string>
   error: string | null
+  warning_codes: string[]
+  zero_result_reason: string | null
 }
 
 export type DocumentUploadResponse = {
@@ -118,6 +127,18 @@ export type BlocksResponse = {
   task_id: string
   items: DocumentBlock[]
 }
+
+export type DocumentChunk = {
+  chunk_id: string
+  index: number
+  block_ids: string[]
+  overlap_block_ids: string[]
+  chunk_fingerprint: string
+  rendered_prompt_chars: number
+  warnings: string[]
+}
+
+export type QuarantinedReqIRPackage = ReqIRPackage
 
 export type ReviewRequest = {
   requirement_id: string

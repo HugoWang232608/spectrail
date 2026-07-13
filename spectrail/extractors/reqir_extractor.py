@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,21 @@ CONFIDENCE_ALIASES = {
 }
 
 
+@dataclass(frozen=True)
+class RejectedModelItem:
+    chunk_id: str | None
+    item_index: int
+    raw_item: Any
+    error_code: str
+    error_message: str
+
+
+@dataclass(frozen=True)
+class ExtractionBatchResult:
+    accepted_candidates: list[RequirementIR]
+    rejected_items: list[RejectedModelItem]
+
+
 class ReqIRExtractor:
     extractor_version = "reqir_extractor_v1"
 
@@ -66,6 +82,28 @@ class ReqIRExtractor:
         document_name: str,
         model_mode: str = "mock",
     ) -> list[RequirementIR]:
+        result = self.extract_batch(
+            payload=payload,
+            blocks=blocks,
+            document_name=document_name,
+            model_mode=model_mode,
+        )
+        if result.rejected_items:
+            first = result.rejected_items[0]
+            raise ValueError(first.error_message)
+        return result.accepted_candidates
+
+    def extract_batch(
+        self,
+        payload: dict[str, Any],
+        blocks: list[DocumentBlock],
+        document_name: str,
+        model_mode: str = "mock",
+        *,
+        chunk_id: str | None = None,
+        chunk_fingerprint: str | None = None,
+        request_fingerprint: str | None = None,
+    ) -> ExtractionBatchResult:
         if not isinstance(payload, dict):
             raise ValueError("model output is not a JSON object")
         items = payload.get("items")
@@ -74,17 +112,40 @@ class ReqIRExtractor:
 
         by_id = {block.block_id: block for block in blocks}
         requirements: list[RequirementIR] = []
+        rejected: list[RejectedModelItem] = []
         for index, item in enumerate(items, start=1):
-            requirements.append(
-                self._item_to_requirement(
+            try:
+                requirement = self._item_to_requirement(
                     item=item,
                     index=index,
                     by_id=by_id,
                     document_name=Path(document_name).name,
                     model_mode=model_mode,
                 )
-            )
-        return requirements
+            except (TypeError, ValueError) as exc:
+                rejected.append(
+                    RejectedModelItem(
+                        chunk_id=chunk_id,
+                        item_index=index - 1,
+                        raw_item=item,
+                        error_code=_item_error_code(exc),
+                        error_message=str(exc),
+                    )
+                )
+                continue
+            if chunk_id:
+                requirement.id = f"CAND-{chunk_id}-{index:04d}"
+                requirement.metadata.update(
+                    {
+                        "chunk_id": chunk_id,
+                        "chunk_fingerprint": chunk_fingerprint,
+                        "request_fingerprint": request_fingerprint,
+                        "local_item_index": index - 1,
+                        "extractor_version": "reqir_extractor_v2",
+                    }
+                )
+            requirements.append(requirement)
+        return ExtractionBatchResult(accepted_candidates=requirements, rejected_items=rejected)
 
     def _item_to_requirement(
         self,
@@ -228,3 +289,14 @@ def _normalize_source_quote(value: str, field_normalizations: list[dict[str, str
     if quote != raw:
         field_normalizations.append({"field": "source_quote", "input": raw, "normalized": quote})
     return quote
+
+
+def _item_error_code(exc: Exception) -> str:
+    message = str(exc)
+    if "is not a JSON object" in message:
+        return "MODEL_ITEM_NOT_OBJECT"
+    if "missing required field" in message:
+        return "MODEL_ITEM_MISSING_FIELD"
+    if "schema validation" in message:
+        return "MODEL_ITEM_SCHEMA_INVALID"
+    return "MODEL_ITEM_INVALID"

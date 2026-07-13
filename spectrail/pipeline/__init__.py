@@ -5,6 +5,7 @@ from spectrail.pipeline.runner import (
     PipelineValidationError,
     UnsupportedModelModeError,
 )
+from spectrail.pipeline.config import PipelineConfig
 
 __all__ = [
     "PipelineError",
@@ -12,4 +13,5 @@ __all__ = [
     "PipelineRunner",
     "PipelineValidationError",
     "UnsupportedModelModeError",
+    "PipelineConfig",
 ]

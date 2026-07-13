@@ -11,6 +11,7 @@ from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError
 from spectrail.pipeline import PipelineError, PipelineRunner
+from spectrail.evaluation.runner import EvaluationRunner
 from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
@@ -30,6 +31,11 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--model-name", default=None)
     extract_parser.add_argument("--recorded-fixture", default=None)
     extract_parser.add_argument("--dump-prompt", action="store_true")
+    extract_parser.add_argument("--chunking", choices=["off", "auto", "force"], default="auto")
+    extract_parser.add_argument("--max-rendered-prompt-chars", type=int, default=16000)
+    extract_parser.add_argument("--overlap-blocks", type=int, default=1)
+    extract_parser.add_argument("--validation-policy", choices=["strict", "quarantine"], default="strict")
+    extract_parser.add_argument("--fail-fast", action="store_true")
     extract_parser.add_argument(
         "--insecure",
         action="store_true",
@@ -64,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     review_parser.add_argument("--reason", default=None)
     review_parser.set_defaults(func=run_review)
 
+    evaluate_parser = subparsers.add_parser("evaluate", help="run deterministic extraction evaluation")
+    evaluate_parser.add_argument("case", help="case.json or directory containing evaluation cases")
+    evaluate_parser.add_argument("--output", default="outputs/evaluation")
+    evaluate_parser.set_defaults(func=run_evaluate)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
@@ -78,11 +89,25 @@ def run_extract(args: argparse.Namespace) -> int:
             recorded_fixture=args.recorded_fixture,
             dump_prompt=args.dump_prompt,
             insecure=args.insecure,
+            chunking_mode=args.chunking,
+            max_rendered_prompt_chars=args.max_rendered_prompt_chars,
+            overlap_blocks=args.overlap_blocks,
+            validation_policy=args.validation_policy,
+            fail_fast=args.fail_fast,
         )
     except (PipelineError, DocumentParseError, ModelError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"Generated {result.validated_count} requirements in {result.output_dir}")
     return 0
+
+
+def run_evaluate(args: argparse.Namespace) -> int:
+    try:
+        report = EvaluationRunner().run(args.case, args.output)
+    except (ValueError, PipelineError, DocumentParseError, ModelError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Evaluated {report['case_count']} case(s): {report['case_passed']} passed")
+    return 0 if report["passed"] else 1
 
 
 def run_validate(args: argparse.Namespace) -> int:

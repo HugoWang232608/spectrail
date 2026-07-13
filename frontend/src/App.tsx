@@ -134,7 +134,7 @@ function App() {
   }
 
   async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
-    if (loaded.status !== 'completed') {
+    if (!isReadableStatus(loaded.status)) {
       setReqir(null)
       setBlocks([])
       setBlocksError(null)
@@ -172,7 +172,7 @@ function App() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">P1b</p>
+          <p className="eyebrow">P4</p>
           <h1>SpecTrail Review UI</h1>
         </div>
         <span className="api-pill">{API_BASE_URL}</span>
@@ -202,7 +202,10 @@ function App() {
             running={busyAction === 'run'}
             onRun={handleRun}
           />
-          <ExportPanel taskId={task?.task_id ?? null} completed={task?.status === 'completed'} />
+          <ExportPanel
+            taskId={task?.task_id ?? null}
+            available={isReadableStatus(task?.status)}
+          />
         </div>
 
         <div className="main-stack">
@@ -241,6 +244,10 @@ function App() {
 
 function isSupportedDocument(filename: string) {
   return ['.md', '.markdown', '.docx', '.pdf'].some((suffix) => filename.endsWith(suffix))
+}
+
+function isReadableStatus(status: string | undefined): boolean {
+  return status === 'completed' || status === 'completed_with_warnings'
 }
 
 function filterRequirements(

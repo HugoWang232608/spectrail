@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field
 class TaskCreateRequest(BaseModel):
     goal: str = "extract_requirements"
     model_mode: Literal["mock", "recorded"] = "mock"
+    chunking_mode: Literal["auto", "force", "off"] = "auto"
+    max_rendered_prompt_chars: int = Field(default=16000, ge=1000)
+    overlap_blocks: int = Field(default=1, ge=0, le=5)
+    validation_policy: Literal["strict", "quarantine"] = "strict"
+    fail_fast: bool = False
 
 
 class TaskResponse(BaseModel):

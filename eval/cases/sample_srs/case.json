@@ -1,0 +1,18 @@
+{
+  "name": "sample_srs_single_pass_mock",
+  "document": "docs/sample_srs.md",
+  "gold": "eval/cases/sample_srs/gold.json",
+  "model_mode": "mock",
+  "chunking_mode": "auto",
+  "allowed_pipeline_statuses": ["completed"],
+  "allowed_zero_result_reasons": [null],
+  "thresholds": {
+    "source_alignment_precision_min": 1.0,
+    "source_alignment_recall_min": 1.0,
+    "requirement_exact_precision_min": 1.0,
+    "requirement_exact_recall_min": 1.0,
+    "export_grounding_pass_rate_min": 1.0,
+    "quarantine_rate_max": 0.0,
+    "rejected_item_rate_max": 0.0
+  }
+}

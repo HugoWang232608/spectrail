@@ -11,6 +11,7 @@ from typing import Any
 from spectrail.llm.base import ModelRequest, ModelResponse
 from spectrail.llm.errors import ModelConfigurationError, ModelProviderError
 from spectrail.llm.prompt_builder import PROMPT_VERSION, build_reqir_prompt
+from spectrail.llm.request_profile import ModelRequestProfile, OPENAI_COMPATIBLE_ADAPTER
 from spectrail.llm.response_parser import parse_model_response
 
 
@@ -36,7 +37,13 @@ class OpenAICompatibleModel:
     def generate(self, request: ModelRequest) -> ModelResponse:
         config = self._load_config(insecure=bool(request.metadata.get("insecure")))
         prompt = build_reqir_prompt(request)
-        raw_text = self._complete(prompt=prompt, config=config)
+        profile = request.request_profile or ModelRequestProfile(
+            provider_adapter="openai_compatible_v1",
+            provider_endpoint_id=config["base_url"],
+            model_name=config["model_name"],
+        )
+        body = OPENAI_COMPATIBLE_ADAPTER.build_provider_request_body(prompt=prompt, profile=profile)
+        raw_text, usage = self._complete(body=body, config=config)
         payload = parse_model_response(raw_text)
         return ModelResponse(
             payload=payload,
@@ -49,6 +56,7 @@ class OpenAICompatibleModel:
                 "model_name": config["model_name"],
                 "prompt_version": PROMPT_VERSION,
                 "tls_verify": config["tls_verify"],
+                "usage": usage,
             },
         )
 
@@ -81,17 +89,11 @@ class OpenAICompatibleModel:
             "tls_verify": not insecure,
         }
 
-    def _complete(self, *, prompt: str, config: dict[str, Any]) -> str:
-        body = json.dumps(
-            {
-                "model": config["model_name"],
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-            }
-        ).encode("utf-8")
+    def _complete(self, *, body: dict[str, Any], config: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+        encoded_body = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
             config["base_url"],
-            data=body,
+            data=encoded_body,
             headers={
                 "Authorization": f"Bearer {config['api_key']}",
                 "Content-Type": "application/json",
@@ -119,7 +121,8 @@ class OpenAICompatibleModel:
             raise ModelProviderError("provider response did not contain choices[0].message.content") from exc
         if not isinstance(content, str) or not content.strip():
             raise ModelProviderError("provider response content was empty")
-        return content
+        usage = provider_payload.get("usage")
+        return content, usage if isinstance(usage, dict) else None
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:

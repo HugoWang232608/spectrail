@@ -7,10 +7,13 @@ type StatusPanelProps = {
 
 const COUNT_KEYS = [
   'blocks',
-  'raw_requirements',
+  'chunks',
+  'chunks_failed',
+  'model_items_rejected',
+  'collapsed_overlap_duplicates',
   'validated_requirements',
-  'source_quote_passed',
-  'source_quote_failed'
+  'quarantined_requirements',
+  'field_conflicts'
 ]
 
 function StatusPanel({ task, reqir }: StatusPanelProps) {
@@ -25,6 +28,18 @@ function StatusPanel({ task, reqir }: StatusPanelProps) {
 
       {manifest ? (
         <>
+          {manifest.warning_codes?.length ? (
+            <div className="warning-summary" role="status">
+              <strong>Completed with warnings</strong>
+              <span>{manifest.warning_codes.join(', ')}</span>
+            </div>
+          ) : null}
+          {manifest.zero_result_reason ? (
+            <div className="warning-summary" role="status">
+              <strong>No validated results</strong>
+              <span>{manifest.zero_result_reason}</span>
+            </div>
+          ) : null}
           <div className="summary-grid">
             {COUNT_KEYS.map((key) => (
               <div className="metric" key={key}>

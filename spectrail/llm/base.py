@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from spectrail.core.models import DocumentBlock
+from spectrail.llm.request_profile import ModelRequestProfile
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class ModelRequest:
     parser_name: str
     model_mode: str
     model_name: str | None = None
+    request_profile: ModelRequestProfile | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

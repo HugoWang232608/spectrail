@@ -39,9 +39,7 @@ def _download_export(
     store: LocalTaskStore,
 ) -> FileResponse:
     try:
-        task = store.get_task(task_id)
-        if task.get("status") != "completed":
-            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        store.require_readable_task(task_id)
         path = store.get_export_path(task_id, filename)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc

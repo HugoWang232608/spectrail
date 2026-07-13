@@ -30,11 +30,19 @@ class BlocksNotFoundError(TaskStoreError):
     pass
 
 
+READABLE_TASK_STATUSES = {"completed", "completed_with_warnings"}
+
+
 class LocalTaskStore:
     def __init__(self, root: str | Path = "outputs/tasks") -> None:
         self.root = Path(root)
 
-    def create_task(self, goal: str = "extract_requirements", model_mode: str = "mock") -> dict[str, Any]:
+    def create_task(
+        self,
+        goal: str = "extract_requirements",
+        model_mode: str = "mock",
+        pipeline_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         ensure_dir(self.root)
         task_id = new_task_id()
         task_dir = self.root / task_id
@@ -48,6 +56,7 @@ class LocalTaskStore:
             "task_id": task_id,
             "goal": goal,
             "model_mode": model_mode,
+            "pipeline_config": pipeline_config or {},
             "status": "created",
             "created_at": now,
             "updated_at": now,
@@ -118,22 +127,38 @@ class LocalTaskStore:
         return read_json(manifest_path)
 
     def read_reqir(self, task_id: str) -> dict[str, Any]:
-        task = self.get_task(task_id)
-        if task.get("status") != "completed":
-            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        self.require_readable_task(task_id)
         reqir_path = self.get_task_dir(task_id) / "exports" / "reqir.json"
         if not reqir_path.exists():
             raise TaskNotReadyError(f"reqir export missing: {task_id}")
         return read_json(reqir_path)
 
     def read_blocks(self, task_id: str) -> list[dict[str, Any]]:
-        task = self.get_task(task_id)
-        if task.get("status") != "completed":
-            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        self.require_readable_task(task_id)
         blocks_path = self.get_task_dir(task_id) / "parsed" / "blocks.json"
         if not blocks_path.exists():
             raise BlocksNotFoundError(f"blocks not found: {task_id}")
         return [_normalize_block(block) for block in read_json(blocks_path)]
+
+    def read_chunks(self, task_id: str) -> list[dict[str, Any]]:
+        self.require_readable_task(task_id)
+        chunks_path = self.get_task_dir(task_id) / "parsed" / "chunks.json"
+        if not chunks_path.exists():
+            raise BlocksNotFoundError(f"chunks not found: {task_id}")
+        return read_json(chunks_path)
+
+    def read_quarantined(self, task_id: str) -> dict[str, Any]:
+        self.require_readable_task(task_id)
+        path = self.get_task_dir(task_id) / "extracted" / "reqir.quarantined.json"
+        if not path.exists():
+            raise TaskNotReadyError(f"quarantined ReqIR artifact missing: {task_id}")
+        return read_json(path)
+
+    def require_readable_task(self, task_id: str) -> dict[str, Any]:
+        task = self.get_task(task_id)
+        if task.get("status") not in READABLE_TASK_STATUSES:
+            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        return task
 
     def get_export_path(self, task_id: str, filename: str) -> Path:
         if filename not in {"reqir.json", "requirements.xlsx"}:

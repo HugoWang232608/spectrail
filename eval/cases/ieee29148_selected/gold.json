@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "annotation_scope": "selected_blocks",
+    "source_document": "tests/fixtures/ieee29148_srs_example.pdf"
+  },
+  "items": [
+    {
+      "gold_id": "IEEE-GOLD-0001",
+      "statement": "The application shall allow users to create a new empty document.",
+      "sources": [
+        {
+          "block_id": "blk_0016",
+          "quote": "The application shall allow users to create a new empty document."
+        }
+      ],
+      "tags": ["file-operations"]
+    }
+  ]
+}

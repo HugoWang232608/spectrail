@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "bundle_version": 2,
+    "document": "eval/cases/sample_srs_long/document.md",
+    "prompt_version": "reqir_extraction_v2_chunked",
+    "request_profile": {
+      "provider_adapter": "openai_compatible_v1",
+      "provider_endpoint_id": "mock",
+      "model_name": "mock-fixture",
+      "temperature": 0.0,
+      "response_format": null,
+      "safe_request_options": {}
+    },
+    "chunking": {
+      "max_rendered_prompt_chars": 4000,
+      "overlap_blocks": 1,
+      "chunk_counter_width": 8
+    }
+  },
+  "responses": [
+    {
+      "chunk_id": "chk_00000001",
+      "chunk_fingerprint": "259370f0bef55621c975bf3a82472f74ba50c3fd1966a63391269ce143932ff2",
+      "request_fingerprint": "61fd09e68965396e1361c71e1501c5cc9a604895e60ea9de9f9b2970f0b2dc8a",
+      "block_ids": [
+        "blk_0001", "blk_0002", "blk_0003", "blk_0004", "blk_0005", "blk_0006",
+        "blk_0007", "blk_0008", "blk_0009", "blk_0010", "blk_0011", "blk_0012",
+        "blk_0013", "blk_0014", "blk_0015", "blk_0016", "blk_0017", "blk_0018",
+        "blk_0019", "blk_0020", "blk_0021", "blk_0022"
+      ],
+      "fixture": "../../../mock_reqir_response.json"
+    },
+    {
+      "chunk_id": "chk_00000002",
+      "chunk_fingerprint": "19912c5a9e8fe991c3ebdffb9baf91f4ae518760d28575f7e62fdcf01f825eb4",
+      "request_fingerprint": "10cb6f7db20603eec8e77f807fd55e133bae9532b25f206b6adaf333f7cb6320",
+      "block_ids": [
+        "blk_0022", "blk_0023", "blk_0024", "blk_0025", "blk_0026", "blk_0027",
+        "blk_0028", "blk_0029", "blk_0030", "blk_0031", "blk_0032", "blk_0033",
+        "blk_0034", "blk_0035", "blk_0036", "blk_0037", "blk_0038", "blk_0039",
+        "blk_0040", "blk_0041", "blk_0042", "blk_0043"
+      ],
+      "fixture": "responses/10cb6f7db20603eec8e77f807fd55e133bae9532b25f206b6adaf333f7cb6320.json"
+    },
+    {
+      "chunk_id": "chk_00000003",
+      "chunk_fingerprint": "496bf9b91d0cbad323d4479e5454734d73304d703ed8e9ac3f8eed3c30424270",
+      "request_fingerprint": "3763553e8905bc0164d355b70ab4f9f0302c63cec1fd3f6565b04b342c5f40a4",
+      "block_ids": [
+        "blk_0043", "blk_0044", "blk_0045", "blk_0046", "blk_0047", "blk_0048",
+        "blk_0049", "blk_0050"
+      ],
+      "fixture": "responses/3763553e8905bc0164d355b70ab4f9f0302c63cec1fd3f6565b04b342c5f40a4.json"
+    }
+  ]
+}

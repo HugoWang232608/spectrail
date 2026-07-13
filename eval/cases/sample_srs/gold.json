@@ -1,0 +1,85 @@
+{
+  "metadata": {
+    "document": "docs/sample_srs.md",
+    "annotation_scope": "full_document",
+    "annotator": "manual",
+    "version": 2
+  },
+  "items": [
+    {
+      "gold_id": "GOLD-0001",
+      "statement": "系统应允许管理员创建、停用和恢复普通用户账号。",
+      "sources": [{"block_id": "blk_0006", "quote": "管理员应能够创建、停用和恢复普通用户账号。"}]
+    },
+    {
+      "gold_id": "GOLD-0002",
+      "statement": "当用户账号状态发生变更时，系统应记录操作者、时间和原因。",
+      "sources": [{"block_id": "blk_0006", "quote": "系统应记录用户账号状态变更的操作者、时间和原因。"}]
+    },
+    {
+      "gold_id": "GOLD-0003",
+      "statement": "当用户输入正确账号密码时，系统应完成身份验证并建立会话。",
+      "sources": [{"block_id": "blk_0008", "quote": "用户输入正确账号密码后，系统应完成身份验证并建立会话。"}]
+    },
+    {
+      "gold_id": "GOLD-0004",
+      "statement": "当连续五次登录失败时，系统应锁定该账号十五分钟并提示用户稍后重试。",
+      "sources": [{"block_id": "blk_0009", "quote": "连续五次登录失败时，系统应锁定该账号十五分钟并提示用户稍后重试。"}]
+    },
+    {
+      "gold_id": "GOLD-0005",
+      "statement": "当用户连续三十分钟无操作时，系统应自动结束当前会话。",
+      "sources": [{"block_id": "blk_0010", "quote": "用户连续三十分钟无操作时，系统应自动结束当前会话。"}]
+    },
+    {
+      "gold_id": "GOLD-0006",
+      "statement": "当授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。",
+      "sources": [{"block_id": "blk_0012", "quote": "授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。"}]
+    },
+    {
+      "gold_id": "GOLD-0007",
+      "statement": "如果未授权凭证尝试开门，系统应拒绝开门并记录事件。",
+      "sources": [{"block_id": "blk_0012", "quote": "未授权凭证尝试开门时，系统应拒绝开门并记录事件。"}]
+    },
+    {
+      "gold_id": "GOLD-0008",
+      "statement": "当门被强行打开时，系统应在五秒内向安保人员发送告警通知。",
+      "sources": [{"block_id": "blk_0014", "quote": "门被强行打开时，系统应在五秒内向安保人员发送告警通知。"}]
+    },
+    {
+      "gold_id": "GOLD-0009",
+      "statement": "当门禁控制器离线超过两分钟时，系统应在管理端显示设备离线状态。",
+      "sources": [{"block_id": "blk_0015", "quote": "门禁控制器离线超过两分钟时，系统应在管理端显示设备离线状态。"}]
+    },
+    {
+      "gold_id": "GOLD-0010",
+      "statement": "当管理员按时间范围查询开门记录时，系统应返回匹配的事件列表。",
+      "sources": [{"block_id": "blk_0017", "quote": "管理员按时间范围查询开门记录时，系统应返回匹配的事件列表。"}]
+    },
+    {
+      "gold_id": "GOLD-0011",
+      "statement": "当每天零点到达时，系统应生成前一日通行统计报表。",
+      "sources": [{"block_id": "blk_0018", "quote": "系统应在每天零点生成前一日通行统计报表。"}]
+    },
+    {
+      "gold_id": "GOLD-0012",
+      "statement": "系统应支持导出强行开门和未授权开门事件。",
+      "sources": [{"block_id": "blk_0018", "quote": "系统应支持导出强行开门和未授权开门事件。"}]
+    },
+    {
+      "gold_id": "GOLD-0013",
+      "statement": "在网络正常且控制器在线时，系统应在两秒内完成开门请求处理。",
+      "sources": [{"block_id": "blk_0020", "quote": "在网络正常且控制器在线时，系统应在两秒内完成开门请求处理。"}]
+    },
+    {
+      "gold_id": "GOLD-0014",
+      "statement": "当主认证服务不可用时，系统应切换到备用认证服务。",
+      "sources": [{"block_id": "blk_0021", "quote": "当主认证服务不可用时，系统应切换到备用认证服务。"}]
+    },
+    {
+      "gold_id": "GOLD-0015",
+      "statement": "配置项 audit.retention_days 应不小于 180。",
+      "sources": [{"block_id": "blk_0022", "quote": "配置项 audit.retention_days 应不小于 180。"}]
+    }
+  ]
+}

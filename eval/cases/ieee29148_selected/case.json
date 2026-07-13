@@ -1,0 +1,19 @@
+{
+  "name": "ieee29148_real_pdf_selected_scope",
+  "document": "tests/fixtures/ieee29148_srs_example.pdf",
+  "gold": "eval/cases/ieee29148_selected/gold.json",
+  "scope_block_ids": ["blk_0016"],
+  "model_mode": "recorded",
+  "recorded_fixture": "eval/cases/ieee29148_selected/response.json",
+  "chunking_mode": "off",
+  "validation_policy": "strict",
+  "allowed_pipeline_statuses": ["completed_with_warnings"],
+  "allowed_zero_result_reasons": [null],
+  "thresholds": {
+    "source_alignment_precision_min": 1.0,
+    "source_alignment_recall_min": 1.0,
+    "requirement_exact_precision_min": 1.0,
+    "requirement_exact_recall_min": 1.0,
+    "export_grounding_pass_rate_min": 1.0
+  }
+}

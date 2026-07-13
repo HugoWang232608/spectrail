@@ -4,11 +4,22 @@ from spectrail.llm.base import ModelRequest
 
 
 PROMPT_VERSION = "reqir_extraction_v1"
+CHUNKED_PROMPT_VERSION = "reqir_extraction_v2_chunked"
 
 
 def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) -> str:
     blocks = request.blocks[:max_blocks] if max_blocks is not None else request.blocks
     rendered_blocks = "\n\n".join(_render_block(block) for block in blocks)
+    chunk_context = ""
+    if request.metadata.get("chunked") or request.metadata.get("chunk_id"):
+        chunk_context = (
+            "Chunk context:\n"
+            f"- chunk_id: {request.metadata.get('chunk_id', '')}\n"
+            f"- chunk_index: {request.metadata.get('chunk_index_rendered', request.metadata.get('chunk_index', ''))}\n"
+            f"- chunk_count: {request.metadata.get('chunk_count_rendered', request.metadata.get('chunk_count', ''))}\n"
+            "- Extract requirements only from the blocks in this chunk.\n"
+            "- Never cite a block ID that is absent from this chunk.\n\n"
+        )
     return (
         "You are extracting software requirements into ReqIR JSON.\n\n"
         "Return JSON only with a top-level items array.\n\n"
@@ -28,6 +39,7 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         f"Document: {request.document_name}\n"
         f"Source format: {request.source_format}\n"
         f"Parser: {request.parser_name}\n\n"
+        f"{chunk_context}"
         "Blocks:\n\n"
         f"{rendered_blocks}"
     )

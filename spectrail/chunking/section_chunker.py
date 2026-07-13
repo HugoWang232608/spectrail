@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from math import ceil
 from typing import Callable
 
@@ -18,6 +17,9 @@ from spectrail.llm.fingerprints import sha256_hex
 
 class ChunkPlanningError(ValueError):
     pass
+
+
+CHUNKER_VERSION = "section_aware_v2"
 
 
 RequestFactory = Callable[[list[DocumentBlock], dict], ModelRequest]
@@ -93,6 +95,7 @@ class SectionAwareChunker:
         previous_new: list[DocumentBlock] = []
         while position < len(blocks):
             index = len(chunks) + 1
+            context = self._heading_context(blocks, position)
             overlap = [block for block in previous_new if block.type != "heading"][-config.overlap_blocks :]
             new_blocks: list[DocumentBlock] = []
             while position < len(blocks):
@@ -103,9 +106,12 @@ class SectionAwareChunker:
                 group = blocks[position:group_end]
                 candidate_new = [*new_blocks, *group]
                 prompt = self._render(
-                    [*overlap, *candidate_new],
+                    [*context, *overlap, *candidate_new],
                     index,
                     count_rendered,
+                    new_block_ids=[block.block_id for block in candidate_new],
+                    overlap_block_ids=[block.block_id for block in overlap],
+                    context_block_ids=[block.block_id for block in context],
                     request_factory=request_factory,
                     prompt_renderer=prompt_renderer,
                 )
@@ -120,19 +126,39 @@ class SectionAwareChunker:
                     candidate_new = [*new_blocks, block]
                     while overlap:
                         prompt = self._render(
-                            [*overlap, *candidate_new],
+                            [*context, *overlap, *candidate_new],
                             index,
                             count_rendered,
+                            new_block_ids=[item.block_id for item in candidate_new],
+                            overlap_block_ids=[item.block_id for item in overlap],
+                            context_block_ids=[item.block_id for item in context],
                             request_factory=request_factory,
                             prompt_renderer=prompt_renderer,
                         )
                         if len(prompt) <= config.max_rendered_prompt_chars:
                             break
                         overlap = overlap[1:]
+                    while context:
+                        prompt = self._render(
+                            [*context, *candidate_new],
+                            index,
+                            count_rendered,
+                            new_block_ids=[item.block_id for item in candidate_new],
+                            overlap_block_ids=[],
+                            context_block_ids=[item.block_id for item in context],
+                            request_factory=request_factory,
+                            prompt_renderer=prompt_renderer,
+                        )
+                        if len(prompt) <= config.max_rendered_prompt_chars:
+                            break
+                        context = context[1:]
                     prompt = self._render(
-                        [*overlap, *candidate_new],
+                        [*context, *overlap, *candidate_new],
                         index,
                         count_rendered,
+                        new_block_ids=[item.block_id for item in candidate_new],
+                        overlap_block_ids=[item.block_id for item in overlap],
+                        context_block_ids=[item.block_id for item in context],
                         request_factory=request_factory,
                         prompt_renderer=prompt_renderer,
                     )
@@ -146,14 +172,28 @@ class SectionAwareChunker:
             if not new_blocks:
                 raise ChunkPlanningError("CHUNK_PLANNING_STALLED")
             prompt = self._render(
-                [*overlap, *new_blocks],
+                [*context, *overlap, *new_blocks],
                 index,
                 count_rendered,
+                new_block_ids=[block.block_id for block in new_blocks],
+                overlap_block_ids=[block.block_id for block in overlap],
+                context_block_ids=[block.block_id for block in context],
                 request_factory=request_factory,
                 prompt_renderer=prompt_renderer,
             )
             warnings = ["CHUNK_OVERSIZED_BLOCK"] if len(prompt) > config.max_rendered_prompt_chars else []
-            chunks.append(self._make_chunk(index, [*overlap, *new_blocks], new_blocks, overlap, [], prompt, config, warnings))
+            chunks.append(
+                self._make_chunk(
+                    index,
+                    [*context, *overlap, *new_blocks],
+                    new_blocks,
+                    overlap,
+                    context,
+                    prompt,
+                    config,
+                    warnings,
+                )
+            )
             previous_new = new_blocks
         return chunks
 
@@ -172,6 +212,9 @@ class SectionAwareChunker:
                 chunk.blocks,
                 chunk.index,
                 count_rendered,
+                new_block_ids=chunk.new_block_ids,
+                overlap_block_ids=chunk.overlap_block_ids,
+                context_block_ids=chunk.context_block_ids,
                 request_factory=request_factory,
                 prompt_renderer=prompt_renderer,
             )
@@ -181,7 +224,7 @@ class SectionAwareChunker:
                     chunk.blocks,
                     [block for block in chunk.blocks if block.block_id in chunk.new_block_ids],
                     [block for block in chunk.blocks if block.block_id in chunk.overlap_block_ids],
-                    [],
+                    [block for block in chunk.blocks if block.block_id in chunk.context_block_ids],
                     prompt,
                     config,
                     chunk.warnings,
@@ -195,6 +238,9 @@ class SectionAwareChunker:
         index: int,
         count_rendered: str,
         *,
+        new_block_ids: list[str],
+        overlap_block_ids: list[str],
+        context_block_ids: list[str],
         request_factory: RequestFactory,
         prompt_renderer: PromptRenderer,
     ) -> str:
@@ -204,6 +250,9 @@ class SectionAwareChunker:
             "chunk_index_rendered": f"{index:0{CHUNK_COUNTER_WIDTH}d}",
             "chunk_count_rendered": count_rendered,
             "chunked": True,
+            "new_block_ids": new_block_ids,
+            "overlap_block_ids": overlap_block_ids,
+            "context_block_ids": context_block_ids,
         }
         return prompt_renderer(request_factory(blocks, metadata))
 
@@ -226,7 +275,14 @@ class SectionAwareChunker:
                 "context_block_ids": [block.block_id for block in context],
                 "normalized_block_texts": [" ".join(block.text.split()) for block in blocks],
                 "section_path": new_blocks[0].section_path if new_blocks else [],
-                "chunking_config": asdict(config),
+                "chunk_identity_config": {
+                    "chunker_version": CHUNKER_VERSION,
+                    "chunk_counter_width": CHUNK_COUNTER_WIDTH,
+                    "mode": config.mode,
+                    "max_rendered_prompt_chars": config.max_rendered_prompt_chars,
+                    "overlap_blocks": config.overlap_blocks,
+                    "min_blocks_for_auto": config.min_blocks_for_auto,
+                },
             }
         )
         content_chars = sum(len(block.text) for block in blocks)
@@ -245,3 +301,19 @@ class SectionAwareChunker:
             chunk_fingerprint=fingerprint,
             warnings=list(warnings),
         )
+
+    @staticmethod
+    def _heading_context(blocks: list[DocumentBlock], position: int) -> list[DocumentBlock]:
+        if position <= 0 or blocks[position].type == "heading":
+            return []
+        target_path = blocks[position].section_path
+        if not target_path:
+            return []
+        by_depth: dict[int, DocumentBlock] = {}
+        for block in blocks[:position]:
+            if block.type != "heading" or not block.section_path:
+                continue
+            depth = len(block.section_path)
+            if block.section_path == target_path[:depth]:
+                by_depth[depth] = block
+        return [by_depth[depth] for depth in sorted(by_depth)]

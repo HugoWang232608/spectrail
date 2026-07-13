@@ -12,6 +12,7 @@
       "safe_request_options": {}
     },
     "chunking": {
+      "chunker_version": "section_aware_v2",
       "max_rendered_prompt_chars": 4000,
       "overlap_blocks": 1,
       "chunk_counter_width": 8
@@ -20,8 +21,8 @@
   "responses": [
     {
       "chunk_id": "chk_00000001",
-      "chunk_fingerprint": "259370f0bef55621c975bf3a82472f74ba50c3fd1966a63391269ce143932ff2",
-      "request_fingerprint": "61fd09e68965396e1361c71e1501c5cc9a604895e60ea9de9f9b2970f0b2dc8a",
+      "chunk_fingerprint": "ef13019d50868f30e657d322ff77a3167d6cdfc49398a82bf58cee4fcfc01d83",
+      "request_fingerprint": "39fe3181b0115e2f44fb21f4a19ee46c040d7b3b58c490e9ea83bc0de78817a9",
       "block_ids": [
         "blk_0001", "blk_0002", "blk_0003", "blk_0004", "blk_0005", "blk_0006",
         "blk_0007", "blk_0008", "blk_0009", "blk_0010", "blk_0011", "blk_0012",
@@ -32,25 +33,25 @@
     },
     {
       "chunk_id": "chk_00000002",
-      "chunk_fingerprint": "19912c5a9e8fe991c3ebdffb9baf91f4ae518760d28575f7e62fdcf01f825eb4",
-      "request_fingerprint": "10cb6f7db20603eec8e77f807fd55e133bae9532b25f206b6adaf333f7cb6320",
+      "chunk_fingerprint": "70907b5e3f0c639cbb4e676dfb69cb462f6abef9f6aa535e57724f2971981ff9",
+      "request_fingerprint": "ea191210e6427fe8f5476c32b1403d609f3b334c0c0b8eea64b912d9ceda9006",
       "block_ids": [
-        "blk_0022", "blk_0023", "blk_0024", "blk_0025", "blk_0026", "blk_0027",
-        "blk_0028", "blk_0029", "blk_0030", "blk_0031", "blk_0032", "blk_0033",
-        "blk_0034", "blk_0035", "blk_0036", "blk_0037", "blk_0038", "blk_0039",
-        "blk_0040", "blk_0041", "blk_0042", "blk_0043"
+        "blk_0023", "blk_0024", "blk_0025", "blk_0026", "blk_0027", "blk_0028",
+        "blk_0029", "blk_0030", "blk_0031", "blk_0032", "blk_0033", "blk_0034",
+        "blk_0035", "blk_0036", "blk_0037", "blk_0038", "blk_0039", "blk_0040",
+        "blk_0041", "blk_0042", "blk_0043"
       ],
-      "fixture": "responses/10cb6f7db20603eec8e77f807fd55e133bae9532b25f206b6adaf333f7cb6320.json"
+      "fixture": "responses/ea191210e6427fe8f5476c32b1403d609f3b334c0c0b8eea64b912d9ceda9006.json"
     },
     {
       "chunk_id": "chk_00000003",
-      "chunk_fingerprint": "496bf9b91d0cbad323d4479e5454734d73304d703ed8e9ac3f8eed3c30424270",
-      "request_fingerprint": "3763553e8905bc0164d355b70ab4f9f0302c63cec1fd3f6565b04b342c5f40a4",
+      "chunk_fingerprint": "9afafbf31351678c7ca5c657e931115f93788140b6a8b340d0f794c2409f1e9b",
+      "request_fingerprint": "0af790287f7d44a3b28421987b866f8a5ad06ee4c41795581b35a94fc6c804b1",
       "block_ids": [
         "blk_0043", "blk_0044", "blk_0045", "blk_0046", "blk_0047", "blk_0048",
         "blk_0049", "blk_0050"
       ],
-      "fixture": "responses/3763553e8905bc0164d355b70ab4f9f0302c63cec1fd3f6565b04b342c5f40a4.json"
+      "fixture": "responses/0af790287f7d44a3b28421987b866f8a5ad06ee4c41795581b35a94fc6c804b1.json"
     }
   ]
 }

@@ -3,8 +3,11 @@ from pathlib import Path
 import pytest
 
 from spectrail.core.io import read_json
+from spectrail.chunking import ChunkingConfig
 from spectrail.llm.base import ModelResponse
-from spectrail.pipeline import PipelineRunner, PipelineValidationError
+from spectrail.llm.errors import ModelProviderError
+from spectrail.llm.request_profile import ModelRequestProfile
+from spectrail.pipeline import PipelineConfig, PipelineRunner, PipelineValidationError
 
 
 def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Path):
@@ -13,7 +16,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
         tmp_path / "chunked",
         model_mode="mock",
         chunking_mode="force",
-        max_rendered_prompt_chars=1600,
+        max_rendered_prompt_chars=2000,
     )
     manifest = read_json(result.manifest_path)
     chunks = read_json(result.output_dir / "parsed" / "chunks.json")
@@ -22,7 +25,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
     assert manifest["counts"]["validated_requirements"] == 15
     assert manifest["counts"]["collapsed_overlap_duplicates"] > 0
     assert all(chunk["new_block_ids"] for chunk in chunks)
-    assert all(chunk["rendered_prompt_chars"] <= 1600 for chunk in chunks)
+    assert all(chunk["rendered_prompt_chars"] <= 2000 for chunk in chunks)
 
 
 def test_quarantine_policy_exports_only_grounded_candidates(tmp_path: Path):
@@ -164,6 +167,25 @@ def test_recorded_chunk_bundle_replays_and_validates_profile(tmp_path: Path):
             max_rendered_prompt_chars=4000,
         )
 
+    with pytest.raises(PipelineValidationError, match="RECORDED_REQUEST_PROFILE_MISMATCH"):
+        PipelineRunner().extract(
+            "eval/cases/sample_srs_long/document.md",
+            tmp_path / "recorded-temperature-mismatch",
+            config=PipelineConfig(
+                model_mode="recorded",
+                recorded_fixture="fixtures/recorded/chunked/sample_srs_long",
+                request_profile=ModelRequestProfile(
+                    provider_adapter="openai_compatible_v1",
+                    provider_endpoint_id="mock",
+                    model_name="mock-fixture",
+                    temperature=0.5,
+                ),
+                chunking=ChunkingConfig(
+                    mode="force", max_rendered_prompt_chars=4000, overlap_blocks=1
+                ),
+            ),
+        )
+
 
 def test_empty_document_fails_before_model_call(tmp_path: Path, monkeypatch):
     document = tmp_path / "empty.md"
@@ -187,7 +209,7 @@ def test_partial_chunk_failure_with_empty_results_has_distinct_reason(tmp_path: 
     class PartiallyFailingModel:
         def generate(self, request):
             if request.metadata["chunk_index"] == 2:
-                raise RuntimeError("synthetic chunk failure")
+                raise ModelProviderError("synthetic chunk failure")
             return ModelResponse(
                 payload={"items": []},
                 model_mode="mock",
@@ -209,3 +231,51 @@ def test_partial_chunk_failure_with_empty_results_has_distinct_reason(tmp_path: 
     assert manifest["zero_result_reason"] == "PARTIAL_EXECUTION_EMPTY_RESULT"
     assert manifest["counts"]["chunks_failed"] == 1
     assert read_json(result.exported_reqir_path)["items"] == []
+
+
+def test_all_chunks_with_invalid_top_level_payload_fail(tmp_path: Path, monkeypatch):
+    class InvalidEnvelopeModel:
+        def generate(self, request):
+            payload = {"foo": "missing items"}
+            if request.metadata["chunk_index"] % 2 == 0:
+                payload = {"items": {"not": "an array"}}
+            return ModelResponse(payload=payload, model_mode="mock", model_name="invalid-envelope")
+
+    monkeypatch.setattr(
+        "spectrail.pipeline.runner.create_model_client", lambda **kwargs: InvalidEnvelopeModel()
+    )
+    output = tmp_path / "all-invalid-envelopes"
+    with pytest.raises(PipelineValidationError, match="ALL_CHUNKS_FAILED"):
+        PipelineRunner().extract(
+            "docs/sample_srs.md",
+            output,
+            model_mode="mock",
+            chunking_mode="force",
+            max_rendered_prompt_chars=1600,
+        )
+    manifest = read_json(output / "run_manifest.json")
+    assert manifest["status"] == "failed"
+    assert manifest["error_code"] == "ALL_CHUNKS_FAILED"
+    assert manifest["zero_result_reason"] == "ALL_CHUNKS_FAILED"
+    assert manifest["counts"]["chunks_failed"] == manifest["counts"]["chunks"]
+
+
+def test_unexpected_programming_error_is_not_isolated(tmp_path: Path, monkeypatch):
+    class BrokenModel:
+        def generate(self, request):
+            raise AttributeError("synthetic programming defect")
+
+    monkeypatch.setattr("spectrail.pipeline.runner.create_model_client", lambda **kwargs: BrokenModel())
+    output = tmp_path / "unexpected-defect"
+    with pytest.raises(AttributeError, match="synthetic programming defect"):
+        PipelineRunner().extract(
+            "docs/sample_srs.md",
+            output,
+            model_mode="mock",
+            chunking_mode="force",
+            max_rendered_prompt_chars=1600,
+        )
+    manifest = read_json(output / "run_manifest.json")
+    assert manifest["status"] == "failed"
+    assert manifest["error_code"] == "AttributeError"
+    assert manifest["counts"]["chunks_failed"] == 0

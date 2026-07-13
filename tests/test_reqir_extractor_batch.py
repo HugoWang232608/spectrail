@@ -54,3 +54,31 @@ def test_extract_batch_keeps_envelope_errors_at_chunk_level():
         assert "items array" in str(exc)
     else:
         raise AssertionError("expected envelope error")
+
+
+def test_extract_batch_rejects_context_only_source():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="heading",
+            text="Security",
+            order=1,
+        )
+    ]
+    result = ReqIRExtractor().extract_batch(
+        {
+            "items": [
+                {
+                    "statement": "Security",
+                    "source_block_id": "blk_0001",
+                    "source_quote": "Security",
+                }
+            ]
+        },
+        blocks,
+        "sample.md",
+        context_block_ids={"blk_0001"},
+    )
+    assert result.accepted_candidates == []
+    assert result.rejected_items[0].error_message == "item 1 cites a context-only block"

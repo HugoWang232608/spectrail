@@ -18,6 +18,8 @@ python -m spectrail extract DOCUMENT \
 
 Each chunk gets an eight-digit stable ID such as `chk_00000001`. The request fingerprint is SHA-256 over the canonical sanitized provider body, so secrets are excluded and the same body is used for both identity and transmission.
 
+For live providers, `SPECTRAIL_LLM_BASE_URL` is used only for transport. Set a stable logical `SPECTRAIL_LLM_ENDPOINT_ID` such as `openai-public` or `company-internal-gateway` for manifests and fingerprints. Custom URLs require this ID. Request options are allowlisted, cannot replace `model`, `messages`, `temperature`, or `response_format`, and are recursively checked for secret-like keys.
+
 Important artifacts include:
 
 ```text
@@ -36,6 +38,12 @@ extracted/reqir.quarantined.json
 
 Malformed model items are rejected individually. Valid siblings continue through aggregation and validation. Exact overlap duplicates collapse deterministically; conflicting concrete structured fields are retained as aggregation variants and marked for recheck.
 
+A chunk counts as successful only after its top-level payload has passed the `items` array contract. Provider, response parsing, and top-level payload contract failures may be isolated per chunk; configuration errors, file-system failures, and unexpected programming exceptions fail the whole pipeline. If no chunk passes the top-level contract, the result is `failed` with `ALL_CHUNKS_FAILED`.
+
+When a section is split, the planner carries its most recent heading hierarchy as context blocks when the real rendered-prompt budget allows. Context blocks are recorded separately in `context_block_ids`, are not new or overlap blocks, and cannot be cited as requirement sources. Under budget pressure the planner reduces overlap first and then optional heading context.
+
+`chunk_fingerprint` represents chunk planning identity and content. It includes the chunker version, counter width, content-affecting planner settings, and ordered new/overlap/context blocks. Execution-only settings such as `fail_fast` are excluded.
+
 ## Outcomes
 
 Successful runs use either `completed` or `completed_with_warnings`. Warning completion remains readable, reviewable, and exportable through the API and UI. `run_manifest.json` records `warning_codes`, `zero_result_reason`, chunk counts, rejected items, quarantined requirements, collapsed duplicates, and field conflicts.
@@ -52,6 +60,8 @@ python -m spectrail evaluate eval/cases/sample_srs/case.json \
 ```
 
 Reports are written as JSON and Markdown. The matcher first performs deterministic one-to-one source alignment and then exact requirement matching. Precision/recall and operational pipeline rates use explicit zero-denominator rules. Any failed threshold makes the command exit with status 1.
+
+Evaluation cases may declare a complete `request_profile`, including adapter identity, logical endpoint ID, model name, temperature, response format, and safe request options. A failed extraction writes a structured case report from `run_manifest.json` and does not prevent later cases from running; malformed case schemas and gold packages remain suite-level configuration errors. Reports include raw matching counts, duplicate/quarantine/rejection rates, chunk and model-call counts, execution sizes and timing, outcome fields, and every threshold comparison.
 
 The repository also includes `fixtures/recorded/chunked/sample_srs_long`. Its manifest binds each response to the root request profile, final request fingerprint, chunk fingerprint, chunk ID, and exact ordered block IDs. A normal single-file Recorded fixture is rejected when a run produces more than one chunk.
 

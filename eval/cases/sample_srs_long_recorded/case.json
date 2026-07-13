@@ -4,6 +4,14 @@
   "gold": "eval/cases/sample_srs/gold.json",
   "model_mode": "recorded",
   "recorded_fixture": "fixtures/recorded/chunked/sample_srs_long",
+  "request_profile": {
+    "provider_adapter": "openai_compatible_v1",
+    "provider_endpoint_id": "mock",
+    "model_name": "mock-fixture",
+    "temperature": 0.0,
+    "response_format": null,
+    "safe_request_options": {}
+  },
   "chunking_mode": "force",
   "max_rendered_prompt_chars": 4000,
   "overlap_blocks": 1,

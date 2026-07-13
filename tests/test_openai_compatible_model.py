@@ -34,6 +34,7 @@ def test_openai_compatible_model_reads_dotenv(monkeypatch, tmp_path):
     monkeypatch.delenv("SPECTRAIL_LLM_API_KEY", raising=False)
     monkeypatch.delenv("SPECTRAIL_LLM_MODEL", raising=False)
     monkeypatch.delenv("SPECTRAIL_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("SPECTRAIL_LLM_ENDPOINT_ID", raising=False)
     monkeypatch.delenv("SPECTRAIL_LLM_TIMEOUT_SECONDS", raising=False)
     (tmp_path / ".env").write_text(
         "\n".join(
@@ -41,6 +42,7 @@ def test_openai_compatible_model_reads_dotenv(monkeypatch, tmp_path):
                 "SPECTRAIL_LLM_API_KEY=test-key",
                 "SPECTRAIL_LLM_MODEL=test-model",
                 "SPECTRAIL_LLM_BASE_URL=https://example.test/v1/chat/completions",
+                "SPECTRAIL_LLM_ENDPOINT_ID=example-compatible",
                 "SPECTRAIL_LLM_TIMEOUT_SECONDS=12",
             ]
         ),
@@ -52,6 +54,7 @@ def test_openai_compatible_model_reads_dotenv(monkeypatch, tmp_path):
     assert config["api_key"] == "test-key"
     assert config["model_name"] == "test-model"
     assert config["base_url"] == "https://example.test/v1/chat/completions"
+    assert config["endpoint_id"] == "example-compatible"
     assert config["timeout_seconds"] == 12
 
 
@@ -65,6 +68,17 @@ def test_openai_compatible_model_can_disable_tls_verification(monkeypatch, tmp_p
     assert config["tls_verify"] is False
 
 
+def test_custom_base_url_requires_logical_endpoint_identity(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SPECTRAIL_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("SPECTRAIL_LLM_MODEL", "test-model")
+    monkeypatch.setenv("SPECTRAIL_LLM_BASE_URL", "https://internal.example/v1/chat/completions")
+    monkeypatch.delenv("SPECTRAIL_LLM_ENDPOINT_ID", raising=False)
+
+    with pytest.raises(ModelConfigurationError, match="SPECTRAIL_LLM_ENDPOINT_ID"):
+        OpenAICompatibleModel()._load_config()
+
+
 def test_openai_compatible_model_wraps_timeout(monkeypatch):
     def raise_timeout(*args, **kwargs):
         raise TimeoutError
@@ -75,6 +89,7 @@ def test_openai_compatible_model_wraps_timeout(monkeypatch):
         OpenAICompatibleModel(
             api_key="test-key",
             model_name="test-model",
+            endpoint_id="timeout-test",
             timeout_seconds=3,
         ).generate(_request())
 

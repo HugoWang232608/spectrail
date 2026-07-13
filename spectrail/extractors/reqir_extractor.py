@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from spectrail.core.ids import requirement_id
 from spectrail.core.models import DocumentBlock, RequirementIR, SourceSpan
+from spectrail.llm.errors import ModelPayloadContractError
 
 
 TYPE_ALIASES = {
@@ -103,12 +104,13 @@ class ReqIRExtractor:
         chunk_id: str | None = None,
         chunk_fingerprint: str | None = None,
         request_fingerprint: str | None = None,
+        context_block_ids: set[str] | None = None,
     ) -> ExtractionBatchResult:
         if not isinstance(payload, dict):
-            raise ValueError("model output is not a JSON object")
+            raise ModelPayloadContractError("model output is not a JSON object")
         items = payload.get("items")
         if not isinstance(items, list):
-            raise ValueError("model output must contain an items array")
+            raise ModelPayloadContractError("model output must contain an items array")
 
         by_id = {block.block_id: block for block in blocks}
         requirements: list[RequirementIR] = []
@@ -121,6 +123,7 @@ class ReqIRExtractor:
                     by_id=by_id,
                     document_name=Path(document_name).name,
                     model_mode=model_mode,
+                    context_block_ids=context_block_ids or set(),
                 )
             except (TypeError, ValueError) as exc:
                 rejected.append(
@@ -154,12 +157,15 @@ class ReqIRExtractor:
         by_id: dict[str, DocumentBlock],
         document_name: str,
         model_mode: str,
+        context_block_ids: set[str],
     ) -> RequirementIR:
         if not isinstance(item, dict):
             raise ValueError(f"item {index} is not a JSON object")
         for field in ("statement", "source_block_id", "source_quote"):
             if not item.get(field):
                 raise ValueError(f"item {index} missing required field: {field}")
+        if str(item["source_block_id"]) in context_block_ids:
+            raise ValueError(f"item {index} cites a context-only block")
         field_normalizations: list[dict[str, str]] = []
         confidence = _normalize_confidence(item.get("confidence", 0.0), field_normalizations)
         requirement_type = _normalize_enum(

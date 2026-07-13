@@ -26,11 +26,13 @@ class OpenAICompatibleModel:
         model_name: str | None = None,
         *,
         base_url: str | None = None,
+        endpoint_id: str | None = None,
         api_key: str | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
         self.model_name = model_name
         self.base_url = base_url
+        self.endpoint_id = endpoint_id
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
 
@@ -39,7 +41,7 @@ class OpenAICompatibleModel:
         prompt = build_reqir_prompt(request)
         profile = request.request_profile or ModelRequestProfile(
             provider_adapter="openai_compatible_v1",
-            provider_endpoint_id=config["base_url"],
+            provider_endpoint_id=config["endpoint_id"],
             model_name=config["model_name"],
         )
         body = OPENAI_COMPATIBLE_ADAPTER.build_provider_request_body(prompt=prompt, profile=profile)
@@ -52,7 +54,7 @@ class OpenAICompatibleModel:
             raw_text=raw_text,
             prompt=prompt,
             metadata={
-                "base_url": config["base_url"],
+                "provider_endpoint_id": config["endpoint_id"],
                 "model_name": config["model_name"],
                 "prompt_version": PROMPT_VERSION,
                 "tls_verify": config["tls_verify"],
@@ -78,13 +80,29 @@ class OpenAICompatibleModel:
             except ValueError as exc:
                 raise ModelConfigurationError("SPECTRAIL_LLM_TIMEOUT_SECONDS must be a number") from exc
 
+        base_url = (
+            self.base_url
+            or os.environ.get("SPECTRAIL_LLM_BASE_URL")
+            or dotenv.get("SPECTRAIL_LLM_BASE_URL")
+            or DEFAULT_BASE_URL
+        )
+        endpoint_id = (
+            self.endpoint_id
+            or os.environ.get("SPECTRAIL_LLM_ENDPOINT_ID")
+            or dotenv.get("SPECTRAIL_LLM_ENDPOINT_ID")
+        )
+        if endpoint_id is None and base_url == DEFAULT_BASE_URL:
+            endpoint_id = "openai-public"
+        if not endpoint_id:
+            raise ModelConfigurationError(
+                "SPECTRAIL_LLM_ENDPOINT_ID is required when using a custom base URL"
+            )
+
         return {
             "api_key": api_key,
             "model_name": model_name,
-            "base_url": self.base_url
-            or os.environ.get("SPECTRAIL_LLM_BASE_URL")
-            or dotenv.get("SPECTRAIL_LLM_BASE_URL")
-            or DEFAULT_BASE_URL,
+            "base_url": base_url,
+            "endpoint_id": endpoint_id,
             "timeout_seconds": timeout_seconds or 60.0,
             "tls_verify": not insecure,
         }

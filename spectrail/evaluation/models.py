@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from spectrail.llm.request_profile import ModelRequestProfile
 
 
 class GoldSource(BaseModel):
@@ -30,6 +32,25 @@ class GoldPackage(BaseModel):
     items: list[GoldRequirement]
 
 
+class EvaluationRequestProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_adapter: str
+    provider_endpoint_id: str
+    model_name: str
+    temperature: float = 0.0
+    response_format: dict[str, Any] | None = None
+    safe_request_options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_runtime_profile(self) -> "EvaluationRequestProfile":
+        self.to_runtime()
+        return self
+
+    def to_runtime(self) -> ModelRequestProfile:
+        return ModelRequestProfile(**self.model_dump(mode="python"))
+
+
 class EvaluationCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -39,6 +60,7 @@ class EvaluationCase(BaseModel):
     scope_block_ids: list[str] = Field(default_factory=list)
     model_mode: Literal["mock", "recorded", "live"] = "mock"
     model_name: str | None = None
+    request_profile: EvaluationRequestProfile | None = None
     recorded_fixture: str | None = None
     chunking_mode: Literal["off", "auto", "force"] = "auto"
     max_rendered_prompt_chars: int = 16000
@@ -47,3 +69,13 @@ class EvaluationCase(BaseModel):
     allowed_pipeline_statuses: list[str] = Field(default_factory=lambda: ["completed"])
     allowed_zero_result_reasons: list[str | None] = Field(default_factory=lambda: [None])
     thresholds: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_model_identity(self) -> "EvaluationCase":
+        if (
+            self.request_profile is not None
+            and self.model_name is not None
+            and self.model_name != self.request_profile.model_name
+        ):
+            raise ValueError("model_name must match request_profile.model_name")
+        return self

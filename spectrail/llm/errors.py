@@ -9,6 +9,10 @@ class ModelResponseParseError(ModelError):
     pass
 
 
+class ModelPayloadContractError(ModelError):
+    pass
+
+
 class ModelConfigurationError(ModelError):
     pass
 

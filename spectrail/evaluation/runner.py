@@ -6,15 +6,17 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from spectrail.core.io import ensure_dir, read_json, write_json
-from spectrail.core.models import DocumentBlock, RequirementIR
+from spectrail.core.models import RequirementIR
+from spectrail.chunking import ChunkPlanningError, ChunkingConfig
 from spectrail.evaluation.matcher import match_requirements
 from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
-from spectrail.pipeline import PipelineRunner
+from spectrail.llm.errors import ModelError
+from spectrail.parsers import DocumentParseError
+from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 
 RequirementList = TypeAdapter(list[RequirementIR])
-BlockList = TypeAdapter(list[DocumentBlock])
 
 
 class EvaluationRunner:
@@ -41,10 +43,9 @@ class EvaluationRunner:
         case = EvaluationCase.model_validate(read_json(case_file))
         document = _resolve_path(case.document, case_file.parent)
         gold_path = _resolve_path(case.gold, case_file.parent)
+        gold = GoldPackage.model_validate(read_json(gold_path))
         pipeline_output = output / "pipeline"
-        result = PipelineRunner().extract(
-            document,
-            pipeline_output,
+        config = PipelineConfig(
             model_mode=case.model_mode,
             model_name=case.model_name,
             recorded_fixture=(
@@ -52,16 +53,40 @@ class EvaluationRunner:
                 if case.recorded_fixture
                 else None
             ),
-            chunking_mode=case.chunking_mode,
-            max_rendered_prompt_chars=case.max_rendered_prompt_chars,
-            overlap_blocks=case.overlap_blocks,
+            request_profile=(case.request_profile.to_runtime() if case.request_profile else None),
+            chunking=ChunkingConfig(
+                mode=case.chunking_mode,
+                max_rendered_prompt_chars=case.max_rendered_prompt_chars,
+                overlap_blocks=case.overlap_blocks,
+            ),
             validation_policy=case.validation_policy,
         )
-        gold = GoldPackage.model_validate(read_json(gold_path))
-        actual_package = read_json(result.exported_reqir_path)
-        candidates = RequirementList.validate_python(actual_package.get("items", []))
-        blocks = BlockList.validate_python(read_json(pipeline_output / "parsed" / "blocks.json"))
-        manifest = read_json(result.manifest_path)
+        pipeline_exception: Exception | None = None
+        try:
+            PipelineRunner().extract(document, pipeline_output, config=config)
+        except (PipelineError, ChunkPlanningError, DocumentParseError, ModelError) as exc:
+            pipeline_exception = exc
+
+        manifest_path = pipeline_output / "run_manifest.json"
+        manifest = (
+            read_json(manifest_path)
+            if manifest_path.exists()
+            else {
+                "status": "failed",
+                "error": str(pipeline_exception) if pipeline_exception else "pipeline failed",
+                "error_code": (
+                    type(pipeline_exception).__name__ if pipeline_exception else "PIPELINE_FAILED"
+                ),
+                "counts": {},
+                "execution": {},
+            }
+        )
+        export_path = pipeline_output / "exports" / "reqir.json"
+        if manifest.get("status") in {"completed", "completed_with_warnings"} and export_path.exists():
+            actual_package = read_json(export_path)
+            candidates = RequirementList.validate_python(actual_package.get("items", []))
+        else:
+            candidates = []
         in_scope = [
             candidate
             for candidate in candidates
@@ -70,6 +95,7 @@ class EvaluationRunner:
         ]
         matches = match_requirements(candidates, gold.items, scope_block_ids=case.scope_block_ids)
         counts = manifest.get("counts", {})
+        execution = manifest.get("execution", {})
         metrics = build_evaluation_metrics(
             gold_count=len(gold.items),
             candidate_count=len(in_scope),
@@ -84,6 +110,19 @@ class EvaluationRunner:
             quarantined_count=counts.get("quarantined_requirements", 0),
             model_items_total=counts.get("model_items_total", 0),
             rejected_item_count=counts.get("model_items_rejected", 0),
+            raw_candidate_count=counts.get("raw_candidates", counts.get("raw_requirements", 0)),
+            collapsed_duplicate_count=counts.get("collapsed_overlap_duplicates", 0),
+            chunk_count=counts.get("chunks", 0),
+            chunk_completed_count=(
+                counts.get("chunks_completed", 0)
+                + counts.get("chunks_completed_with_warnings", 0)
+            ),
+            chunk_failed_count=counts.get("chunks_failed", 0),
+            model_call_count=counts.get("model_call_count", 0),
+            elapsed_ms=execution.get("elapsed_ms", 0),
+            rendered_prompt_chars=execution.get("rendered_prompt_chars", 0),
+            response_chars=execution.get("response_chars", 0),
+            estimated_tokens=execution.get("estimated_tokens", 0),
         )
         threshold_results = _threshold_results(metrics, case.thresholds)
         outcome_pass = (
@@ -94,6 +133,9 @@ class EvaluationRunner:
             "name": case.name,
             "passed": outcome_pass and all(item["passed"] for item in threshold_results.values()),
             "pipeline_status": manifest.get("status"),
+            "error_code": manifest.get("error_code"),
+            "error": manifest.get("error"),
+            "warning_codes": manifest.get("warning_codes", []),
             "zero_result_reason": manifest.get("zero_result_reason"),
             "annotation_scope": "selected_blocks" if case.scope_block_ids else "full_document",
             "scope_block_ids": case.scope_block_ids,
@@ -148,11 +190,55 @@ def _suite_markdown(report: dict[str, Any]) -> str:
 
 
 def _case_markdown(report: dict[str, Any]) -> str:
-    return (
-        f"# {report['name']}\n\n"
-        f"Status: {'PASS' if report['passed'] else 'FAIL'}\n\n"
-        f"- Pipeline: {report['pipeline_status']}\n"
-        f"- Source recall: {report['source_alignment_recall']:.4f}\n"
-        f"- Requirement exact recall: {report['requirement_exact_recall']:.4f}\n"
-        f"- Export grounding: {report['export_grounding_pass_rate']:.4f}\n"
-    )
+    lines = [
+        f"# {report['name']}",
+        "",
+        f"Status: {'PASS' if report['passed'] else 'FAIL'}",
+        "",
+        "## Outcome",
+        "",
+        f"- Pipeline status: {report['pipeline_status']}",
+        f"- Error code: {report.get('error_code') or 'None'}",
+        f"- Zero result reason: {report.get('zero_result_reason') or 'None'}",
+        f"- Warning codes: {', '.join(report.get('warning_codes', [])) or 'None'}",
+        "",
+        "## Counts and execution",
+        "",
+        f"- Gold requirements: {report['gold_requirements']}",
+        f"- Candidates in scope: {report['validated_candidates_in_scope']}",
+        f"- Raw / aggregated / validated / exported: {report['raw_candidates']} / "
+        f"{report['aggregated_requirements']} / {report['validated_requirements']} / "
+        f"{report['exported_requirements']}",
+        f"- Source / exact matches: {report['source_matching_cardinality']} / "
+        f"{report['requirement_matching_cardinality']}",
+        f"- Chunks completed / planned / failed: {report['chunk_completed_count']} / "
+        f"{report['chunk_count']} / {report['chunk_failed_count']}",
+        f"- Model calls: {report['model_call_count']}",
+        f"- Elapsed ms: {report['elapsed_ms']}",
+        f"- Prompt / response chars / estimated tokens: {report['rendered_prompt_chars']} / "
+        f"{report['response_chars']} / {report['estimated_tokens']}",
+        "",
+        "## Metrics",
+        "",
+        f"- Source precision / recall / F1: {report['source_alignment_precision']:.4f} / "
+        f"{report['source_alignment_recall']:.4f} / {report['source_alignment_f1']:.4f}",
+        f"- Requirement exact precision / recall / F1: "
+        f"{report['requirement_exact_precision']:.4f} / "
+        f"{report['requirement_exact_recall']:.4f} / "
+        f"{report['requirement_exact_f1']:.4f}",
+        f"- Export grounding: {report['export_grounding_pass_rate']:.4f}",
+        f"- Duplicate / quarantine / rejected rates: {report['duplicate_rate']:.4f} / "
+        f"{report['quarantine_rate']:.4f} / {report['rejected_item_rate']:.4f}",
+        "",
+        "## Thresholds",
+        "",
+    ]
+    if report["threshold_results"]:
+        for name, result in report["threshold_results"].items():
+            lines.append(
+                f"- {'PASS' if result['passed'] else 'FAIL'} {name}: "
+                f"{result['actual']} {result['operator']} {result['threshold']}"
+            )
+    else:
+        lines.append("- None")
+    return "\n".join(lines) + "\n"

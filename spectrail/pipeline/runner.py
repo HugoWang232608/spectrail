@@ -17,6 +17,11 @@ from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.extractors.ears_normalizer import normalize_requirements
 from spectrail.extractors.reqir_extractor import ExtractionBatchResult, ReqIRExtractor
 from spectrail.llm.base import ModelRequest, ModelResponse
+from spectrail.llm.errors import (
+    ModelPayloadContractError,
+    ModelProviderError,
+    ModelResponseParseError,
+)
 from spectrail.llm.factory import create_model_client
 from spectrail.llm.fingerprints import build_request_identity
 from spectrail.llm.openai_compatible import OpenAICompatibleModel
@@ -125,6 +130,10 @@ class PipelineRunner:
         rejected_items = []
         chunk_errors: list[dict[str, Any]] = []
         model_items_total = 0
+        model_call_count = 0
+        chunk_index_entries: list[dict[str, Any]] = []
+        total_elapsed_ms = 0
+        total_response_chars = 0
         requirements = []
         quarantined = []
         aggregation = None
@@ -206,10 +215,7 @@ class PipelineRunner:
             write_json(parsed_dir / "chunks.json", [_chunk_dump(chunk) for chunk in chunks])
 
             extractor = ReqIRExtractor()
-            chunk_index_entries = []
-            responses: list[ModelResponse] = []
-            total_elapsed_ms = 0
-            total_response_chars = 0
+            successful_responses: list[ModelResponse] = []
 
             for chunk in chunks:
                 chunk_dir = ensure_dir(extracted_dir / "chunk_results" / chunk.chunk_id)
@@ -221,7 +227,9 @@ class PipelineRunner:
                     "chunk_index_rendered": f"{chunk.index:08d}",
                     "chunk_count_rendered": f"{len(chunks):08d}",
                     "chunk_fingerprint": chunk.chunk_fingerprint,
+                    "new_block_ids": chunk.new_block_ids,
                     "overlap_block_ids": chunk.overlap_block_ids,
+                    "context_block_ids": chunk.context_block_ids,
                     "prompt_version": CHUNKED_PROMPT_VERSION if chunked_execution else PROMPT_VERSION,
                 }
                 request = request_factory(chunk.blocks, metadata)
@@ -242,15 +250,34 @@ class PipelineRunner:
                     (chunk_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
 
                 started = time.perf_counter()
+                model_call_count += 1
                 try:
                     response = model_client.generate(request)
+                except (ModelProviderError, ModelResponseParseError) as exc:
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
-                    responses.append(response)
-                    model_items = response.payload.get("items", []) if isinstance(response.payload, dict) else []
-                    model_items_total += len(model_items) if isinstance(model_items, list) else 0
-                    write_json(chunk_dir / "model_response.json", response.payload)
-                    if response.raw_text:
-                        (chunk_dir / "model_response.raw.txt").write_text(response.raw_text, encoding="utf-8")
+                    total_elapsed_ms += elapsed_ms
+                    error = _chunk_error(chunk.chunk_id, exc, elapsed_ms)
+                    write_json(chunk_dir / "error.json", error)
+                    chunk_errors.append(error)
+                    chunk_index_entries.append(
+                        {"chunk_id": chunk.chunk_id, "status": "failed", "error": error}
+                    )
+                    if pipeline_config.chunking.fail_fast or len(chunks) == 1:
+                        raise
+                    continue
+
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                total_elapsed_ms += elapsed_ms
+                response_chars = len(
+                    response.raw_text or json.dumps(response.payload, ensure_ascii=False)
+                )
+                total_response_chars += response_chars
+                write_json(chunk_dir / "model_response.json", response.payload)
+                if response.raw_text:
+                    (chunk_dir / "model_response.raw.txt").write_text(
+                        response.raw_text, encoding="utf-8"
+                    )
+                try:
                     batch = extractor.extract_batch(
                         payload=response.payload,
                         blocks=chunk.blocks,
@@ -259,50 +286,55 @@ class PipelineRunner:
                         chunk_id=chunk.chunk_id if chunked_execution else None,
                         chunk_fingerprint=chunk.chunk_fingerprint if chunked_execution else None,
                         request_fingerprint=request_fingerprint if chunked_execution else None,
+                        context_block_ids=set(chunk.context_block_ids),
                     )
-                    _stamp_chunk_metadata(batch, chunk.index)
-                    accepted_candidates.extend(batch.accepted_candidates)
-                    rejected_items.extend(batch.rejected_items)
-                    write_json(chunk_dir / "candidates.accepted.json", model_list_dump(batch.accepted_candidates))
-                    write_json(chunk_dir / "candidates.rejected.json", [_rejected_dump(item) for item in batch.rejected_items])
-                    chunk_status = "completed_with_warnings" if batch.rejected_items else "completed"
-                    response_chars = len(response.raw_text or json.dumps(response.payload, ensure_ascii=False))
-                    total_elapsed_ms += elapsed_ms
-                    total_response_chars += response_chars
-                    chunk_index_entries.append(
-                        {
-                            "chunk_id": chunk.chunk_id,
-                            "response_path": f"chunk_results/{chunk.chunk_id}/model_response.json",
-                            "status": chunk_status,
-                            "model_name": response.model_name,
-                            "request_fingerprint": request_fingerprint,
-                            "accepted_candidate_count": len(batch.accepted_candidates),
-                            "rejected_item_count": len(batch.rejected_items),
-                            "elapsed_ms": elapsed_ms,
-                        }
-                    )
-                except Exception as exc:
-                    elapsed_ms = int((time.perf_counter() - started) * 1000)
-                    error = {
-                        "chunk_id": chunk.chunk_id,
-                        "error_code": type(exc).__name__,
-                        "error_message": str(exc),
-                        "elapsed_ms": elapsed_ms,
-                    }
+                except ModelPayloadContractError as exc:
+                    error = _chunk_error(chunk.chunk_id, exc, elapsed_ms)
                     write_json(chunk_dir / "error.json", error)
                     chunk_errors.append(error)
-                    chunk_index_entries.append({"chunk_id": chunk.chunk_id, "status": "failed", "error": error})
+                    chunk_index_entries.append(
+                        {"chunk_id": chunk.chunk_id, "status": "failed", "error": error}
+                    )
                     if pipeline_config.chunking.fail_fast or len(chunks) == 1:
                         raise
+                    continue
+
+                successful_responses.append(response)
+                model_items = response.payload["items"]
+                model_items_total += len(model_items)
+                _stamp_chunk_metadata(batch, chunk.index)
+                accepted_candidates.extend(batch.accepted_candidates)
+                rejected_items.extend(batch.rejected_items)
+                write_json(
+                    chunk_dir / "candidates.accepted.json",
+                    model_list_dump(batch.accepted_candidates),
+                )
+                write_json(
+                    chunk_dir / "candidates.rejected.json",
+                    [_rejected_dump(item) for item in batch.rejected_items],
+                )
+                chunk_status = "completed_with_warnings" if batch.rejected_items else "completed"
+                chunk_index_entries.append(
+                    {
+                        "chunk_id": chunk.chunk_id,
+                        "response_path": f"chunk_results/{chunk.chunk_id}/model_response.json",
+                        "status": chunk_status,
+                        "model_name": response.model_name,
+                        "request_fingerprint": request_fingerprint,
+                        "accepted_candidate_count": len(batch.accepted_candidates),
+                        "rejected_item_count": len(batch.rejected_items),
+                        "elapsed_ms": elapsed_ms,
+                    }
+                )
 
             write_json(extracted_dir / "model_response.index.json", chunk_index_entries)
             write_json(extracted_dir / "chunk_errors.json", chunk_errors)
             write_json(extracted_dir / "rejected_model_items.json", [_rejected_dump(item) for item in rejected_items])
-            if not responses:
+            if not successful_responses:
                 raise PipelineValidationError("ALL_CHUNKS_FAILED")
 
             if len(chunks) == 1:
-                response = responses[0]
+                response = successful_responses[0]
                 write_json(extracted_dir / "model_response.json", response.payload)
                 if response.raw_text:
                     (extracted_dir / "model_response.raw.txt").write_text(response.raw_text, encoding="utf-8")
@@ -311,7 +343,7 @@ class PipelineRunner:
 
             aggregation = CandidateAggregator().aggregate(accepted_candidates, blocks)
             requirements = normalize_requirements(aggregation.requirements)
-            primary_response = responses[0]
+            primary_response = successful_responses[0]
             write_json(
                 extracted_dir / "reqir.raw.json",
                 {
@@ -450,6 +482,7 @@ class PipelineRunner:
                 ),
                 "chunks_failed": len(chunk_errors),
                 "model_items_total": model_items_total,
+                "model_call_count": model_call_count,
                 "model_items_accepted": len(accepted_candidates),
                 "model_items_rejected": len(rejected_items),
                 "raw_requirements": len(accepted_candidates),
@@ -506,13 +539,23 @@ class PipelineRunner:
             write_json(manifest_path, completed_manifest)
         except Exception as exc:
             failed = fail_manifest(manifest, str(exc))
+            failed["error_code"] = type(exc).__name__
             failed["counts"] = {
                 "blocks": len(blocks),
                 "chunks": len(chunks),
+                "chunks_completed": sum(
+                    item.get("status") == "completed" for item in chunk_index_entries
+                ),
+                "chunks_completed_with_warnings": sum(
+                    item.get("status") == "completed_with_warnings"
+                    for item in chunk_index_entries
+                ),
                 "chunks_failed": len(chunk_errors),
                 "model_items_total": model_items_total,
+                "model_call_count": model_call_count,
                 "model_items_accepted": len(accepted_candidates),
                 "model_items_rejected": len(rejected_items),
+                "raw_candidates": len(accepted_candidates),
                 "aggregated_requirements": len(requirements),
                 "validated_requirements": len(validated_requirements),
                 "quarantined_requirements": len(quarantined),
@@ -522,6 +565,12 @@ class PipelineRunner:
                 "field_conflicts": (
                     aggregation.field_conflict_count if aggregation is not None else 0
                 ),
+            }
+            failed["execution"] = {
+                "elapsed_ms": total_elapsed_ms,
+                "rendered_prompt_chars": sum(chunk.rendered_prompt_chars for chunk in chunks),
+                "response_chars": total_response_chars,
+                "estimated_tokens": sum(chunk.estimated_tokens for chunk in chunks),
             }
             if str(exc) in {
                 "NO_VALID_MODEL_ITEMS",
@@ -585,7 +634,7 @@ def _resolve_request_profile(config: PipelineConfig, model_client: Any) -> Model
         resolved = model_client._load_config(insecure=config.insecure)
         return ModelRequestProfile(
             "openai_compatible_v1",
-            str(resolved["base_url"]).split("?", 1)[0],
+            resolved["endpoint_id"],
             resolved["model_name"],
         )
     raise PipelineValidationError("unable to resolve model request profile")
@@ -610,6 +659,15 @@ def _chunk_dump(chunk: Any) -> dict[str, Any]:
 
 def _rejected_dump(item: Any) -> dict[str, Any]:
     return asdict(item)
+
+
+def _chunk_error(chunk_id: str, exc: Exception, elapsed_ms: int) -> dict[str, Any]:
+    return {
+        "chunk_id": chunk_id,
+        "error_code": type(exc).__name__,
+        "error_message": str(exc),
+        "elapsed_ms": elapsed_ms,
+    }
 
 
 def _stamp_chunk_metadata(batch: ExtractionBatchResult, chunk_index: int) -> None:

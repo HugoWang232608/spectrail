@@ -17,7 +17,11 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
             f"- chunk_id: {request.metadata.get('chunk_id', '')}\n"
             f"- chunk_index: {request.metadata.get('chunk_index_rendered', request.metadata.get('chunk_index', ''))}\n"
             f"- chunk_count: {request.metadata.get('chunk_count_rendered', request.metadata.get('chunk_count', ''))}\n"
+            f"- new_block_ids: {request.metadata.get('new_block_ids', [])}\n"
+            f"- overlap_block_ids: {request.metadata.get('overlap_block_ids', [])}\n"
+            f"- context_block_ids: {request.metadata.get('context_block_ids', [])}\n"
             "- Extract requirements only from the blocks in this chunk.\n"
+            "- Heading context blocks are context only; never extract or cite them as requirements.\n"
             "- Never cite a block ID that is absent from this chunk.\n\n"
         )
     return (

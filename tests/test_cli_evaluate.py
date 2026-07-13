@@ -10,6 +10,14 @@ def test_evaluate_cli_generates_passing_report(tmp_path: Path):
     report = read_json(output / "evaluation_report.json")
     assert report["passed"] is True
     assert report["cases"][0]["requirement_exact_recall"] == 1.0
+    assert report["cases"][0]["chunk_count"] == 1
+    assert report["cases"][0]["model_call_count"] == 1
+    assert report["cases"][0]["raw_candidates"] == 15
+    case_markdown = (output / "cases" / "sample_srs" / "case_report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Counts and execution" in case_markdown
+    assert "## Thresholds" in case_markdown
 
 
 def test_selected_scope_evaluation_is_reported_explicitly(tmp_path: Path):
@@ -48,3 +56,38 @@ def test_evaluate_cli_returns_one_when_threshold_fails(tmp_path: Path):
         encoding="utf-8",
     )
     assert main(["evaluate", str(case), "--output", str(tmp_path / "report")]) == 1
+
+
+def test_evaluation_suite_reports_failed_pipeline_and_continues(tmp_path: Path):
+    cases = tmp_path / "cases"
+    failing = cases / "a_failing"
+    passing = cases / "b_passing"
+    failing.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    invalid_response = failing / "response.json"
+    invalid_response.write_text('{"payload":{"items":{"invalid":true}}}', encoding="utf-8")
+    (failing / "case.json").write_text(
+        '{"name":"failed-pipeline","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json","model_mode":"recorded",'
+        f'"recorded_fixture":"{invalid_response.as_posix()}"}}',
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        '{"name":"passing-pipeline","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"thresholds":{"requirement_exact_recall_min":1.0}}',
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "suite-report"
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    failed = suite["cases"][0]
+    assert failed["pipeline_status"] == "failed"
+    assert failed["error_code"] == "ModelPayloadContractError"
+    assert failed["passed"] is False
+    markdown = (output / "cases" / "a_failing" / "case_report.md").read_text(encoding="utf-8")
+    assert "Pipeline status: failed" in markdown
+    assert "Zero result reason: None" in markdown

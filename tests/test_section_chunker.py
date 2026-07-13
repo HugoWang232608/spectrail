@@ -33,7 +33,7 @@ def _request_factory(blocks, metadata):
 
 def test_forced_chunking_respects_final_prompt_budget_and_progress():
     blocks = _blocks()
-    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=1600, overlap_blocks=1)
+    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2000, overlap_blocks=1)
     chunks = SectionAwareChunker().chunk(
         blocks,
         config,
@@ -84,3 +84,63 @@ def test_chunking_off_keeps_single_over_budget_chunk_with_warning():
     )
     assert len(chunks) == 1
     assert chunks[0].warnings == ["CHUNK_PROMPT_OVER_BUDGET"]
+
+
+def test_split_section_carries_heading_as_budgeted_context():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="heading",
+            text="Security Requirements",
+            section_path=["Security Requirements"],
+            order=1,
+            metadata={"level": 1},
+        ),
+        *[
+            DocumentBlock(
+                block_id=f"blk_{index:04d}",
+                document_id="doc_001",
+                type="paragraph",
+                text=f"Requirement {index}: The system shall retain security evidence. " * 3,
+                section_path=["Security Requirements"],
+                order=index,
+            )
+            for index in range(2, 12)
+        ],
+    ]
+    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2000, overlap_blocks=1)
+    chunks = SectionAwareChunker().chunk(
+        blocks,
+        config,
+        request_factory=_request_factory,
+        prompt_renderer=build_reqir_prompt,
+    )
+    contextual = [chunk for chunk in chunks[1:] if chunk.context_block_ids]
+    assert contextual
+    assert all(chunk.context_block_ids == ["blk_0001"] for chunk in contextual)
+    assert all("blk_0001" not in chunk.new_block_ids for chunk in contextual)
+    assert all(chunk.rendered_prompt_chars <= config.max_rendered_prompt_chars for chunk in chunks)
+
+
+def test_fail_fast_does_not_change_chunk_fingerprint():
+    blocks = _blocks()
+    base = SectionAwareChunker().chunk(
+        blocks,
+        ChunkingConfig(
+            mode="force", max_rendered_prompt_chars=1600, overlap_blocks=1, fail_fast=False
+        ),
+        request_factory=_request_factory,
+        prompt_renderer=build_reqir_prompt,
+    )
+    fail_fast = SectionAwareChunker().chunk(
+        blocks,
+        ChunkingConfig(
+            mode="force", max_rendered_prompt_chars=1600, overlap_blocks=1, fail_fast=True
+        ),
+        request_factory=_request_factory,
+        prompt_renderer=build_reqir_prompt,
+    )
+    assert [chunk.chunk_fingerprint for chunk in base] == [
+        chunk.chunk_fingerprint for chunk in fail_fast
+    ]

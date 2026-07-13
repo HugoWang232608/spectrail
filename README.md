@@ -292,6 +292,7 @@ Run live mode with an OpenAI-compatible provider:
 ```bash
 cp .env.example .env
 # edit .env and set SPECTRAIL_LLM_API_KEY / SPECTRAIL_LLM_MODEL
+# for a custom base URL, also set a stable logical SPECTRAIL_LLM_ENDPOINT_ID
 python -m spectrail extract docs/sample_srs.md --model-mode live --output outputs/demo_live
 ```
 
@@ -306,6 +307,8 @@ Recorded fixtures are tied to their source document blocks; the default recorded
 ## P4 Evaluation and chunked extraction
 
 P4 adds deterministic, section-aware chunking for long documents, overlap-safe candidate aggregation, per-item model-output isolation, request fingerprints, quarantine mode, and a checked-in evaluation quality gate.
+
+Split sections retain budgeted heading context, while top-level response failures are isolated only when they are known model/contract errors. Unexpected code and file-system failures stop the pipeline instead of being converted into warning completion.
 
 Force a small prompt budget to exercise the multi-chunk path:
 

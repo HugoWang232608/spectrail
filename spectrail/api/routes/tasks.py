@@ -13,6 +13,7 @@ from spectrail.api.schemas import (
 from spectrail.llm.errors import (
     ModelConfigurationError,
     ModelError,
+    ModelPayloadContractError,
     ModelProviderError,
     ModelResponseParseError,
 )
@@ -104,6 +105,9 @@ def run_task(
     except ModelResponseParseError as exc:
         _mark_task_failed(store, task_id)
         raise _error(422, "MODEL_RESPONSE_PARSE_FAILED", str(exc)) from exc
+    except ModelPayloadContractError as exc:
+        _mark_task_failed(store, task_id)
+        raise _error(422, "MODEL_PAYLOAD_CONTRACT_FAILED", str(exc)) from exc
     except ModelProviderError as exc:
         _mark_task_failed(store, task_id)
         raise _error(502, "MODEL_PROVIDER_FAILED", str(exc)) from exc

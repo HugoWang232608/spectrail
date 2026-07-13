@@ -32,7 +32,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
         tmp_path / "chunked",
         model_mode="mock",
         chunking_mode="force",
-        max_rendered_prompt_chars=2200,
+        max_rendered_prompt_chars=2400,
     )
     manifest = read_json(result.manifest_path)
     chunks = read_json(result.output_dir / "parsed" / "chunks.json")
@@ -41,7 +41,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
     assert manifest["counts"]["validated_requirements"] == 15
     assert manifest["counts"]["collapsed_overlap_duplicates"] > 0
     assert all(chunk["new_block_ids"] for chunk in chunks)
-    assert all(chunk["rendered_prompt_chars"] <= 2200 for chunk in chunks)
+    assert all(chunk["rendered_prompt_chars"] <= 2400 for chunk in chunks)
 
 
 def test_quarantine_policy_exports_only_grounded_candidates(tmp_path: Path):

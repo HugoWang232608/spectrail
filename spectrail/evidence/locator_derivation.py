@@ -11,6 +11,7 @@ from spectrail.evidence.models import (
     TableLocator,
 )
 from spectrail.evidence.quote_matcher import QuoteMatchRange
+from spectrail.evidence.table_cells import require_contiguous_cell_spans
 
 
 @dataclass(frozen=True)
@@ -67,9 +68,7 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             "source cells must belong to one logical row"
         )
-    columns = [cell.column_index for cell in canonical]
-    if columns != list(range(columns[0], columns[0] + len(columns))):
-        raise EvidenceReferenceError("source cell columns must be contiguous")
+    require_contiguous_cell_spans(canonical)
 
     occurrences = sorted(
         (
@@ -115,17 +114,11 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             "each source cell must have exactly one occurrence in the quote range"
         )
-    reconstruction_start = min(
-        occurrence.canonical_start for occurrence in selected_occurrences
-    )
-    reconstruction_end = max(
-        occurrence.canonical_end for occurrence in selected_occurrences
-    )
-    if reconstruction_start < 0 or reconstruction_end > len(block_text):
+    if selected_range.start < 0 or selected_range.end > len(block_text):
         raise LocatorDerivationError(
-            "cell occurrence range exceeds source block text"
+            "selected quote range exceeds source block text"
         )
-    reconstructed_text = block_text[reconstruction_start:reconstruction_end]
+    reconstructed_text = block_text[selected_range.start:selected_range.end]
 
     cell_boxes = [cell.bbox for cell in canonical]
     bbox = (

@@ -46,8 +46,11 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "- source_quote must be an exact substring from the chosen block text.\n"
         "- For a table block with a cell_map, source_cell_ids must contain the "
         "logical cell IDs covered by source_quote.\n"
+        "- A table source_quote may select part of a cell's text; include every "
+        "cell whose canonical span overlaps the quote.\n"
         "- Table source cells must be in one row and contiguous; their output "
-        "order is not identity-significant.\n"
+        "order is not identity-significant. Use column_span when deciding whether "
+        "adjacent logical cells are contiguous.\n"
         "- Never invent a cell ID or cite a cell that is absent from the chosen "
         "block cell_map.\n"
         "- Do not output page, bbox, row, or column fields.\n"
@@ -79,7 +82,8 @@ def _render_block(
             f"row {row_index}: "
             + ", ".join(
                 f"c{cell.column_index}={cell.cell_id} "
-                f"(text={json.dumps(cell.text, ensure_ascii=False)})"
+                f"(column_span={cell.column_span}, row_span={cell.row_span}, "
+                f"text={json.dumps(cell.text, ensure_ascii=False)})"
                 for cell in sorted(
                     rows[row_index],
                     key=lambda item: (item.column_index, item.cell_id),

@@ -74,7 +74,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     table_id=table,
                     block_ids=[block.block_id],
                     row_count=1,
-                    column_count=1,
+                    column_count=2,
                     cell_ids=[cell],
                     occurrence_ids=["occ_00000001"],
                     parser_method="docx_xml",
@@ -86,6 +86,8 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     table_id=table,
                     row_index=1,
                     column_index=1,
+                    row_span=2,
+                    column_span=2,
                     text=block.text,
                     text_sha256=sha256_text(block.text),
                 )
@@ -118,4 +120,6 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
     assert f"table_id: {table}" in prompt
     assert f"canonical_text: {block.text}" in prompt
     assert f"c1={cell}" in prompt
+    assert "column_span=2" in prompt
+    assert "row_span=2" in prompt
     assert f'text="{block.text}"' in prompt

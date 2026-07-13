@@ -58,6 +58,7 @@ CONFIDENCE_ALIASES = {
     "unknown": 0.0,
 }
 CELL_ID_RE = re.compile(r"^cell_\d{8}_r\d{4}_c\d{4}$")
+EXTRACTOR_VERSION = "reqir_extractor_v3_evidence"
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ class ModelItemValidationError(ValueError):
 
 
 class ReqIRExtractor:
-    extractor_version = "reqir_extractor_v1"
+    extractor_version = EXTRACTOR_VERSION
 
     def extract(
         self,
@@ -156,7 +157,7 @@ class ReqIRExtractor:
                         "chunk_fingerprint": chunk_fingerprint,
                         "request_fingerprint": request_fingerprint,
                         "local_item_index": index - 1,
-                        "extractor_version": "reqir_extractor_v2",
+                        "extractor_version": EXTRACTOR_VERSION,
                     }
                 )
             requirements.append(requirement)
@@ -178,6 +179,7 @@ class ReqIRExtractor:
             if not item.get(field):
                 raise ValueError(f"item {index} missing required field: {field}")
         source_block_id = str(item["source_block_id"])
+        source_block = by_id.get(source_block_id)
         if source_block_id in context_block_ids:
             if item.get("source_cell_ids") is not None:
                 raise ModelItemValidationError(
@@ -211,10 +213,13 @@ class ReqIRExtractor:
             "verification_method",
             field_normalizations,
         )
-        source_quote = _normalize_source_quote(str(item["source_quote"]), field_normalizations)
+        source_quote = _normalize_source_quote(
+            str(item["source_quote"]),
+            field_normalizations,
+            source_block=source_block,
+        )
         source_cell_ids_raw = _source_cell_ids(item.get("source_cell_ids"), index)
 
-        source_block = by_id.get(source_block_id)
         if source_cell_ids_raw and source_block is None:
             raise ModelItemValidationError(
                 "MODEL_ITEM_INVALID_CELL_IDS",
@@ -342,15 +347,21 @@ def _normalize_confidence(value: Any, field_normalizations: list[dict[str, str]]
         return 0.0
 
 
-def _normalize_source_quote(value: str, field_normalizations: list[dict[str, str]]) -> str:
+def _normalize_source_quote(
+    value: str,
+    field_normalizations: list[dict[str, str]],
+    *,
+    source_block: DocumentBlock | None,
+) -> str:
     raw = value
     quote = raw.strip()
-    if quote.startswith("- "):
-        quote = quote[2:].strip()
-    if quote.startswith("|") and quote.endswith("|"):
-        cells = [cell.strip() for cell in quote.strip("|").split("|")]
-        if cells:
-            quote = cells[-1]
+    if source_block is None or source_block.type != "table":
+        if quote.startswith("- "):
+            quote = quote[2:].strip()
+        if quote.startswith("|") and quote.endswith("|"):
+            cells = [cell.strip() for cell in quote.strip("|").split("|")]
+            if cells:
+                quote = cells[-1]
     if quote != raw:
         field_normalizations.append({"field": "source_quote", "input": raw, "normalized": quote})
     return quote

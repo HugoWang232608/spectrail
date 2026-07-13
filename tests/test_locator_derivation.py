@@ -20,12 +20,13 @@ from spectrail.evidence.errors import EvidenceReferenceError, LocatorDerivationE
 from spectrail.evidence.locator_derivation import derive_table_evidence
 from spectrail.evidence.quote_matcher import QuoteMatchRange
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
+from spectrail.evidence.table_cells import require_contiguous_cell_spans
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
 def test_table_identity_is_canonicalized_before_registry_and_rederived_for_validation():
     cell_1 = "cell_00000001_r0001_c0001"
-    cell_2 = "cell_00000001_r0001_c0002"
+    cell_2 = "cell_00000001_r0001_c0003"
     table_id = "tbl_00000001"
     cell_1_bbox = BoundingBox(x0=10, y0=20, x1=30, y1=40)
     cell_2_bbox = BoundingBox(x0=30, y0=20, x1=50, y1=40)
@@ -77,7 +78,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     page=1,
                     bbox=BoundingBox(x0=10, y0=20, x1=50, y1=40),
                     row_count=1,
-                    column_count=2,
+                    column_count=3,
                     cell_ids=[cell_1, cell_2],
                     occurrence_ids=["occ_00000001", "occ_00000002"],
                     parser_method="docx_xml",
@@ -89,14 +90,16 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     table_id=table_id,
                     row_index=1,
                     column_index=column,
+                    column_span=column_span,
                     text=text,
                     text_sha256=sha256_text(text),
                     page=1,
-                    bbox=cell_1_bbox if column == 1 else cell_2_bbox,
+                    bbox=bbox,
                 )
-                for column, (cell_id, text) in enumerate(
-                    [(cell_1, "A"), (cell_2, "B")], start=1
-                )
+                for cell_id, text, column, column_span, bbox in [
+                    (cell_1, "A", 1, 2, cell_1_bbox),
+                    (cell_2, "B", 3, 1, cell_2_bbox),
+                ]
             ],
             cell_occurrences=[
                 CellBlockOccurrence(
@@ -138,6 +141,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
     assert source.table_locator is not None
     assert source.table_locator.cell_ids == [cell_1, cell_2]
+    assert source.table_locator.column_indices == [1, 3]
     assert source.table_locator.bbox == BoundingBox(x0=10, y0=20, x1=50, y1=40)
     assert source.page == 1
 
@@ -151,6 +155,11 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     assert validated == [requirement]
     assert report.valid is True
     assert failures == []
+    require_contiguous_cell_spans(index.cells)
+    with pytest.raises(EvidenceReferenceError, match="occupied column spans"):
+        require_contiguous_cell_spans(
+            [index.cells[0].model_copy(update={"column_span": 1}), index.cells[1]]
+        )
 
     with pytest.raises(
         LocatorDerivationError,
@@ -447,3 +456,103 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
     )
 
     assert derived.reconstructed_text == "A"
+
+
+def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
+    cell = "cell_00000001_r0001_c0001"
+    table = "tbl_00000001"
+    text = "The system shall respond within 2 seconds."
+    quote = "within 2 seconds"
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text=text,
+        order=1,
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="partial.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(text),
+                    text_sha256=sha256_text(text),
+                    table_id=table,
+                    cell_ids=[cell],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=[cell],
+                    occurrence_ids=["occ_00000001"],
+                    parser_method="docx_xml",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    text=text,
+                    text_sha256=sha256_text(text),
+                )
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cell,
+                    block_id=block.block_id,
+                    canonical_start=0,
+                    canonical_end=len(text),
+                )
+            ],
+        )
+    )
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement="The system responds within two seconds.",
+        sources=[
+            SourceSpan(
+                document_id="doc_001",
+                block_id=block.block_id,
+                quote=quote,
+                source_cell_ids_raw=[cell],
+            )
+        ],
+    )
+
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        [block],
+        evidence_fingerprint=index.evidence_fingerprint,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_required",
+        document_blocks=[block],
+    )
+
+    assert requirement.sources[0].table_locator is not None
+    assert validated == [requirement]
+    assert report.valid is True
+    assert failures == []

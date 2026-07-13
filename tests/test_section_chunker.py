@@ -33,7 +33,7 @@ def _request_factory(blocks, metadata):
 
 def test_forced_chunking_respects_final_prompt_budget_and_progress():
     blocks = _blocks()
-    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2000, overlap_blocks=1)
+    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2200, overlap_blocks=1)
     chunks = SectionAwareChunker().chunk(
         blocks,
         config,

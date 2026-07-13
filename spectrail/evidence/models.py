@@ -136,10 +136,8 @@ class TableLocator(EvidenceModel):
             raise ValueError("selected table cells must belong to one logical row")
         if self.column_indices != sorted(self.column_indices):
             raise ValueError("table locator cells must use canonical column order")
-        if self.column_indices != list(
-            range(self.column_indices[0], self.column_indices[0] + size)
-        ):
-            raise ValueError("selected table cell columns must be contiguous")
+        if len(set(self.column_indices)) != size:
+            raise ValueError("table locator cell columns must be unique")
         return self
 
 

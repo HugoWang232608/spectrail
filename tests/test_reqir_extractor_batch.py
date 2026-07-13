@@ -44,7 +44,9 @@ def test_extract_batch_isolates_malformed_middle_item():
     assert len(result.rejected_items) == 1
     assert result.rejected_items[0].item_index == 1
     assert result.rejected_items[0].error_code == "MODEL_ITEM_MISSING_FIELD"
-    assert result.accepted_candidates[0].metadata["extractor_version"] == "reqir_extractor_v2"
+    assert result.accepted_candidates[0].metadata["extractor_version"] == (
+        "reqir_extractor_v3_evidence"
+    )
 
 
 def test_extract_batch_keeps_envelope_errors_at_chunk_level():

@@ -35,7 +35,7 @@ def test_all_evidence_blocks_must_expect_text_range():
         )
 
 
-def test_table_locator_requires_canonical_contiguous_columns():
+def test_table_locator_requires_canonical_unique_start_columns():
     with pytest.raises(ValidationError, match="canonical column order"):
         TableLocator(
             table_id="tbl_00000001",
@@ -43,12 +43,19 @@ def test_table_locator_requires_canonical_contiguous_columns():
             row_indices=[1, 1],
             column_indices=[2, 1],
         )
-    with pytest.raises(ValidationError, match="contiguous"):
+    locator = TableLocator(
+        table_id="tbl_00000001",
+        cell_ids=["c1", "c3"],
+        row_indices=[1, 1],
+        column_indices=[1, 3],
+    )
+    assert locator.column_indices == [1, 3]
+    with pytest.raises(ValidationError, match="unique"):
         TableLocator(
             table_id="tbl_00000001",
-            cell_ids=["c1", "c3"],
+            cell_ids=["c1", "c2"],
             row_indices=[1, 1],
-            column_indices=[1, 3],
+            column_indices=[1, 1],
         )
 
 

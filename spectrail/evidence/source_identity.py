@@ -7,6 +7,7 @@ from spectrail.evidence.models import (
     EvidenceIndex,
     TableCellRecord,
 )
+from spectrail.evidence.table_cells import require_contiguous_cell_spans
 
 
 def canonicalize_source_cell_ids(
@@ -77,7 +78,5 @@ def _canonical_cell_ids(
             cell.cell_id,
         ),
     )
-    columns = [cell.column_index for cell in canonical]
-    if columns != list(range(columns[0], columns[0] + len(columns))):
-        raise EvidenceReferenceError("source cell columns must be contiguous")
+    require_contiguous_cell_spans(canonical)
     return [cell.cell_id for cell in canonical]

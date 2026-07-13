@@ -10,7 +10,19 @@ from spectrail.llm.errors import ModelProviderError
 from spectrail.llm.request_profile import ModelRequestProfile
 from spectrail.pipeline import PipelineConfig, PipelineRunner, PipelineValidationError
 from spectrail.parsers import parse_document
-from spectrail.evidence import finalize_evidence_fingerprint
+from spectrail.evidence import (
+    BlockEvidenceRecord,
+    CellBlockOccurrence,
+    EvidenceIndex,
+    ParserIdentity,
+    TableCellRecord,
+    TableRecord,
+    finalize_evidence_fingerprint,
+    sha256_file,
+    sha256_text,
+)
+from spectrail.core.models import DocumentBlock
+from spectrail.parsers import ParsedDocument
 from spectrail.evidence.index_builder import ensure_evidence_index
 
 
@@ -20,7 +32,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
         tmp_path / "chunked",
         model_mode="mock",
         chunking_mode="force",
-        max_rendered_prompt_chars=2000,
+        max_rendered_prompt_chars=2200,
     )
     manifest = read_json(result.manifest_path)
     chunks = read_json(result.output_dir / "parsed" / "chunks.json")
@@ -29,7 +41,7 @@ def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Pat
     assert manifest["counts"]["validated_requirements"] == 15
     assert manifest["counts"]["collapsed_overlap_duplicates"] > 0
     assert all(chunk["new_block_ids"] for chunk in chunks)
-    assert all(chunk["rendered_prompt_chars"] <= 2000 for chunk in chunks)
+    assert all(chunk["rendered_prompt_chars"] <= 2200 for chunk in chunks)
 
 
 def test_quarantine_policy_exports_only_grounded_candidates(tmp_path: Path):
@@ -161,6 +173,125 @@ def test_pipeline_isolates_malformed_item_and_exports_valid_siblings(tmp_path: P
     assert read_json(result.output_dir / "extracted" / "chunk_errors.json") == []
 
 
+def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
+    document = tmp_path / "sample.docx"
+    document.write_text("A | B", encoding="utf-8")
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text="A | B",
+        order=1,
+    )
+    table = "tbl_00000001"
+    cells = [
+        "cell_00000001_r0001_c0001",
+        "cell_00000001_r0001_c0002",
+    ]
+    source_hash = sha256_file(document)
+    parser_identity = ParserIdentity(
+        parser_name="docx_parser_v2",
+        parser_version="2",
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name=document.name,
+            source_format="docx",
+            source_sha256=source_hash,
+            parser_identity=parser_identity,
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(block.text),
+                    text_sha256=sha256_text(block.text),
+                    table_id=table,
+                    cell_ids=cells,
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=1,
+                    column_count=2,
+                    cell_ids=cells,
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
+                    parser_method="docx_xml",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell_id,
+                    table_id=table,
+                    row_index=1,
+                    column_index=column,
+                    text=text,
+                    text_sha256=sha256_text(text),
+                )
+                for column, (cell_id, text) in enumerate(
+                    zip(cells, ["A", "B"]),
+                    start=1,
+                )
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cells[0],
+                    block_id=block.block_id,
+                    canonical_start=0,
+                    canonical_end=1,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cells[1],
+                    block_id=block.block_id,
+                    canonical_start=4,
+                    canonical_end=5,
+                ),
+            ],
+        )
+    )
+    parsed = ParsedDocument(
+        document_id="doc_001",
+        document_name=document.name,
+        source_format="docx",
+        parser_name=parser_identity.parser_name,
+        text=block.text,
+        blocks=[block],
+        source_sha256=source_hash,
+        parser_identity=parser_identity,
+        evidence_index=index,
+    )
+
+    result = PipelineRunner().extract(
+        document,
+        tmp_path / "table-isolation",
+        model_mode="recorded",
+        recorded_fixture="fixtures/mock_table_reqir_response.json",
+        validation_policy="quarantine",
+        parsed_document=parsed,
+    )
+
+    manifest = read_json(result.manifest_path)
+    rejected = read_json(
+        result.output_dir / "extracted" / "rejected_model_items.json"
+    )
+    report = read_json(result.output_dir / "extracted" / "validation_report.json")
+    assert manifest["counts"]["model_items_accepted"] == 1
+    assert manifest["counts"]["model_items_rejected"] == 1
+    assert manifest["counts"]["validated_requirements"] == 1
+    assert len(read_json(result.exported_reqir_path)["items"]) == 1
+    assert rejected[0]["error_code"] == "MODEL_ITEM_INVALID_CELL_IDS"
+    assert any(
+        issue["code"] == "MODEL_ITEM_INVALID_CELL_IDS"
+        for issue in report["issues"]
+    )
+
+
 def test_all_malformed_items_fail_with_distinct_zero_result_reason(tmp_path: Path):
     fixture = tmp_path / "malformed.json"
     fixture.write_text('{"items":[{"statement":"missing source"}]}', encoding="utf-8")
@@ -215,7 +346,7 @@ def test_recorded_chunk_bundle_replays_and_validates_profile(tmp_path: Path):
         model_mode="recorded",
         recorded_fixture="fixtures/recorded/chunked/sample_srs_long",
         chunking_mode="force",
-        max_rendered_prompt_chars=4000,
+        max_rendered_prompt_chars=4600,
     )
     assert result.validated_count == 15
 
@@ -227,7 +358,7 @@ def test_recorded_chunk_bundle_replays_and_validates_profile(tmp_path: Path):
             model_name="different-model",
             recorded_fixture="fixtures/recorded/chunked/sample_srs_long",
             chunking_mode="force",
-            max_rendered_prompt_chars=4000,
+            max_rendered_prompt_chars=4600,
         )
 
     with pytest.raises(PipelineValidationError, match="RECORDED_REQUEST_PROFILE_MISMATCH"):
@@ -244,7 +375,7 @@ def test_recorded_chunk_bundle_replays_and_validates_profile(tmp_path: Path):
                     temperature=0.5,
                 ),
                 chunking=ChunkingConfig(
-                    mode="force", max_rendered_prompt_chars=4000, overlap_blocks=1
+                    mode="force", max_rendered_prompt_chars=4600, overlap_blocks=1
                 ),
             ),
         )

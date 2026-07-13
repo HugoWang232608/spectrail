@@ -75,6 +75,12 @@ class ExtractionBatchResult:
     rejected_items: list[RejectedModelItem]
 
 
+class ModelItemValidationError(ValueError):
+    def __init__(self, error_code: str, message: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
 class ReqIRExtractor:
     extractor_version = "reqir_extractor_v1"
 
@@ -107,6 +113,7 @@ class ReqIRExtractor:
         chunk_fingerprint: str | None = None,
         request_fingerprint: str | None = None,
         context_block_ids: set[str] | None = None,
+        table_cell_required_block_ids: set[str] | None = None,
     ) -> ExtractionBatchResult:
         if not isinstance(payload, dict):
             raise ModelPayloadContractError("model output is not a JSON object")
@@ -126,6 +133,9 @@ class ReqIRExtractor:
                     document_name=Path(document_name).name,
                     model_mode=model_mode,
                     context_block_ids=context_block_ids or set(),
+                    table_cell_required_block_ids=(
+                        table_cell_required_block_ids or set()
+                    ),
                 )
             except (TypeError, ValueError) as exc:
                 rejected.append(
@@ -160,13 +170,20 @@ class ReqIRExtractor:
         document_name: str,
         model_mode: str,
         context_block_ids: set[str],
+        table_cell_required_block_ids: set[str],
     ) -> RequirementIR:
         if not isinstance(item, dict):
             raise ValueError(f"item {index} is not a JSON object")
         for field in ("statement", "source_block_id", "source_quote"):
             if not item.get(field):
                 raise ValueError(f"item {index} missing required field: {field}")
-        if str(item["source_block_id"]) in context_block_ids:
+        source_block_id = str(item["source_block_id"])
+        if source_block_id in context_block_ids:
+            if item.get("source_cell_ids") is not None:
+                raise ModelItemValidationError(
+                    "MODEL_ITEM_CONTEXT_CELL_REFERENCE",
+                    f"item {index} cites cells from a context-only block",
+                )
             raise ValueError(f"item {index} cites a context-only block")
         field_normalizations: list[dict[str, str]] = []
         confidence = _normalize_confidence(item.get("confidence", 0.0), field_normalizations)
@@ -197,11 +214,24 @@ class ReqIRExtractor:
         source_quote = _normalize_source_quote(str(item["source_quote"]), field_normalizations)
         source_cell_ids_raw = _source_cell_ids(item.get("source_cell_ids"), index)
 
-        source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
-        if source_cell_ids_raw and (source_block is None or source_block.type != "table"):
-            raise ValueError(
-                f"item {index} provides source_cell_ids for a non-table block"
+        if source_cell_ids_raw and source_block is None:
+            raise ModelItemValidationError(
+                "MODEL_ITEM_INVALID_CELL_IDS",
+                f"item {index} provides source_cell_ids for an unknown block",
+            )
+        if source_cell_ids_raw and source_block.type != "table":  # type: ignore[union-attr]
+            raise ModelItemValidationError(
+                "MODEL_ITEM_NON_TABLE_WITH_CELL_IDS",
+                f"item {index} provides source_cell_ids for a non-table block",
+            )
+        if (
+            source_block_id in table_cell_required_block_ids
+            and not source_cell_ids_raw
+        ):
+            raise ModelItemValidationError(
+                "MODEL_ITEM_TABLE_SOURCE_MISSING_CELL_IDS",
+                f"item {index} table source requires source_cell_ids",
             )
         section_path = list(source_block.section_path) if source_block else []
         section = " > ".join(section_path) if section_path else None
@@ -265,11 +295,20 @@ def _source_cell_ids(value: Any, item_index: int) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise ValueError(f"item {item_index} source_cell_ids must be a string list")
+        raise ModelItemValidationError(
+            "MODEL_ITEM_INVALID_CELL_IDS",
+            f"item {item_index} source_cell_ids must be a string list",
+        )
     if len(set(value)) != len(value):
-        raise ValueError(f"item {item_index} source_cell_ids must be unique")
+        raise ModelItemValidationError(
+            "MODEL_ITEM_INVALID_CELL_IDS",
+            f"item {item_index} source_cell_ids must be unique",
+        )
     if any(not CELL_ID_RE.fullmatch(item) for item in value):
-        raise ValueError(f"item {item_index} source_cell_ids contain an invalid cell ID")
+        raise ModelItemValidationError(
+            "MODEL_ITEM_INVALID_CELL_IDS",
+            f"item {item_index} source_cell_ids contain an invalid cell ID",
+        )
     return list(value)
 
 
@@ -318,6 +357,8 @@ def _normalize_source_quote(value: str, field_normalizations: list[dict[str, str
 
 
 def _item_error_code(exc: Exception) -> str:
+    if isinstance(exc, ModelItemValidationError):
+        return exc.error_code
     message = str(exc)
     if "is not a JSON object" in message:
         return "MODEL_ITEM_NOT_OBJECT"

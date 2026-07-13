@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from spectrail.core.models import RequirementIR, SourceSpan
-from spectrail.evidence.models import EvidenceIndex, TableCellRecord
+from spectrail.evidence.errors import EvidenceReferenceError
+from spectrail.evidence.models import (
+    BlockEvidenceRecord,
+    EvidenceIndex,
+    TableCellRecord,
+)
 
 
 def canonicalize_source_cell_ids(
@@ -27,7 +32,7 @@ def canonicalize_source_cell_ids(
 
 def _canonical_cell_ids(
     source: SourceSpan,
-    blocks_by_id: dict,
+    blocks_by_id: dict[str, BlockEvidenceRecord],
     cells_by_id: dict[str, TableCellRecord],
     occurrence_pairs: set[tuple[str, str]],
 ) -> list[str]:
@@ -35,22 +40,34 @@ def _canonical_cell_ids(
     if not raw:
         return []
     if len(set(raw)) != len(raw):
-        raise ValueError("source_cell_ids_raw must be unique")
+        raise EvidenceReferenceError("source_cell_ids_raw must be unique")
     block = blocks_by_id.get(source.block_id)
     if block is None:
-        raise ValueError("table source references an unknown evidence block")
+        raise EvidenceReferenceError(
+            "table source references an unknown evidence block"
+        )
     if block.table_id is None:
-        raise ValueError("source_cell_ids_raw require a table evidence block")
+        raise EvidenceReferenceError(
+            "source_cell_ids_raw require a table evidence block"
+        )
     try:
         cells = [cells_by_id[cell_id] for cell_id in raw]
     except KeyError as exc:
-        raise ValueError(f"source references an unknown logical cell: {exc.args[0]}") from exc
+        raise EvidenceReferenceError(
+            f"source references an unknown logical cell: {exc.args[0]}"
+        ) from exc
     if any(cell.table_id != block.table_id for cell in cells):
-        raise ValueError("source cells must belong to the source block table")
+        raise EvidenceReferenceError(
+            "source cells must belong to the source block table"
+        )
     if any((source.block_id, cell.cell_id) not in occurrence_pairs for cell in cells):
-        raise ValueError("source cell has no occurrence in the source block")
+        raise EvidenceReferenceError(
+            "source cell has no occurrence in the source block"
+        )
     if len({cell.row_index for cell in cells}) != 1:
-        raise ValueError("source cells must belong to one logical row")
+        raise EvidenceReferenceError(
+            "source cells must belong to one logical row"
+        )
     canonical = sorted(
         cells,
         key=lambda cell: (
@@ -62,5 +79,5 @@ def _canonical_cell_ids(
     )
     columns = [cell.column_index for cell in canonical]
     if columns != list(range(columns[0], columns[0] + len(columns))):
-        raise ValueError("source cell columns must be contiguous")
+        raise EvidenceReferenceError("source cell columns must be contiguous")
     return [cell.cell_id for cell in canonical]

@@ -13,7 +13,7 @@
     "safe_request_options": {}
   },
   "chunking_mode": "force",
-  "max_rendered_prompt_chars": 4000,
+  "max_rendered_prompt_chars": 4600,
   "overlap_blocks": 1,
   "validation_policy": "strict",
   "allowed_pipeline_statuses": ["completed"],

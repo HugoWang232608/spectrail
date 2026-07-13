@@ -1,3 +1,5 @@
+import pytest
+
 from spectrail.core.models import DocumentBlock, RequirementIR, SourceSpan
 from spectrail.evidence import (
     BlockEvidenceRecord,
@@ -14,6 +16,7 @@ from spectrail.evidence import (
     sha256_text,
 )
 from spectrail.evidence.enricher import SourceEvidenceEnricher
+from spectrail.evidence.errors import EvidenceReferenceError, LocatorDerivationError
 from spectrail.evidence.locator_derivation import derive_table_evidence
 from spectrail.evidence.quote_matcher import QuoteMatchRange
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
@@ -149,7 +152,10 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     assert report.valid is True
     assert failures == []
 
-    try:
+    with pytest.raises(
+        LocatorDerivationError,
+        match="quote range and canonical source cells differ",
+    ):
         derive_table_evidence(
             index,
             block_id=block.block_id,
@@ -157,10 +163,39 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
             canonical_cell_ids=[cell_1],
             block_text=block.text,
         )
-    except ValueError as exc:
-        assert "quote range and canonical source cells differ" in str(exc)
-    else:
-        raise AssertionError("an omitted non-empty quote cell must be rejected")
+    with pytest.raises(EvidenceReferenceError, match="unknown cell"):
+        derive_table_evidence(
+            index,
+            block_id=block.block_id,
+            selected_range=QuoteMatchRange(start=0, end=len(block.text)),
+            canonical_cell_ids=["cell_99999999_r0001_c0001"],
+            block_text=block.text,
+        )
+
+    validator = SourceLocatorValidator()
+    source.canonical_source_cell_ids = ["cell_99999999_r0001_c0001"]
+    results = validator.validate_source(
+        source,
+        index,
+        {item.block_id: item for item in index.blocks},
+        registry,
+        {block.block_id: block},
+    )
+    assert next(
+        result for result in results if result.capability == "table_cell"
+    ).status == "FAIL_INVALID_REFERENCE"
+
+    source.canonical_source_cell_ids = [cell_1]
+    results = validator.validate_source(
+        source,
+        index,
+        {item.block_id: item for item in index.blocks},
+        registry,
+        {block.block_id: block},
+    )
+    assert next(
+        result for result in results if result.capability == "table_cell"
+    ).status == "FAIL_DERIVATION"
 
 
 def test_page_locator_validates_rotation_derivation_and_source_page():
@@ -334,3 +369,81 @@ def test_ambiguous_quote_uses_separate_provisional_text_locator():
     )
     assert validated == []
     assert report.valid is False
+
+
+def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
+    cell = "cell_00000001_r0001_c0001"
+    table = "tbl_00000001"
+    text = "A / A"
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="repeated.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=len(text),
+                    text_sha256=sha256_text(text),
+                    table_id=table,
+                    cell_ids=[cell],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=["blk_0001"],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=[cell],
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
+                    parser_method="docx_xml",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    text="A",
+                    text_sha256=sha256_text("A"),
+                )
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cell,
+                    block_id="blk_0001",
+                    canonical_start=0,
+                    canonical_end=1,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cell,
+                    block_id="blk_0001",
+                    canonical_start=4,
+                    canonical_end=5,
+                    occurrence_role="repeated_header",
+                ),
+            ],
+        )
+    )
+
+    derived = derive_table_evidence(
+        index,
+        block_id="blk_0001",
+        selected_range=QuoteMatchRange(start=0, end=1),
+        canonical_cell_ids=[cell],
+        block_text=text,
+    )
+
+    assert derived.reconstructed_text == "A"

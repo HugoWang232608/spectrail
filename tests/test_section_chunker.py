@@ -109,7 +109,7 @@ def test_split_section_carries_heading_as_budgeted_context():
             for index in range(2, 12)
         ],
     ]
-    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2000, overlap_blocks=1)
+    config = ChunkingConfig(mode="force", max_rendered_prompt_chars=2400, overlap_blocks=1)
     chunks = SectionAwareChunker().chunk(
         blocks,
         config,

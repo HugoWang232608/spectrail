@@ -9,6 +9,7 @@ from spectrail.core.models import (
     ValidationIssue,
     ValidationReport,
 )
+from spectrail.evidence.errors import EvidenceReferenceError, LocatorDerivationError
 from spectrail.evidence.locator_derivation import (
     derive_page_locator,
     derive_table_evidence,
@@ -310,14 +311,6 @@ def _validate_table_locator(
     quote_match: QuoteMatchResult,
     document_block: DocumentBlock | None,
 ) -> CapabilityValidationResult:
-    locator = source.table_locator
-    if locator is None:
-        return CapabilityValidationResult(
-            capability="table_cell",
-            status="FAIL_INVALID_REFERENCE",
-            issue_code="SOURCE_TABLE_LOCATOR_MISSING",
-            message="available table evidence requires a table locator",
-        )
     if document_block is None:
         return CapabilityValidationResult(
             capability="table_cell",
@@ -333,12 +326,27 @@ def _validate_table_locator(
             canonical_cell_ids=source.canonical_source_cell_ids,
             block_text=document_block.text,
         )
-    except ValueError as exc:
+    except EvidenceReferenceError as exc:
+        return CapabilityValidationResult(
+            capability="table_cell",
+            status="FAIL_INVALID_REFERENCE",
+            issue_code="SOURCE_TABLE_REFERENCE_INVALID",
+            message=str(exc),
+        )
+    except LocatorDerivationError as exc:
         return CapabilityValidationResult(
             capability="table_cell",
             status="FAIL_DERIVATION",
             issue_code="SOURCE_TABLE_LOCATOR_DERIVATION_FAILED",
             message=str(exc),
+        )
+    locator = source.table_locator
+    if locator is None:
+        return CapabilityValidationResult(
+            capability="table_cell",
+            status="FAIL_INVALID_REFERENCE",
+            issue_code="SOURCE_TABLE_LOCATOR_MISSING",
+            message="available table evidence requires a table locator",
         )
     quote_matches = (
         expected.reconstructed_text == source.quote

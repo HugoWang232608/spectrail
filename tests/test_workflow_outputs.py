@@ -33,7 +33,7 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     assert manifest["counts"]["validated_requirements"] >= 14
     assert manifest["outputs"]["reqir_export"] == "exports/reqir.json"
     assert manifest["model"]["mode"] == "mock"
-    assert manifest["model"]["prompt_version"] == "reqir_extraction_v1"
+    assert manifest["model"]["prompt_version"] == "reqir_extraction_v3_evidence"
     assert manifest["parser"]["parser_name"] == "markdown_parser_v1"
 
     raw = read_json(output / "extracted" / "reqir.raw.json")

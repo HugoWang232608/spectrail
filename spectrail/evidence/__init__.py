@@ -7,6 +7,7 @@ from spectrail.evidence.fingerprint import (
     sha256_text,
     validate_evidence_fingerprint,
 )
+from spectrail.evidence.errors import EvidenceReferenceError, LocatorDerivationError
 from spectrail.evidence.ids import cell_id, fragment_id, occurrence_id, page_id, table_id
 from spectrail.evidence.models import (
     PDF_PREVIEW_COORDINATE_SPACE,
@@ -55,7 +56,9 @@ __all__ = [
     "EvidenceCapability",
     "EvidenceIndex",
     "EvidencePolicy",
+    "EvidenceReferenceError",
     "LocatorStatus",
+    "LocatorDerivationError",
     "NormalizedText",
     "PageLocator",
     "PageRecord",

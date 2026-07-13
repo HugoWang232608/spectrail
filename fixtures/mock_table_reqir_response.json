@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "statement": "A maps to B.",
+      "source_block_id": "blk_0001",
+      "source_quote": "A | B",
+      "source_cell_ids": [
+        "cell_00000001_r0001_c0001",
+        "cell_00000001_r0001_c0002"
+      ],
+      "confidence": 0.9,
+      "tags": ["table"]
+    },
+    {
+      "statement": "Invalid cell reference.",
+      "source_block_id": "blk_0001",
+      "source_quote": "A | B",
+      "source_cell_ids": [
+        "cell_00000001_r0001_c0001",
+        "cell_99999999_r0001_c0002"
+      ],
+      "confidence": 0.8,
+      "tags": ["table"]
+    }
+  ]
+}

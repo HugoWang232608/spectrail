@@ -82,3 +82,70 @@ def test_extract_batch_rejects_context_only_source():
     )
     assert result.accepted_candidates == []
     assert result.rejected_items[0].error_message == "item 1 cites a context-only block"
+
+
+def test_extract_batch_emits_specific_cell_error_codes():
+    table = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text="A",
+        order=1,
+    )
+    paragraph = DocumentBlock(
+        block_id="blk_0002",
+        document_id="doc_001",
+        type="paragraph",
+        text="B",
+        order=2,
+    )
+    context_table = DocumentBlock(
+        block_id="blk_0003",
+        document_id="doc_001",
+        type="table",
+        text="C",
+        order=3,
+    )
+    cell = "cell_00000001_r0001_c0001"
+    payload = {
+        "items": [
+            {
+                "statement": "Invalid shape",
+                "source_block_id": table.block_id,
+                "source_quote": "A",
+                "source_cell_ids": ["not-a-cell"],
+            },
+            {
+                "statement": "Missing cells",
+                "source_block_id": table.block_id,
+                "source_quote": "A",
+            },
+            {
+                "statement": "Wrong block type",
+                "source_block_id": paragraph.block_id,
+                "source_quote": "B",
+                "source_cell_ids": [cell],
+            },
+            {
+                "statement": "Context cell",
+                "source_block_id": context_table.block_id,
+                "source_quote": "C",
+                "source_cell_ids": [cell],
+            },
+        ]
+    }
+
+    result = ReqIRExtractor().extract_batch(
+        payload,
+        [table, paragraph, context_table],
+        "sample.docx",
+        context_block_ids={context_table.block_id},
+        table_cell_required_block_ids={table.block_id},
+    )
+
+    assert [item.error_code for item in result.rejected_items] == [
+        "MODEL_ITEM_INVALID_CELL_IDS",
+        "MODEL_ITEM_TABLE_SOURCE_MISSING_CELL_IDS",
+        "MODEL_ITEM_NON_TABLE_WITH_CELL_IDS",
+        "MODEL_ITEM_CONTEXT_CELL_REFERENCE",
+    ]

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from spectrail.core.models import DocumentBlock
+from spectrail.evidence.models import EvidenceIndex
 from spectrail.llm.request_profile import ModelRequestProfile
 
 
@@ -18,6 +19,7 @@ class ModelRequest:
     model_name: str | None = None
     request_profile: ModelRequestProfile | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_index: EvidenceIndex | None = None
 
 
 @dataclass(frozen=True)

@@ -10,14 +10,20 @@ from spectrail.aggregation import CandidateAggregator
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig, SectionAwareChunker
 from spectrail.core.io import ensure_dir, model_list_dump, read_json, write_json
 from spectrail.core.manifest import complete_manifest, fail_manifest, init_manifest
-from spectrail.core.models import ValidationIssue, ValidationReport
+from spectrail.core.models import RequirementIR, ValidationIssue, ValidationReport
 from spectrail.core.workflow import build_fixed_plan
 from spectrail.exporters.source_map_exporter import build_source_map
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.extractors.ears_normalizer import normalize_requirements
-from spectrail.extractors.reqir_extractor import ExtractionBatchResult, ReqIRExtractor
+from spectrail.extractors.reqir_extractor import (
+    ExtractionBatchResult,
+    RejectedModelItem,
+    ReqIRExtractor,
+)
+from spectrail.evidence.errors import EvidenceReferenceError
 from spectrail.evidence.index_builder import ensure_evidence_index
 from spectrail.evidence.enricher import SourceEvidenceEnricher
+from spectrail.evidence.models import EvidenceIndex
 from spectrail.evidence.quote_matcher import build_quote_match_registry
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
 from spectrail.llm.base import ModelRequest, ModelResponse
@@ -195,6 +201,7 @@ class PipelineRunner:
                     model_name=profile.model_name,
                     request_profile=profile,
                     metadata=metadata,
+                    evidence_index=evidence_index,
                 )
 
             chunks = SectionAwareChunker().chunk(
@@ -237,6 +244,11 @@ class PipelineRunner:
 
             extractor = ReqIRExtractor()
             successful_responses: list[ModelResponse] = []
+            table_cell_required_block_ids = {
+                block.block_id
+                for block in evidence_index.blocks
+                if "table_cell" in block.available_capabilities
+            }
 
             for chunk in chunks:
                 chunk_dir = ensure_dir(extracted_dir / "chunk_results" / chunk.chunk_id)
@@ -308,6 +320,7 @@ class PipelineRunner:
                         chunk_fingerprint=chunk.chunk_fingerprint if chunked_execution else None,
                         request_fingerprint=request_fingerprint if chunked_execution else None,
                         context_block_ids=set(chunk.context_block_ids),
+                        table_cell_required_block_ids=table_cell_required_block_ids,
                     )
                 except ModelPayloadContractError as exc:
                     error = _chunk_error(chunk.chunk_id, exc, elapsed_ms)
@@ -320,8 +333,13 @@ class PipelineRunner:
                         raise
                     continue
 
-                successful_responses.append(response)
                 model_items = response.payload["items"]
+                batch = _prepare_evidence_batch(
+                    batch,
+                    evidence_index,
+                    model_items,
+                )
+                successful_responses.append(response)
                 model_items_total += len(model_items)
                 _stamp_chunk_metadata(batch, chunk.index)
                 accepted_candidates.extend(batch.accepted_candidates)
@@ -362,7 +380,6 @@ class PipelineRunner:
                 if pipeline_config.dump_prompt and response.prompt:
                     (extracted_dir / "prompt.txt").write_text(response.prompt, encoding="utf-8")
 
-            canonicalize_source_cell_ids(accepted_candidates, evidence_index)
             quote_matches = build_quote_match_registry(
                 accepted_candidates,
                 blocks,
@@ -464,9 +481,12 @@ class PipelineRunner:
                 validation_report.add_issue(
                     ValidationIssue(
                         level="warning",
-                        code="MODEL_ITEM_REJECTED",
+                        code=rejected.error_code,
                         message=rejected.error_message,
-                        metadata={"chunk_id": rejected.chunk_id, "item_index": rejected.item_index},
+                        metadata={
+                            "chunk_id": rejected.chunk_id,
+                            "item_index": rejected.item_index,
+                        },
                     )
                 )
             write_json(extracted_dir / "validation_report.json", validation_report.model_dump(mode="json"))
@@ -759,6 +779,40 @@ def _chunk_error(chunk_id: str, exc: Exception, elapsed_ms: int) -> dict[str, An
 def _stamp_chunk_metadata(batch: ExtractionBatchResult, chunk_index: int) -> None:
     for candidate in batch.accepted_candidates:
         candidate.metadata["chunk_index"] = chunk_index
+
+
+def _prepare_evidence_batch(
+    batch: ExtractionBatchResult,
+    evidence_index: EvidenceIndex,
+    model_items: list[Any],
+) -> ExtractionBatchResult:
+    prepared: list[RequirementIR] = []
+    rejected = list(batch.rejected_items)
+    for candidate in batch.accepted_candidates:
+        try:
+            canonicalize_source_cell_ids([candidate], evidence_index)
+        except EvidenceReferenceError as exc:
+            item_index = int(candidate.metadata.get("raw_item_index", -1))
+            raw_item = (
+                model_items[item_index]
+                if 0 <= item_index < len(model_items)
+                else None
+            )
+            rejected.append(
+                RejectedModelItem(
+                    chunk_id=candidate.metadata.get("chunk_id"),
+                    item_index=item_index,
+                    raw_item=raw_item,
+                    error_code="MODEL_ITEM_INVALID_CELL_IDS",
+                    error_message=str(exc),
+                )
+            )
+            continue
+        prepared.append(candidate)
+    return ExtractionBatchResult(
+        accepted_candidates=prepared,
+        rejected_items=rejected,
+    )
 
 
 def _merge_reports(*reports: ValidationReport) -> ValidationReport:

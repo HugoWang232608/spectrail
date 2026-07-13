@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
+
+from spectrail.core.models import DocumentBlock
+from spectrail.evidence.models import EvidenceIndex, TableCellRecord
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v1"
-CHUNKED_PROMPT_VERSION = "reqir_extraction_v2_chunked"
+PROMPT_VERSION = "reqir_extraction_v3_evidence"
+CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
 def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) -> str:
     blocks = request.blocks[:max_blocks] if max_blocks is not None else request.blocks
-    rendered_blocks = "\n\n".join(_render_block(block) for block in blocks)
+    rendered_blocks = "\n\n".join(
+        _render_block(block, request.evidence_index) for block in blocks
+    )
     chunk_context = ""
     if request.metadata.get("chunked") or request.metadata.get("chunk_id"):
         chunk_context = (
@@ -28,7 +34,8 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "You are extracting software requirements into ReqIR JSON.\n\n"
         "Return JSON only with a top-level items array.\n\n"
         "Each item must include title, type, ears_pattern, statement, subject, response, "
-        "source_block_id, source_quote, confidence, and tags.\n\n"
+        "source_block_id, source_quote, confidence, and tags. Table blocks that display "
+        "a cell_map must also include source_cell_ids.\n\n"
         "Allowed enum values:\n"
         "- type: functional | non_functional | interface | constraint | business | unknown\n"
         "- ears_pattern: ubiquitous | event_driven | state_driven | optional | unwanted_behavior | unknown\n"
@@ -37,6 +44,13 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "Rules:\n"
         "- source_block_id must be one of the provided block IDs.\n"
         "- source_quote must be an exact substring from the chosen block text.\n"
+        "- For a table block with a cell_map, source_cell_ids must contain the "
+        "logical cell IDs covered by source_quote.\n"
+        "- Table source cells must be in one row and contiguous; their output "
+        "order is not identity-significant.\n"
+        "- Never invent a cell ID or cite a cell that is absent from the chosen "
+        "block cell_map.\n"
+        "- Do not output page, bbox, row, or column fields.\n"
         "- confidence must be a number from 0.0 to 1.0, not textual labels such as high/medium/low.\n"
         "- Use unknown for unsupported enum values instead of inventing new enum labels.\n"
         "- Do not invent requirements not supported by source text.\n\n"
@@ -49,11 +63,77 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
     )
 
 
-def _render_block(block) -> str:
+def _render_block(
+    block: DocumentBlock,
+    evidence_index: EvidenceIndex | None,
+) -> str:
     section_path = " > ".join(block.section_path) if block.section_path else ""
+    table_projection = _table_projection(block.block_id, evidence_index)
+    if block.type == "table" and table_projection is not None:
+        table_id, cells = table_projection
+        row_indices = sorted({cell.row_index for cell in cells})
+        rows: dict[int, list[TableCellRecord]] = {}
+        for cell in cells:
+            rows.setdefault(cell.row_index, []).append(cell)
+        cell_map = "\n".join(
+            f"row {row_index}: "
+            + ", ".join(
+                f"c{cell.column_index}={cell.cell_id} "
+                f"(text={json.dumps(cell.text, ensure_ascii=False)})"
+                for cell in sorted(
+                    rows[row_index],
+                    key=lambda item: (item.column_index, item.cell_id),
+                )
+            )
+            for row_index in row_indices
+        )
+        row_range = (
+            str(row_indices[0])
+            if len(row_indices) == 1
+            else f"{row_indices[0]}-{row_indices[-1]}"
+        )
+        return (
+            f"[{block.block_id}]\n"
+            f"type: {block.type}\n"
+            f"section_path: {section_path}\n"
+            f"table_id: {table_id}\n"
+            f"row_range: {row_range}\n"
+            f"canonical_text: {block.text}\n"
+            f"cell_map:\n{cell_map}"
+        )
     return (
         f"[{block.block_id}]\n"
         f"type: {block.type}\n"
         f"section_path: {section_path}\n"
         f"text: {block.text}"
     )
+
+
+def _table_projection(
+    block_id: str,
+    evidence_index: EvidenceIndex | None,
+) -> tuple[str, list[TableCellRecord]] | None:
+    if evidence_index is None:
+        return None
+    block = next(
+        (item for item in evidence_index.blocks if item.block_id == block_id),
+        None,
+    )
+    if (
+        block is None
+        or block.table_id is None
+        or "table_cell" not in block.available_capabilities
+        or not block.cell_ids
+    ):
+        return None
+    cells_by_id = {cell.cell_id: cell for cell in evidence_index.cells}
+    cells = sorted(
+        (cells_by_id[cell_id] for cell_id in block.cell_ids),
+        key=lambda cell: (
+            cell.table_id,
+            cell.row_index,
+            cell.column_index,
+            cell.cell_id,
+        ),
+    )
+    return block.table_id, cells

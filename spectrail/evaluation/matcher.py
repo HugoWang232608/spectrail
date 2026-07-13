@@ -27,7 +27,9 @@ class MatchPair:
 class EvaluationMatches:
     source_alignment_matches: list[MatchPair]
     requirement_exact_matches: list[MatchPair]
-    ambiguous_optimum_count: int = 0
+    local_top_edge_tie_count: int = 0
+    evaluated_candidate_count: int = 0
+    evaluated_gold_count: int = 0
     algorithm: str = MATCHING_ALGORITHM
 
 
@@ -54,13 +56,24 @@ def match_requirements(
         if not scope or any(source.block_id in scope for source in candidate.sources)
     ]
     indexed_candidates.sort(key=lambda item: (item[1].metadata.get("candidate_key", ""), item[1].id))
-    indexed_gold = sorted(enumerate(gold), key=lambda item: item[1].gold_id)
+    indexed_gold = [
+        (index, gold_item)
+        for index, gold_item in enumerate(gold)
+        if not scope or any(source.block_id in scope for source in gold_item.sources)
+    ]
+    indexed_gold.sort(key=lambda item: item[1].gold_id)
 
     source_edges: list[_EdgeCandidate] = []
     exact_edges: list[_EdgeCandidate] = []
     for local_candidate_index, (_, candidate) in enumerate(indexed_candidates):
         for local_gold_index, (_, gold_item) in enumerate(indexed_gold):
-            source_edge = _best_source_edge(local_candidate_index, local_gold_index, candidate, gold_item)
+            source_edge = _best_source_edge(
+                local_candidate_index,
+                local_gold_index,
+                candidate,
+                gold_item,
+                scope_block_ids=scope,
+            )
             if source_edge is None:
                 continue
             source_edges.append(source_edge)
@@ -79,7 +92,7 @@ def match_requirements(
 
     source_pairs = _maximum_weight_matching(source_edges, len(indexed_candidates), len(indexed_gold))
     exact_pairs = _maximum_weight_matching(exact_edges, len(indexed_candidates), len(indexed_gold))
-    ambiguous = _ambiguous_edge_count(source_edges) + _ambiguous_edge_count(exact_edges)
+    local_ties = _local_top_edge_tie_count(source_edges) + _local_top_edge_tie_count(exact_edges)
 
     def materialize(edges: list[_EdgeCandidate]) -> list[MatchPair]:
         result = []
@@ -103,7 +116,9 @@ def match_requirements(
     return EvaluationMatches(
         source_alignment_matches=materialize(source_pairs),
         requirement_exact_matches=materialize(exact_pairs),
-        ambiguous_optimum_count=ambiguous,
+        local_top_edge_tie_count=local_ties,
+        evaluated_candidate_count=len(indexed_candidates),
+        evaluated_gold_count=len(indexed_gold),
     )
 
 
@@ -112,10 +127,16 @@ def _best_source_edge(
     gold_index: int,
     candidate: RequirementIR,
     gold: GoldRequirement,
+    *,
+    scope_block_ids: set[str],
 ) -> _EdgeCandidate | None:
     best: _EdgeCandidate | None = None
     for source_index, source in enumerate(candidate.sources):
+        if scope_block_ids and source.block_id not in scope_block_ids:
+            continue
         for gold_source in gold.sources:
+            if scope_block_ids and gold_source.block_id not in scope_block_ids:
+                continue
             quote_match = _source_match(source.block_id, source.quote, gold_source)
             if quote_match is None:
                 continue
@@ -225,7 +246,7 @@ def _maximum_weight_matching(
     return selected
 
 
-def _ambiguous_edge_count(edges: list[_EdgeCandidate]) -> int:
+def _local_top_edge_tie_count(edges: list[_EdgeCandidate]) -> int:
     by_candidate: dict[int, list[_EdgeCandidate]] = {}
     for edge in edges:
         by_candidate.setdefault(edge.candidate_index, []).append(edge)

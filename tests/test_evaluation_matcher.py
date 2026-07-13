@@ -105,3 +105,52 @@ def test_match_set_is_stable_when_inputs_are_reordered():
     reversed_result = match_requirements(list(reversed(candidates)), list(reversed(gold)))
     expected = {(pair.candidate_id, pair.gold_id) for pair in forward.requirement_exact_matches}
     assert {(pair.candidate_id, pair.gold_id) for pair in reversed_result.requirement_exact_matches} == expected
+
+
+def test_selected_scope_filters_gold_and_disallows_out_of_scope_edges():
+    candidate = RequirementIR(
+        id="C1",
+        statement="Scoped statement",
+        sources=[
+            SourceSpan(document_id="doc_001", block_id="blk_0001", quote="not a match"),
+            SourceSpan(document_id="doc_001", block_id="blk_0002", quote="outside match"),
+        ],
+    )
+    gold = [
+        GoldRequirement(
+            gold_id="G1",
+            statement="Scoped statement",
+            sources=[
+                GoldSource(block_id="blk_0001", quote="different scoped quote"),
+                GoldSource(block_id="blk_0002", quote="outside match"),
+            ],
+        ),
+        GoldRequirement(
+            gold_id="G2",
+            statement="Outside statement",
+            sources=[GoldSource(block_id="blk_0002", quote="outside only")],
+        ),
+    ]
+    matches = match_requirements([candidate], gold, scope_block_ids=["blk_0001"])
+    assert matches.evaluated_candidate_count == 1
+    assert matches.evaluated_gold_count == 1
+    assert matches.source_alignment_matches == []
+    assert matches.requirement_exact_matches == []
+
+
+def test_local_top_edge_tie_metric_does_not_claim_global_ambiguity():
+    candidate = _candidate("C1", "First", "shared")
+    gold = [
+        GoldRequirement(
+            gold_id="G1",
+            statement="First",
+            sources=[GoldSource(block_id="blk_0001", quote="shared")],
+        ),
+        GoldRequirement(
+            gold_id="G2",
+            statement="Second",
+            sources=[GoldSource(block_id="blk_0001", quote="shared")],
+        ),
+    ]
+    matches = match_requirements([candidate], gold)
+    assert matches.local_top_edge_tie_count == 1

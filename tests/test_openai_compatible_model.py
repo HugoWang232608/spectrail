@@ -5,6 +5,7 @@ import pytest
 from spectrail.llm.base import ModelRequest
 from spectrail.llm.errors import ModelConfigurationError, ModelProviderError
 from spectrail.llm.openai_compatible import OpenAICompatibleModel
+from spectrail.llm.request_profile import ModelRequestProfile
 from spectrail.parsers.markdown_parser import MarkdownParser
 
 
@@ -92,6 +93,70 @@ def test_openai_compatible_model_wraps_timeout(monkeypatch):
             endpoint_id="timeout-test",
             timeout_seconds=3,
         ).generate(_request())
+
+
+def test_live_explicit_profile_must_match_transport_identity():
+    model = OpenAICompatibleModel(
+        api_key="test-key",
+        model_name="transport-model",
+        base_url="https://transport.test/v1/chat/completions",
+        endpoint_id="transport-endpoint",
+    )
+    matching = ModelRequestProfile(
+        provider_adapter="openai_compatible_v1",
+        provider_endpoint_id="transport-endpoint",
+        model_name="transport-model",
+        temperature=0.2,
+    )
+    assert model.resolve_request_profile(matching) is matching
+
+    with pytest.raises(ModelConfigurationError, match="LIVE_REQUEST_PROFILE_MISMATCH"):
+        model.resolve_request_profile(
+            ModelRequestProfile(
+                provider_adapter="openai_compatible_v1",
+                provider_endpoint_id="different-endpoint",
+                model_name="transport-model",
+            )
+        )
+
+
+def test_live_transport_is_frozen_after_first_resolution(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SPECTRAIL_LLM_API_KEY", "first-key")
+    monkeypatch.setenv("SPECTRAIL_LLM_MODEL", "first-model")
+    monkeypatch.setenv("SPECTRAIL_LLM_BASE_URL", "https://first.test/v1/chat/completions")
+    monkeypatch.setenv("SPECTRAIL_LLM_ENDPOINT_ID", "first-endpoint")
+    model = OpenAICompatibleModel()
+    first = model.resolve_transport()
+
+    monkeypatch.setenv("SPECTRAIL_LLM_API_KEY", "second-key")
+    monkeypatch.setenv("SPECTRAIL_LLM_MODEL", "second-model")
+    monkeypatch.setenv("SPECTRAIL_LLM_BASE_URL", "https://second.test/v1/chat/completions")
+    monkeypatch.setenv("SPECTRAIL_LLM_ENDPOINT_ID", "second-endpoint")
+    second = model.resolve_transport()
+
+    assert second is first
+    assert second["api_key"] == "first-key"
+    assert second["model_name"] == "first-model"
+    assert second["endpoint_id"] == "first-endpoint"
+
+
+def test_live_response_uses_request_prompt_version(monkeypatch):
+    model = OpenAICompatibleModel(
+        api_key="test-key",
+        model_name="test-model",
+        endpoint_id="test-endpoint",
+    )
+    monkeypatch.setattr(
+        model,
+        "_complete",
+        lambda *, body, config: ('{"items": []}', None),
+    )
+    request = _request()
+    request.metadata["prompt_version"] = "reqir_extraction_v2_chunked"
+    response = model.generate(request)
+    assert response.metadata["prompt_version"] == "reqir_extraction_v2_chunked"
+    assert response.model_name == "test-model"
 
 
 def _request() -> ModelRequest:

@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from spectrail.core.io import ensure_dir, read_json, write_json
-from spectrail.core.models import RequirementIR
+from spectrail.core.models import DocumentBlock, RequirementIR
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig
 from spectrail.evaluation.matcher import match_requirements
 from spectrail.evaluation.metrics import build_evaluation_metrics
@@ -17,6 +17,7 @@ from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 
 RequirementList = TypeAdapter(list[RequirementIR])
+BlockList = TypeAdapter(list[DocumentBlock])
 
 
 class EvaluationRunner:
@@ -81,24 +82,32 @@ class EvaluationRunner:
                 "execution": {},
             }
         )
+        blocks_path = pipeline_output / "parsed" / "blocks.json"
+        if case.scope_block_ids and blocks_path.exists():
+            blocks = BlockList.validate_python(read_json(blocks_path))
+            parsed_block_ids = {block.block_id for block in blocks}
+            missing_scope_ids = sorted(set(case.scope_block_ids) - parsed_block_ids)
+            if missing_scope_ids:
+                raise ValueError(
+                    "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids)
+                )
+        elif case.scope_block_ids and manifest.get("status") in {
+            "completed",
+            "completed_with_warnings",
+        }:
+            raise ValueError("cannot validate scope_block_ids because parsed blocks are missing")
         export_path = pipeline_output / "exports" / "reqir.json"
         if manifest.get("status") in {"completed", "completed_with_warnings"} and export_path.exists():
             actual_package = read_json(export_path)
             candidates = RequirementList.validate_python(actual_package.get("items", []))
         else:
             candidates = []
-        in_scope = [
-            candidate
-            for candidate in candidates
-            if not case.scope_block_ids
-            or any(source.block_id in set(case.scope_block_ids) for source in candidate.sources)
-        ]
         matches = match_requirements(candidates, gold.items, scope_block_ids=case.scope_block_ids)
         counts = manifest.get("counts", {})
         execution = manifest.get("execution", {})
         metrics = build_evaluation_metrics(
-            gold_count=len(gold.items),
-            candidate_count=len(in_scope),
+            gold_count=matches.evaluated_gold_count,
+            candidate_count=matches.evaluated_candidate_count,
             matches=matches,
             aggregated_count=counts.get("aggregated_requirements", len(candidates)),
             validated_count=counts.get("validated_requirements", len(candidates)),
@@ -139,6 +148,7 @@ class EvaluationRunner:
             "zero_result_reason": manifest.get("zero_result_reason"),
             "annotation_scope": "selected_blocks" if case.scope_block_ids else "full_document",
             "scope_block_ids": case.scope_block_ids,
+            "full_gold_requirements": len(gold.items),
             **metrics,
             "threshold_results": threshold_results,
             "source_alignment_matches": [pair.__dict__ for pair in matches.source_alignment_matches],
@@ -205,6 +215,7 @@ def _case_markdown(report: dict[str, Any]) -> str:
         "## Counts and execution",
         "",
         f"- Gold requirements: {report['gold_requirements']}",
+        f"- Full gold requirements: {report['full_gold_requirements']}",
         f"- Candidates in scope: {report['validated_candidates_in_scope']}",
         f"- Raw / aggregated / validated / exported: {report['raw_candidates']} / "
         f"{report['aggregated_requirements']} / {report['validated_requirements']} / "
@@ -229,6 +240,7 @@ def _case_markdown(report: dict[str, Any]) -> str:
         f"- Export grounding: {report['export_grounding_pass_rate']:.4f}",
         f"- Duplicate / quarantine / rejected rates: {report['duplicate_rate']:.4f} / "
         f"{report['quarantine_rate']:.4f} / {report['rejected_item_rate']:.4f}",
+        f"- Local top-edge ties: {report['local_top_edge_tie_count']}",
         "",
         "## Thresholds",
         "",

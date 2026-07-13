@@ -53,7 +53,7 @@ def build_evaluation_metrics(
         "validated_candidates_in_scope": candidate_count,
         "source_matching_cardinality": len(matches.source_alignment_matches),
         "requirement_matching_cardinality": len(matches.requirement_exact_matches),
-        "ambiguous_optimum_count": matches.ambiguous_optimum_count,
+        "local_top_edge_tie_count": matches.local_top_edge_tie_count,
         "raw_candidates": raw_candidate_count,
         "aggregated_requirements": aggregated_count,
         "validated_requirements": validated_count,

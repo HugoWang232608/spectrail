@@ -35,14 +35,15 @@ class OpenAICompatibleModel:
         self.endpoint_id = endpoint_id
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self._resolved_transport: dict[str, Any] | None = None
 
     def generate(self, request: ModelRequest) -> ModelResponse:
-        config = self._load_config(insecure=bool(request.metadata.get("insecure")))
+        insecure = bool(request.metadata.get("insecure"))
+        config = self.resolve_transport(insecure=insecure)
         prompt = build_reqir_prompt(request)
-        profile = request.request_profile or ModelRequestProfile(
-            provider_adapter="openai_compatible_v1",
-            provider_endpoint_id=config["endpoint_id"],
-            model_name=config["model_name"],
+        profile = self.resolve_request_profile(
+            request.request_profile,
+            insecure=insecure,
         )
         body = OPENAI_COMPATIBLE_ADAPTER.build_provider_request_body(prompt=prompt, profile=profile)
         raw_text, usage = self._complete(body=body, config=config)
@@ -50,17 +51,48 @@ class OpenAICompatibleModel:
         return ModelResponse(
             payload=payload,
             model_mode=self.model_mode,
-            model_name=config["model_name"],
+            model_name=profile.model_name,
             raw_text=raw_text,
             prompt=prompt,
             metadata={
-                "provider_endpoint_id": config["endpoint_id"],
-                "model_name": config["model_name"],
-                "prompt_version": PROMPT_VERSION,
+                "provider_endpoint_id": profile.provider_endpoint_id,
+                "model_name": profile.model_name,
+                "prompt_version": request.metadata.get("prompt_version", PROMPT_VERSION),
                 "tls_verify": config["tls_verify"],
                 "usage": usage,
             },
         )
+
+    def resolve_transport(self, *, insecure: bool = False) -> dict[str, Any]:
+        if self._resolved_transport is None:
+            self._resolved_transport = self._load_config(insecure=insecure)
+        elif self._resolved_transport["tls_verify"] != (not insecure):
+            raise ModelConfigurationError(
+                "live transport was already resolved with a different TLS verification policy"
+            )
+        return self._resolved_transport
+
+    def resolve_request_profile(
+        self,
+        explicit_profile: ModelRequestProfile | None,
+        *,
+        insecure: bool = False,
+    ) -> ModelRequestProfile:
+        config = self.resolve_transport(insecure=insecure)
+        if explicit_profile is None:
+            return ModelRequestProfile(
+                provider_adapter="openai_compatible_v1",
+                provider_endpoint_id=config["endpoint_id"],
+                model_name=config["model_name"],
+            )
+        if explicit_profile.provider_adapter != "openai_compatible_v1":
+            raise ModelConfigurationError("LIVE_REQUEST_PROFILE_ADAPTER_MISMATCH")
+        if (
+            explicit_profile.provider_endpoint_id != config["endpoint_id"]
+            or explicit_profile.model_name != config["model_name"]
+        ):
+            raise ModelConfigurationError("LIVE_REQUEST_PROFILE_MISMATCH")
+        return explicit_profile
 
     def _load_config(self, *, insecure: bool = False) -> dict[str, Any]:
         dotenv = _load_dotenv(Path(".env"))

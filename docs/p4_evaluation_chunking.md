@@ -63,6 +63,12 @@ Reports are written as JSON and Markdown. The matcher first performs determinist
 
 Evaluation cases may declare a complete `request_profile`, including adapter identity, logical endpoint ID, model name, temperature, response format, and safe request options. A failed extraction writes a structured case report from `run_manifest.json` and does not prevent later cases from running; malformed case schemas and gold packages remain suite-level configuration errors. Reports include raw matching counts, duplicate/quarantine/rejection rates, chunk and model-call counts, execution sizes and timing, outcome fields, and every threshold comparison.
 
+For selected-scope evaluation, every configured block ID must exist in the parsed document. Both candidates and a reusable full-document gold package are filtered to requirements with at least one source in scope, and matching edges may use only in-scope sources. Reports expose both the full gold count and the evaluated scoped gold count.
+
+Live transport settings are resolved once and frozen for the model client. An explicit request profile must use the same logical endpoint ID and model name as the transport mapping; the profile controls canonical request identity while the frozen transport supplies the URL and credentials. Per-response prompt metadata uses the prompt version carried by the final request.
+
+The report field `local_top_edge_tie_count` describes local equal-quality edge ties only. It does not claim that multiple globally optimal bipartite matchings exist; deterministic stable ranking still selects one reproducible result.
+
 The repository also includes `fixtures/recorded/chunked/sample_srs_long`. Its manifest binds each response to the root request profile, final request fingerprint, chunk fingerprint, chunk ID, and exact ordered block IDs. A normal single-file Recorded fixture is rejected when a run produces more than one chunk.
 
 ## API

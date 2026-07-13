@@ -628,15 +628,13 @@ def _resolve_request_profile(config: PipelineConfig, model_client: Any) -> Model
         if config.request_profile is not None:
             return config.request_profile
         return fixture_profile
+    if isinstance(model_client, OpenAICompatibleModel):
+        return model_client.resolve_request_profile(
+            config.request_profile,
+            insecure=config.insecure,
+        )
     if config.request_profile is not None:
         return config.request_profile
-    if isinstance(model_client, OpenAICompatibleModel):
-        resolved = model_client._load_config(insecure=config.insecure)
-        return ModelRequestProfile(
-            "openai_compatible_v1",
-            resolved["endpoint_id"],
-            resolved["model_name"],
-        )
     raise PipelineValidationError("unable to resolve model request profile")
 
 

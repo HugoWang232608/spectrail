@@ -62,6 +62,7 @@ class EvaluationRunner:
                 overlap_blocks=case.overlap_blocks,
             ),
             validation_policy=case.validation_policy,
+            evidence_policy=case.evidence_policy,
         )
         pipeline_exception: Exception | None = None
         try:

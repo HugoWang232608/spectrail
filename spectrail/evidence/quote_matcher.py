@@ -196,6 +196,34 @@ def build_quote_match_registry(
     return registry
 
 
+def validate_source_evidence_keys(
+    requirements: Iterable[Any],
+    *,
+    evidence_fingerprint: str,
+    bind_missing: bool = False,
+) -> None:
+    for requirement in requirements:
+        for source in requirement.sources:
+            canonical_cell_ids = (
+                source.table_locator.cell_ids
+                if source.table_locator is not None
+                else ()
+            )
+            expected = source_evidence_key(
+                evidence_fingerprint=evidence_fingerprint,
+                document_id=source.document_id,
+                block_id=source.block_id,
+                quote=source.quote,
+                canonical_cell_ids=canonical_cell_ids,
+            )
+            if source.source_evidence_key is None and bind_missing:
+                source.source_evidence_key = expected
+            elif source.source_evidence_key != expected:
+                raise ValueError(
+                    "source_evidence_key does not match the supplied EvidenceIndex"
+                )
+
+
 def find_all_exact_ranges(text: str, quote: str) -> list[QuoteMatchRange]:
     if not quote:
         return []

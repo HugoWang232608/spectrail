@@ -49,6 +49,7 @@ def test_api_forced_chunking_exposes_chunk_and_quarantine_artifacts(api_client: 
             "max_rendered_prompt_chars": 1600,
             "overlap_blocks": 1,
             "validation_policy": "quarantine",
+            "evidence_policy": "structured_required",
         },
     )
     assert created.status_code == 200
@@ -77,6 +78,12 @@ def test_api_rejects_invalid_chunking_configuration(api_client: TestClient):
     response = api_client.post(
         "/api/tasks",
         json={"max_rendered_prompt_chars": 999, "overlap_blocks": 6},
+    )
+    assert response.status_code == 422
+
+    response = api_client.post(
+        "/api/tasks",
+        json={"evidence_policy": "unsupported"},
     )
     assert response.status_code == 422
 

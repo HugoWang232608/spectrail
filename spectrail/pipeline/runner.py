@@ -36,6 +36,7 @@ from spectrail.review.review_log import collect_review_log
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
+from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
 class PipelineError(ValueError):
@@ -78,6 +79,7 @@ class PipelineRunner:
         max_rendered_prompt_chars: int = 16000,
         overlap_blocks: int = 1,
         validation_policy: str = "strict",
+        evidence_policy: str = "structured_if_available",
         fail_fast: bool = False,
         config: PipelineConfig | None = None,
         parsed_document: ParsedDocument | None = None,
@@ -93,6 +95,7 @@ class PipelineRunner:
                 fail_fast=fail_fast,
             ),
             validation_policy=validation_policy,  # type: ignore[arg-type]
+            evidence_policy=evidence_policy,  # type: ignore[arg-type]
             dump_prompt=dump_prompt,
             insecure=insecure,
         )
@@ -409,15 +412,33 @@ class PipelineRunner:
                 write_json(extracted_dir / "validation_report.json", schema_report.model_dump(mode="json"))
                 raise PipelineValidationError("schema validation failed")
 
-            validated_requirements, source_report = SourceQuoteValidator().validate(
+            quote_validated_requirements, source_report = SourceQuoteValidator().validate(
                 requirements,
                 blocks,
                 quote_matches,
             )
-            valid_ids = {item.id for item in validated_requirements}
+            locator_validated_requirements, locator_report, locator_failures = (
+                SourceLocatorValidator().validate(
+                    requirements,
+                    evidence_index,
+                    quote_matches,
+                    policy=pipeline_config.evidence_policy,
+                )
+            )
+            quote_valid_ids = {item.id for item in quote_validated_requirements}
+            locator_valid_ids = {item.id for item in locator_validated_requirements}
+            valid_ids = quote_valid_ids & locator_valid_ids
+            validated_requirements = [
+                item for item in requirements if item.id in valid_ids
+            ]
             quarantined = [item for item in requirements if item.id not in valid_ids]
             ears_report = BasicEARSValidator().validate(validated_requirements)
-            validation_report = _merge_reports(schema_report, source_report, ears_report)
+            validation_report = _merge_reports(
+                schema_report,
+                source_report,
+                locator_report,
+                ears_report,
+            )
             if rejected_items and not accepted_candidates:
                 validation_report.add_issue(
                     ValidationIssue(
@@ -446,11 +467,21 @@ class PipelineRunner:
                 )
             write_json(extracted_dir / "validation_report.json", validation_report.model_dump(mode="json"))
             write_json(
+                extracted_dir / "source_locator_report.json",
+                locator_report.model_dump(mode="json"),
+            )
+            write_json(
+                extracted_dir / "source_locator_failures.json",
+                locator_failures,
+            )
+            write_json(
                 extracted_dir / "reqir.quarantined.json",
                 {"metadata": {"validation_state": "quarantined"}, "items": model_list_dump(quarantined)},
             )
             if not source_report.valid and pipeline_config.validation_policy == "strict":
                 raise PipelineValidationError("source quote validation failed")
+            if not locator_report.valid and pipeline_config.validation_policy == "strict":
+                raise PipelineValidationError("source locator validation failed")
 
             warning_codes = []
             zero_result_reason = None
@@ -472,6 +503,8 @@ class PipelineRunner:
                 warning_codes.append("MODEL_ITEMS_REJECTED")
             if quarantined:
                 warning_codes.append("CANDIDATES_QUARANTINED")
+            if any(issue.level == "warning" for issue in locator_report.issues):
+                warning_codes.append("SOURCE_LOCATOR_WARNINGS")
             if aggregation.field_conflict_count:
                 warning_codes.append("AGGREGATION_FIELD_CONFLICT")
             if any("CHUNK_PROMPT_OVER_BUDGET" in chunk.warnings for chunk in chunks):
@@ -528,8 +561,10 @@ class PipelineRunner:
                 "validated_requirements": len(validated_requirements),
                 "quarantined_requirements": len(quarantined),
                 "duplicate_groups": len(aggregation.duplicate_groups),
-                "source_quote_passed": len(validated_requirements),
-                "source_quote_failed": len(quarantined),
+                "source_quote_passed": len(quote_validated_requirements),
+                "source_quote_failed": len(requirements) - len(quote_validated_requirements),
+                "source_locator_passed": len(locator_validated_requirements),
+                "source_locator_failed": len(requirements) - len(locator_validated_requirements),
             }
             completed_manifest = complete_manifest(
                 manifest,
@@ -545,6 +580,8 @@ class PipelineRunner:
                     "source_map": "extracted/source_map.json",
                     "quote_matches": "extracted/quote_matches.json",
                     "validation_report": "extracted/validation_report.json",
+                    "source_locator_report": "extracted/source_locator_report.json",
+                    "source_locator_failures": "extracted/source_locator_failures.json",
                     "review_log": "review/review_log.json",
                     "reqir_export": "exports/reqir.json",
                     "xlsx": "exports/requirements.xlsx",
@@ -569,6 +606,7 @@ class PipelineRunner:
             }
             completed_manifest["evidence"] = {
                 "schema_version": evidence_index.schema_version,
+                "policy": pipeline_config.evidence_policy,
                 "source_sha256": evidence_index.source_sha256,
                 "evidence_fingerprint": evidence_index.evidence_fingerprint,
                 "block_count": len(evidence_index.blocks),

@@ -12,6 +12,11 @@ PDF_PREVIEW_COORDINATE_SPACE = "pdf_preview_rotated_points_top_left_v1"
 CoordinateSpace = Literal["pdf_preview_rotated_points_top_left_v1"]
 OffsetEncoding = Literal["unicode_code_point"]
 EvidenceCapability = Literal["text_range", "page_region", "table_cell"]
+EvidencePolicy = Literal[
+    "quote_only",
+    "structured_if_available",
+    "structured_required",
+]
 CapabilityStatus = Literal[
     "UNVERIFIED",
     "PASS",
@@ -451,11 +456,26 @@ class EvidenceIndex(EvidenceModel):
                 raise ValueError(
                     f"occurrence cell and block tables differ: {occurrence.occurrence_id}"
                 )
+            if occurrence.cell_id not in block.cell_ids:
+                raise ValueError(
+                    "occurrence cell is not registered by its block: "
+                    f"{occurrence.occurrence_id}"
+                )
             table = tables_by_id[cell.table_id]
             if occurrence.occurrence_id not in table.occurrence_ids:
                 raise ValueError(
                     f"occurrence is not registered by its table: {occurrence.occurrence_id}"
                 )
+        occurrence_pairs = {
+            (occurrence.block_id, occurrence.cell_id)
+            for occurrence in self.cell_occurrences
+        }
+        for block in self.blocks:
+            for cell_id in block.cell_ids:
+                if (block.block_id, cell_id) not in occurrence_pairs:
+                    raise ValueError(
+                        f"block cell has no occurrence in the block: {block.block_id}/{cell_id}"
+                    )
         return self
 
 

@@ -46,23 +46,39 @@ class SourceQuoteValidator:
         validated: list[RequirementIR] = []
         report = ValidationReport(valid=True)
         for requirement in requirements:
-            passed = False
+            source_passes: list[bool] = []
             for index, source in enumerate(requirement.sources):
                 requirement.sources[index] = self.validate_source(
                     source, blocks_by_id, quote_matches
                 )
-                if requirement.sources[index].match_status in self.pass_statuses:
-                    passed = True
-            if passed:
+                validated_source = requirement.sources[index]
+                passed = validated_source.match_status in self.pass_statuses
+                source_passes.append(passed)
+                if not passed:
+                    report.add_issue(
+                        ValidationIssue(
+                            level="error",
+                            code="SOURCE_QUOTE_NOT_GROUNDED",
+                            message="source quote has no exact or normalized match",
+                            requirement_id=requirement.id,
+                            source_block_id=validated_source.block_id,
+                            metadata={
+                                "source_index": index,
+                                "source_evidence_key": validated_source.source_evidence_key,
+                                "match_status": validated_source.match_status,
+                                "match_score": validated_source.match_score,
+                            },
+                        )
+                    )
+            if source_passes and all(source_passes):
                 validated.append(requirement)
-            else:
+            elif not source_passes:
                 report.add_issue(
                     ValidationIssue(
                         level="error",
-                        code="SOURCE_QUOTE_NOT_GROUNDED",
-                        message="requirement has no exact or normalized source quote match",
+                        code="SOURCE_QUOTE_MISSING",
+                        message="requirement contains no source quotes",
                         requirement_id=requirement.id,
-                        source_block_id=requirement.sources[0].block_id if requirement.sources else None,
                     )
                 )
         return validated, report

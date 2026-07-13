@@ -19,7 +19,8 @@ def build_fixed_plan(task_id: str, input_document: str, model_mode: str, *, p4: 
                 PlanStep(id="normalize_ears", tool="ears_normalizer", depends_on=["aggregate_candidates"]),
                 PlanStep(id="validate_schema", tool="schema_validator", depends_on=["normalize_ears"]),
                 PlanStep(id="validate_source_quote", tool="source_quote_validator", depends_on=["validate_schema"], output="extracted/reqir.validated.json"),
-                PlanStep(id="build_quarantine", tool="validation_policy", depends_on=["validate_source_quote"], output="extracted/reqir.quarantined.json"),
+                PlanStep(id="validate_source_locator", tool="source_locator_validator", depends_on=["validate_source_quote"], output="extracted/source_locator_report.json"),
+                PlanStep(id="build_quarantine", tool="validation_policy", depends_on=["validate_source_locator"], output="extracted/reqir.quarantined.json"),
                 PlanStep(id="init_review", tool="review_snapshot_builder", depends_on=["build_quarantine"], output="review/review_log.json"),
                 PlanStep(id="export_json", tool="json_exporter", depends_on=["init_review"], output="exports/reqir.json"),
                 PlanStep(id="export_xlsx", tool="xlsx_exporter", depends_on=["export_json"], output="exports/requirements.xlsx"),
@@ -60,9 +61,15 @@ def build_fixed_plan(task_id: str, input_document: str, model_mode: str, *, p4: 
                 output="extracted/reqir.validated.json",
             ),
             PlanStep(
+                id="validate_source_locator",
+                tool="source_locator_validator",
+                depends_on=["validate_source_quote"],
+                output="extracted/source_locator_report.json",
+            ),
+            PlanStep(
                 id="init_review",
                 tool="review_snapshot_builder",
-                depends_on=["validate_source_quote"],
+                depends_on=["validate_source_locator"],
                 output="review/review_log.json",
             ),
             PlanStep(

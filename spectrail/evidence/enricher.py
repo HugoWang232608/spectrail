@@ -28,7 +28,10 @@ class SourceEvidenceEnricher:
                 source.text_locator = None
                 source.locator_score = result.score
 
-                if result.status == "UNIQUE_MATCH" and result.selected_range is not None:
+                if block is None:
+                    text_status = "FAIL_INVALID_REFERENCE"
+                    issue_code = "SOURCE_BLOCK_NOT_FOUND"
+                elif result.status == "UNIQUE_MATCH" and result.selected_range is not None:
                     source.text_locator = TextLocator(
                         block_id=source.block_id,
                         start=result.selected_range.start,

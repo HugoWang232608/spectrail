@@ -16,6 +16,7 @@ from spectrail.evidence.models import (
     CellBlockOccurrence,
     EvidenceCapability,
     EvidenceIndex,
+    EvidencePolicy,
     LocatorStatus,
     PageLocator,
     PageRecord,
@@ -40,6 +41,7 @@ from spectrail.evidence.quote_matcher import (
     normalize_text,
     normalize_with_mapping,
     source_evidence_key,
+    validate_source_evidence_keys,
 )
 
 __all__ = [
@@ -51,6 +53,7 @@ __all__ = [
     "CellBlockOccurrence",
     "EvidenceCapability",
     "EvidenceIndex",
+    "EvidencePolicy",
     "LocatorStatus",
     "NormalizedText",
     "PageLocator",
@@ -83,5 +86,6 @@ __all__ = [
     "sha256_file",
     "sha256_text",
     "source_evidence_key",
+    "validate_source_evidence_keys",
     "table_id",
 ]

@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -8,6 +9,9 @@ from spectrail.llm.base import ModelResponse
 from spectrail.llm.errors import ModelProviderError
 from spectrail.llm.request_profile import ModelRequestProfile
 from spectrail.pipeline import PipelineConfig, PipelineRunner, PipelineValidationError
+from spectrail.parsers import parse_document
+from spectrail.evidence import finalize_evidence_fingerprint
+from spectrail.evidence.index_builder import ensure_evidence_index
 
 
 def test_forced_chunked_mock_pipeline_preserves_final_requirements(tmp_path: Path):
@@ -59,6 +63,65 @@ def test_quarantine_policy_exports_only_grounded_candidates(tmp_path: Path):
             recorded_fixture=fixture,
             validation_policy="strict",
         )
+
+
+def test_locator_policy_gates_available_structured_capability(tmp_path: Path):
+    document = Path("docs/sample_srs.md")
+    parsed = parse_document(document, document_id="doc_001")
+    index = ensure_evidence_index(document, parsed)
+    blocks = [
+        block.model_copy(
+            update={
+                "expected_capabilities": ["text_range", "page_region"],
+                "available_capabilities": ["text_range", "page_region"],
+            }
+        )
+        if block.block_id == "blk_0006"
+        else block
+        for block in index.blocks
+    ]
+    index = finalize_evidence_fingerprint(index.model_copy(update={"blocks": blocks}))
+    parsed = replace(
+        parsed,
+        source_sha256=index.source_sha256,
+        parser_identity=index.parser_identity,
+        evidence_index=index,
+    )
+    fixture = tmp_path / "locator.json"
+    fixture.write_text(
+        '{"items":[{"statement":"Valid quote, missing page locator",'
+        '"source_block_id":"blk_0006",'
+        '"source_quote":"管理员应能够创建、停用和恢复普通用户账号。"}]}',
+        encoding="utf-8",
+    )
+
+    strict_output = tmp_path / "locator-strict"
+    with pytest.raises(PipelineValidationError, match="source locator validation failed"):
+        PipelineRunner().extract(
+            document,
+            strict_output,
+            model_mode="recorded",
+            recorded_fixture=fixture,
+            parsed_document=parsed,
+        )
+    failures = read_json(
+        strict_output / "extracted" / "source_locator_failures.json"
+    )
+    assert failures[0]["capability_results"][1]["issue_code"] == (
+        "SOURCE_PAGE_LOCATOR_MISSING"
+    )
+
+    result = PipelineRunner().extract(
+        document,
+        tmp_path / "locator-quarantine",
+        model_mode="recorded",
+        recorded_fixture=fixture,
+        validation_policy="quarantine",
+        parsed_document=parsed,
+    )
+    manifest = read_json(result.manifest_path)
+    assert manifest["counts"]["validated_requirements"] == 0
+    assert manifest["counts"]["quarantined_requirements"] == 1
 
 
 def test_valid_empty_response_is_completed_with_warning(tmp_path: Path):

@@ -87,6 +87,9 @@ class EvaluationCase(BaseModel):
     max_rendered_prompt_chars: int = 16000
     overlap_blocks: int = 1
     validation_policy: Literal["strict", "quarantine"] = "strict"
+    evidence_policy: Literal[
+        "quote_only", "structured_if_available", "structured_required"
+    ] = "structured_if_available"
     allowed_pipeline_statuses: list[str] = Field(default_factory=lambda: ["completed"])
     allowed_zero_result_reasons: list[str | None] = Field(default_factory=lambda: [None])
     thresholds: dict[str, float] = Field(default_factory=dict)

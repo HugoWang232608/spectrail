@@ -18,6 +18,7 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
         "normalize_ears",
         "validate_schema",
         "validate_source_quote",
+        "validate_source_locator",
         "init_review",
         "export_json",
         "export_xlsx",

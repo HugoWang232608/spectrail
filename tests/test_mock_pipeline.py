@@ -20,6 +20,8 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
         output / "extracted" / "reqir.validated.json",
         output / "extracted" / "source_map.json",
         output / "extracted" / "validation_report.json",
+        output / "extracted" / "source_locator_report.json",
+        output / "extracted" / "source_locator_failures.json",
         output / "review" / "review_log.json",
         output / "exports" / "reqir.json",
         output / "exports" / "requirements.xlsx",
@@ -39,6 +41,7 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
     assert run_manifest["counts"]["validated_requirements"] >= 14
     assert run_manifest["evidence"]["block_count"] > 0
     assert run_manifest["evidence"]["quote_match_count"] > 0
+    assert run_manifest["evidence"]["policy"] == "structured_if_available"
 
     for requirement in requirements:
         assert requirement["id"]

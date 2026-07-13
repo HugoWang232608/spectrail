@@ -11,6 +11,44 @@ from spectrail.evidence.models import BlockEvidenceRecord, EvidenceIndex, Parser
 from spectrail.parsers.base import ParsedDocument
 
 
+def validate_evidence_index_against_parsed_document(
+    index: EvidenceIndex,
+    parsed_document: ParsedDocument,
+) -> None:
+    for field_name in ("document_id", "document_name", "source_format"):
+        if getattr(index, field_name) != getattr(parsed_document, field_name):
+            raise ValueError(
+                f"evidence index {field_name} does not match parsed document"
+            )
+
+    parsed_block_ids = [block.block_id for block in parsed_document.blocks]
+    index_block_ids = [block.block_id for block in index.blocks]
+    if index_block_ids != parsed_block_ids:
+        raise ValueError(
+            "evidence index block order does not match parsed document blocks"
+        )
+
+    evidence_blocks = {block.block_id: block for block in index.blocks}
+    for block in parsed_document.blocks:
+        if block.document_id != parsed_document.document_id:
+            raise ValueError(
+                f"parsed block document_id does not match parsed document: {block.block_id}"
+            )
+        evidence = evidence_blocks[block.block_id]
+        if evidence.text_length != len(block.text):
+            raise ValueError(
+                f"evidence block text_length does not match parsed block: {block.block_id}"
+            )
+        if evidence.text_sha256 != sha256_text(block.text):
+            raise ValueError(
+                f"evidence block text_sha256 does not match parsed block: {block.block_id}"
+            )
+        if evidence.page != block.page:
+            raise ValueError(
+                f"evidence block page does not match parsed block: {block.block_id}"
+            )
+
+
 def ensure_evidence_index(
     path: str | Path,
     parsed_document: ParsedDocument,
@@ -32,7 +70,14 @@ def ensure_evidence_index(
             raise ValueError("evidence index source_sha256 does not match input bytes")
         if index.parser_identity != parser_identity:
             raise ValueError("evidence index parser identity does not match parsed document")
-        return finalize_evidence_fingerprint(index)
+        validate_evidence_index_against_parsed_document(index, parsed_document)
+        finalized = finalize_evidence_fingerprint(index)
+        if index.evidence_fingerprint not in {
+            "0" * 64,
+            finalized.evidence_fingerprint,
+        }:
+            raise ValueError("evidence index fingerprint does not match its content")
+        return finalized
 
     index = EvidenceIndex(
         document_id=parsed_document.document_id,

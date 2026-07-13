@@ -12,6 +12,9 @@ class TaskCreateRequest(BaseModel):
     max_rendered_prompt_chars: int = Field(default=16000, ge=1000)
     overlap_blocks: int = Field(default=1, ge=0, le=5)
     validation_policy: Literal["strict", "quarantine"] = "strict"
+    evidence_policy: Literal[
+        "quote_only", "structured_if_available", "structured_required"
+    ] = "structured_if_available"
     fail_fast: bool = False
 
 

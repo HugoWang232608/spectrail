@@ -283,3 +283,97 @@ def test_evidence_index_rejects_table_with_foreign_cell():
                 )
             ],
         )
+
+
+def test_evidence_index_rejects_occurrence_cell_not_registered_by_block():
+    with pytest.raises(ValidationError, match="not registered by its block"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=1,
+                    text_sha256=sha256_text("x"),
+                    table_id="table_1",
+                    cell_ids=["cell_1"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id="table_1",
+                    block_ids=["blk_0001"],
+                    row_count=1,
+                    column_count=2,
+                    cell_ids=["cell_1", "cell_2"],
+                    occurrence_ids=["occ_1"],
+                    parser_method="docx_xml",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell,
+                    table_id="table_1",
+                    row_index=1,
+                    column_index=index,
+                    text="x",
+                    text_sha256=sha256_text("x"),
+                )
+                for index, cell in enumerate(["cell_1", "cell_2"], start=1)
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_1",
+                    cell_id="cell_2",
+                    block_id="blk_0001",
+                    canonical_start=0,
+                    canonical_end=1,
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_block_cell_without_occurrence():
+    with pytest.raises(ValidationError, match="has no occurrence"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=1,
+                    text_sha256=sha256_text("x"),
+                    table_id="table_1",
+                    cell_ids=["cell_1"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id="table_1",
+                    block_ids=["blk_0001"],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=["cell_1"],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_1",
+                    table_id="table_1",
+                    row_index=1,
+                    column_index=1,
+                    text="x",
+                    text_sha256=sha256_text("x"),
+                )
+            ],
+        )

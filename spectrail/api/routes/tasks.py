@@ -39,6 +39,7 @@ def create_task(
             "max_rendered_prompt_chars": request.max_rendered_prompt_chars,
             "overlap_blocks": request.overlap_blocks,
             "validation_policy": request.validation_policy,
+            "evidence_policy": request.evidence_policy,
             "fail_fast": request.fail_fast,
         },
     )
@@ -88,6 +89,9 @@ def run_task(
             max_rendered_prompt_chars=config.get("max_rendered_prompt_chars", 16000),
             overlap_blocks=config.get("overlap_blocks", 1),
             validation_policy=config.get("validation_policy", "strict"),
+            evidence_policy=config.get(
+                "evidence_policy", "structured_if_available"
+            ),
             fail_fast=config.get("fail_fast", False),
         )
         manifest = store.read_manifest(task_id) or {}

@@ -7,16 +7,26 @@ from pydantic import TypeAdapter
 
 from spectrail.core.io import model_list_dump, read_json, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
-from spectrail.evidence import QuoteMatchRegistry, build_quote_match_registry, sha256_text
+from spectrail.evidence import (
+    EvidenceIndex,
+    QuoteMatchRegistry,
+    build_quote_match_registry,
+    sha256_text,
+    validate_source_evidence_keys,
+)
+from spectrail.evidence.index_builder import (
+    validate_evidence_index_against_parsed_document,
+)
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
-from spectrail.parsers import DocumentParseError
+from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.evaluation.runner import EvaluationRunner
 from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
+from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
 BlockListAdapter = TypeAdapter(list[DocumentBlock])
@@ -36,6 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument("--max-rendered-prompt-chars", type=int, default=16000)
     extract_parser.add_argument("--overlap-blocks", type=int, default=1)
     extract_parser.add_argument("--validation-policy", choices=["strict", "quarantine"], default="strict")
+    extract_parser.add_argument(
+        "--evidence-policy",
+        choices=["quote_only", "structured_if_available", "structured_required"],
+        default="structured_if_available",
+    )
     extract_parser.add_argument("--fail-fast", action="store_true")
     extract_parser.add_argument(
         "--insecure",
@@ -48,8 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser = subparsers.add_parser("validate", help="validate ReqIR against parsed blocks")
     validate_parser.add_argument("reqir")
     validate_parser.add_argument("--blocks", required=True)
+    validate_parser.add_argument("--quote-matches", default=None)
+    validate_parser.add_argument("--evidence-index", default=None)
     validate_parser.add_argument("--output", default=None)
     validate_parser.add_argument("--validated-output", default=None)
+    validate_parser.add_argument(
+        "--evidence-policy",
+        choices=["quote_only", "structured_if_available", "structured_required"],
+        default="structured_if_available",
+    )
     validate_parser.set_defaults(func=run_validate)
 
     export_parser = subparsers.add_parser("export", help="export ReqIR to xlsx")
@@ -94,6 +116,7 @@ def run_extract(args: argparse.Namespace) -> int:
             max_rendered_prompt_chars=args.max_rendered_prompt_chars,
             overlap_blocks=args.overlap_blocks,
             validation_policy=args.validation_policy,
+            evidence_policy=args.evidence_policy,
             fail_fast=args.fail_fast,
         )
     except (PipelineError, DocumentParseError, ModelError) as exc:
@@ -115,24 +138,90 @@ def run_validate(args: argparse.Namespace) -> int:
     reqs = _load_requirements(args.reqir)
     blocks = BlockListAdapter.validate_python(read_json(args.blocks))
     schema_report = SchemaValidator().validate(reqs)
-    quote_matches_path = Path(args.reqir).parent / "quote_matches.json"
-    if quote_matches_path.exists():
+    quote_matches_path, evidence_index_path = _validation_artifact_paths(
+        Path(args.reqir),
+        quote_matches=args.quote_matches,
+        evidence_index=args.evidence_index,
+    )
+    evidence_index = (
+        EvidenceIndex.model_validate(read_json(evidence_index_path))
+        if evidence_index_path is not None
+        else None
+    )
+    if evidence_index is not None:
+        parsed_document = ParsedDocument(
+            document_id=evidence_index.document_id,
+            document_name=evidence_index.document_name,
+            source_format=evidence_index.source_format,
+            parser_name=evidence_index.parser_identity.parser_name,
+            text="\n\n".join(block.text for block in blocks),
+            blocks=blocks,
+            parser_identity=evidence_index.parser_identity,
+        )
+        validate_evidence_index_against_parsed_document(
+            evidence_index,
+            parsed_document,
+        )
+    if quote_matches_path is not None:
         quote_matches = QuoteMatchRegistry.model_validate(read_json(quote_matches_path))
     else:
-        validation_fingerprint = sha256_text(
-            "\n".join(f"{block.document_id}:{block.block_id}:{block.text}" for block in blocks)
+        if any(source.source_evidence_key for item in reqs for source in item.sources):
+            raise ValueError(
+                "quote match registry is required for ReqIR sources with source_evidence_key"
+            )
+        validation_fingerprint = (
+            evidence_index.evidence_fingerprint
+            if evidence_index is not None
+            else sha256_text(
+                "\n".join(
+                    f"{block.document_id}:{block.block_id}:{block.text}"
+                    for block in blocks
+                )
+            )
         )
         quote_matches = build_quote_match_registry(
             reqs,
             blocks,
             evidence_fingerprint=validation_fingerprint,
         )
+    if evidence_index is not None:
+        validate_source_evidence_keys(
+            reqs,
+            evidence_fingerprint=evidence_index.evidence_fingerprint,
+            bind_missing=True,
+        )
+    for item in reqs:
+        for source in item.sources:
+            if source.source_evidence_key is None:
+                raise ValueError("source_evidence_key is required after registry loading")
+            quote_matches.require(source.source_evidence_key)
     validated, source_report = SourceQuoteValidator().validate(
         reqs,
         blocks,
         quote_matches,
     )
-    report = merge_reports(schema_report, source_report, BasicEARSValidator().validate(validated))
+    if evidence_index is None:
+        if args.evidence_policy != "quote_only":
+            raise ValueError(
+                "evidence index is required unless --evidence-policy quote_only is used"
+            )
+        locator_validated = reqs
+        locator_report = ValidationReport(valid=True)
+    else:
+        locator_validated, locator_report, _ = SourceLocatorValidator().validate(
+            reqs,
+            evidence_index,
+            quote_matches,
+            policy=args.evidence_policy,
+        )
+    valid_ids = {item.id for item in validated} & {item.id for item in locator_validated}
+    validated = [item for item in reqs if item.id in valid_ids]
+    report = merge_reports(
+        schema_report,
+        source_report,
+        locator_report,
+        BasicEARSValidator().validate(validated),
+    )
     if args.output:
         write_json(args.output, report.model_dump(mode="json"))
     if args.validated_output:
@@ -145,6 +234,41 @@ def run_validate(args: argparse.Namespace) -> int:
         )
     print(report.model_dump_json(indent=2))
     return 0 if report.valid else 1
+
+
+def _validation_artifact_paths(
+    reqir_path: Path,
+    *,
+    quote_matches: str | None,
+    evidence_index: str | None,
+) -> tuple[Path | None, Path | None]:
+    explicit_quote = Path(quote_matches) if quote_matches else None
+    explicit_evidence = Path(evidence_index) if evidence_index else None
+    if explicit_quote is not None and not explicit_quote.exists():
+        raise ValueError(f"quote matches artifact not found: {explicit_quote}")
+    if explicit_evidence is not None and not explicit_evidence.exists():
+        raise ValueError(f"evidence index artifact not found: {explicit_evidence}")
+
+    task_dir = reqir_path.parent.parent
+    manifest_path = task_dir / "run_manifest.json"
+    manifest = read_json(manifest_path) if manifest_path.exists() else {}
+    outputs = manifest.get("outputs", {})
+
+    quote_candidates = [
+        reqir_path.parent / "quote_matches.json",
+        task_dir / outputs.get("quote_matches", "extracted/quote_matches.json"),
+    ]
+    evidence_candidates = [
+        reqir_path.parent / "evidence_index.json",
+        task_dir / outputs.get("evidence_index", "parsed/evidence_index.json"),
+    ]
+    resolved_quote = explicit_quote or next(
+        (path for path in quote_candidates if path.exists()), None
+    )
+    resolved_evidence = explicit_evidence or next(
+        (path for path in evidence_candidates if path.exists()), None
+    )
+    return resolved_quote, resolved_evidence
 
 
 def run_export(args: argparse.Namespace) -> int:

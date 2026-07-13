@@ -194,6 +194,7 @@ def _table_document_with_evidence(
     parser_identity = ParserIdentity(
         parser_name="docx_parser_v2",
         parser_version="2",
+        source_format="docx",
     )
     index = finalize_evidence_fingerprint(
         EvidenceIndex(
@@ -209,6 +210,7 @@ def _table_document_with_evidence(
                     text_length=len(block.text),
                     text_sha256=sha256_text(block.text),
                     table_id=table,
+                    table_row_index=1,
                     cell_ids=cells,
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],

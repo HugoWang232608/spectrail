@@ -21,7 +21,7 @@ def test_pipeline_runner_extract_recorded_generates_outputs(tmp_path: Path):
     raw = read_json(result.output_dir / "extracted" / "reqir.raw.json")
     assert raw["metadata"]["model_mode"] == "recorded"
     assert raw["metadata"]["model_name"] == "recorded-sample-fixture"
-    assert raw["metadata"]["prompt_version"] == "reqir_extraction_v4_evidence_v2"
+    assert raw["metadata"]["prompt_version"] == "reqir_extraction_v5_row_evidence_v2"
 
 
 def test_pipeline_runner_extract_recorded_full_fixture_covers_enum_drift(tmp_path: Path):
@@ -90,7 +90,7 @@ def test_pipeline_runner_writes_model_parser_metadata_to_manifest_and_plan(tmp_p
     assert manifest["model"] == {
         "mode": "recorded",
         "name": "recorded-sample-fixture",
-        "prompt_version": "reqir_extraction_v4_evidence_v2",
+        "prompt_version": "reqir_extraction_v5_row_evidence_v2",
         "recorded_fixture": "fixtures/recorded/sample_srs_reqir_response.json",
     }
     assert manifest["parser"] == {

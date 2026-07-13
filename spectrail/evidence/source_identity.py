@@ -6,6 +6,7 @@ from spectrail.evidence.models import (
     BlockEvidenceRecord,
     EvidenceIndex,
     TableCellRecord,
+    TableRecord,
 )
 from spectrail.evidence.table_cells import canonicalize_nonempty_cell_selection
 
@@ -16,6 +17,7 @@ def canonicalize_source_cell_ids(
 ) -> list[RequirementIR]:
     blocks_by_id = {block.block_id: block for block in evidence_index.blocks}
     cells_by_id = {cell.cell_id: cell for cell in evidence_index.cells}
+    tables_by_id = {table.table_id: table for table in evidence_index.tables}
     occurrence_pairs = {
         (occurrence.block_id, occurrence.cell_id)
         for occurrence in evidence_index.cell_occurrences
@@ -26,6 +28,7 @@ def canonicalize_source_cell_ids(
                 source,
                 blocks_by_id,
                 cells_by_id,
+                tables_by_id,
                 occurrence_pairs,
             )
     return requirements
@@ -35,6 +38,7 @@ def _canonical_cell_ids(
     source: SourceSpan,
     blocks_by_id: dict[str, BlockEvidenceRecord],
     cells_by_id: dict[str, TableCellRecord],
+    tables_by_id: dict[str, TableRecord],
     occurrence_pairs: set[tuple[str, str]],
 ) -> list[str]:
     raw = source.source_cell_ids_raw or source.canonical_source_cell_ids
@@ -65,12 +69,12 @@ def _canonical_cell_ids(
         raise EvidenceReferenceError(
             "source cell has no occurrence in the source block"
         )
-    if len({cell.row_index for cell in cells}) != 1:
-        raise EvidenceReferenceError(
-            "source cells must belong to one logical row"
-        )
+    if block.table_row_index is None:
+        raise EvidenceReferenceError("table source block has no physical row index")
     canonical = canonicalize_nonempty_cell_selection(
         cells,
         [cells_by_id[cell_id] for cell_id in block.cell_ids],
+        table=tables_by_id[block.table_id],
+        selected_row_index=block.table_row_index,
     )
     return [cell.cell_id for cell in canonical]

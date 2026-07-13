@@ -78,6 +78,7 @@ def ensure_evidence_index(
     parser_identity = parsed_document.parser_identity or ParserIdentity(
         parser_name=parsed_document.parser_name,
         parser_version="1",
+        source_format=parsed_document.source_format,  # type: ignore[arg-type]
     )
     if parsed_document.evidence_index is not None:
         index = parsed_document.evidence_index

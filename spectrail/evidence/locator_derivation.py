@@ -37,6 +37,10 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             "table locator requires a table evidence block"
         )
+    if block.table_row_index is None:
+        raise EvidenceReferenceError(
+            "table locator requires a physical table row"
+        )
     if not canonical_cell_ids:
         raise EvidenceReferenceError(
             "table locator requires canonical source cell IDs"
@@ -50,6 +54,8 @@ def derive_table_evidence(
     canonical = canonicalize_nonempty_cell_selection(
         cells,
         [cells_by_id[cell_id] for cell_id in block.cell_ids],
+        table=tables_by_id[block.table_id],
+        selected_row_index=block.table_row_index,
     )
     if [cell.cell_id for cell in canonical] != canonical_cell_ids:
         raise EvidenceReferenceError(
@@ -132,6 +138,7 @@ def derive_table_evidence(
             table_id=block.table_id,
             cell_ids=list(canonical_cell_ids),
             row_indices=[cell.row_index for cell in canonical],
+            selected_row_index=block.table_row_index,
             column_indices=[cell.column_index for cell in canonical],
             bbox=bbox,
         ),

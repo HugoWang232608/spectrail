@@ -56,6 +56,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -64,6 +65,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     text_length=len(block.text),
                     text_sha256=sha256_text(block.text),
                     table_id=table,
+                    table_row_index=1,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -119,8 +121,10 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
 
     assert "source_cell_ids" in prompt
     assert f"table_id: {table}" in prompt
+    assert "physical_row: 1" in prompt
     assert f"canonical_text: {block.text}" in prompt
     assert f"c1={cell}" in prompt
+    assert "anchor_row=1" in prompt
     assert "column_span=2" in prompt
     assert "row_span=2" in prompt
     assert f'text="{block.text}"' in prompt

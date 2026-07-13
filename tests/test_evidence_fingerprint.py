@@ -17,6 +17,7 @@ def _index(text: str, *, runtime_version: str = "1.24.0") -> EvidenceIndex:
         parser_identity=ParserIdentity(
             parser_name="markdown_parser_v1",
             parser_version="1",
+            source_format="markdown",
             runtime_dependencies={"parser-runtime": runtime_version},
         ),
         evidence_fingerprint="0" * 64,

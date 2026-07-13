@@ -40,6 +40,14 @@ STRUCTURED_CAPABILITIES = frozenset({"page_region", "table_cell"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TABLE_ID_RE = re.compile(r"^tbl_(\d{8})$")
 CELL_ID_RE = re.compile(r"^cell_(\d{8})_r(\d{4})_c(\d{4})$")
+PARSER_SOURCE_FORMATS = {
+    "markdown_parser_v1": "markdown",
+    "docx_parser_v1": "docx",
+    "docx_parser_v2": "docx",
+    "text_pdf_parser_v1": "pdf",
+    "pdf_parser_v1": "pdf",
+    "pdf_parser_v2": "pdf",
+}
 
 
 class EvidenceModel(BaseModel):
@@ -132,6 +140,9 @@ class TableLocator(EvidenceModel):
     row_indices: list[int] = Field(
         description="EvidenceIndex row anchors corresponding to cell_ids."
     )
+    selected_row_index: int = Field(
+        description="Physical table row occupied by every selected logical cell."
+    )
     column_indices: list[int] = Field(
         description=(
             "EvidenceIndex starting column anchors corresponding to cell_ids; these "
@@ -151,8 +162,8 @@ class TableLocator(EvidenceModel):
             raise ValueError("cell, row, and column lists must have equal length")
         if any(index < 1 for index in [*self.row_indices, *self.column_indices]):
             raise ValueError("table row and column indices must be 1-based")
-        if len(set(self.row_indices)) != 1:
-            raise ValueError("selected table cells must belong to one logical row")
+        if self.selected_row_index < 1:
+            raise ValueError("selected physical table row must be 1-based")
         if self.column_indices != sorted(self.column_indices):
             raise ValueError("table locator cells must use canonical column order")
         if len(set(self.column_indices)) != size:
@@ -218,6 +229,7 @@ class TextFragmentRecord(EvidenceModel):
 class ParserIdentity(EvidenceModel):
     parser_name: str
     parser_version: str
+    source_format: Literal["markdown", "docx", "pdf"]
     parser_config: dict[str, Any] = Field(default_factory=dict)
     runtime_dependencies: dict[str, str] = Field(default_factory=dict)
 
@@ -230,6 +242,7 @@ class BlockEvidenceRecord(EvidenceModel):
     bbox: BoundingBox | None = None
     fragment_ids: list[str] = Field(default_factory=list)
     table_id: str | None = None
+    table_row_index: int | None = None
     cell_ids: list[str] = Field(default_factory=list)
     expected_capabilities: list[EvidenceCapability] = Field(
         default_factory=lambda: ["text_range"]
@@ -254,11 +267,19 @@ class BlockEvidenceRecord(EvidenceModel):
         if "text_range" not in self.expected_capabilities:
             raise ValueError("all evidence blocks must expect text_range")
         if "table_cell" in self.available_capabilities and (
-            self.table_id is None or not self.cell_ids
+            self.table_id is None
+            or self.table_row_index is None
+            or not self.cell_ids
         ):
             raise ValueError(
-                "available table_cell capability requires table_id and cell_ids"
+                "available table_cell capability requires table_id, table_row_index, "
+                "and cell_ids"
             )
+        if self.table_row_index is not None:
+            if self.table_id is None:
+                raise ValueError("table_row_index requires table_id")
+            if self.table_row_index < 1:
+                raise ValueError("table_row_index must be 1-based")
         unexpected = set(self.available_capabilities) - set(self.expected_capabilities)
         if unexpected:
             raise ValueError(f"available capabilities are not expected: {sorted(unexpected)}")
@@ -277,6 +298,9 @@ class TableCellRecord(EvidenceModel):
     is_header: bool = False
     page: int | None = None
     bbox: BoundingBox | None = None
+
+    def occupies_row(self, row_index: int) -> bool:
+        return self.row_index <= row_index < self.row_index + self.row_span
 
     @field_validator("text_sha256")
     @classmethod
@@ -303,7 +327,11 @@ class CellBlockOccurrence(EvidenceModel):
     canonical_start: int
     canonical_end: int
     offset_encoding: OffsetEncoding = "unicode_code_point"
-    occurrence_role: Literal["original", "repeated_header"] = "original"
+    occurrence_role: Literal[
+        "original",
+        "repeated_header",
+        "row_span_projection",
+    ] = "original"
     prompt_start: int | None = None
     prompt_end: int | None = None
 
@@ -397,6 +425,22 @@ class EvidenceIndex(EvidenceModel):
         occurrences_by_id = {
             item.occurrence_id: item for item in self.cell_occurrences
         }
+
+        if self.parser_identity.source_format != self.source_format:
+            raise ValueError(
+                "parser identity source_format does not match evidence source_format"
+            )
+        registered_source_format = PARSER_SOURCE_FORMATS.get(
+            self.parser_identity.parser_name
+        )
+        if registered_source_format is None:
+            raise ValueError(
+                f"unregistered evidence parser: {self.parser_identity.parser_name}"
+            )
+        if registered_source_format != self.source_format:
+            raise ValueError(
+                "parser identity parser_name does not match evidence source_format"
+            )
 
         parser_method_by_format = {
             "docx": "docx_xml",
@@ -533,6 +577,38 @@ class EvidenceIndex(EvidenceModel):
                     raise ValueError(
                         f"block cell has no occurrence in the block: {block.block_id}/{cell_id}"
                     )
+            if block.table_id is not None:
+                table = tables_by_id[block.table_id]
+                if block.table_row_index is None:
+                    raise ValueError(
+                        f"table block requires table_row_index: {block.block_id}"
+                    )
+                if block.table_row_index > table.row_count:
+                    raise ValueError(
+                        f"table block row exceeds table bounds: {block.block_id}"
+                    )
+                expected_block_cells = {
+                    cell_id
+                    for cell_id in table.cell_ids
+                    if cells_by_id[cell_id].occupies_row(block.table_row_index)
+                }
+                if set(block.cell_ids) != expected_block_cells:
+                    raise ValueError(
+                        "table block cell map does not match its physical row: "
+                        f"{block.block_id}"
+                    )
+                if (
+                    table.topology_status == "sparse"
+                    and "table_cell" in block.available_capabilities
+                    and _cell_spans_have_gaps(
+                        [cells_by_id[cell_id] for cell_id in block.cell_ids],
+                        block.table_row_index,
+                    )
+                ):
+                    raise ValueError(
+                        "sparse table row with unknown column gaps cannot expose "
+                        f"table_cell capability: {block.block_id}"
+                    )
         for table in self.tables:
             _validate_table_topology(
                 table,
@@ -628,6 +704,28 @@ def _validate_table_topology(
         and len(occupied) != table.row_count * table.column_count
     ):
         raise ValueError(f"complete table topology has uncovered cells: {table.table_id}")
+
+
+def _cell_spans_have_gaps(
+    cells: list[TableCellRecord],
+    row_index: int,
+) -> bool:
+    intervals = sorted(
+        (
+            cell.column_index,
+            cell.column_index + cell.column_span,
+        )
+        for cell in cells
+        if cell.occupies_row(row_index)
+    )
+    if not intervals:
+        return True
+    cursor = intervals[0][1]
+    for start, end in intervals[1:]:
+        if start > cursor:
+            return True
+        cursor = max(cursor, end)
+    return False
 
 
 def aggregate_locator_status(

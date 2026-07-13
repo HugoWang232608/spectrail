@@ -29,7 +29,7 @@ def _index(*, expected: list[str], available: list[str]) -> EvidenceIndex:
             source_format="markdown",
             source_sha256="a" * 64,
             parser_identity=ParserIdentity(
-                parser_name="markdown_parser_v1", parser_version="1"
+                parser_name="markdown_parser_v1", parser_version="1", source_format="markdown"
             ),
             evidence_fingerprint="0" * 64,
             blocks=[

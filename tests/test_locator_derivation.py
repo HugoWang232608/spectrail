@@ -45,7 +45,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
             source_format="docx",
             source_sha256="a" * 64,
             parser_identity=ParserIdentity(
-                parser_name="docx_parser_v2", parser_version="2"
+                parser_name="docx_parser_v2", parser_version="2", source_format="docx"
             ),
             evidence_fingerprint="0" * 64,
             pages=[
@@ -66,6 +66,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     text_sha256=sha256_text(block.text),
                     page=1,
                     table_id=table_id,
+                    table_row_index=1,
                     cell_ids=[cell_1, cell_2],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -156,7 +157,12 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     assert validated == [requirement]
     assert report.valid is True
     assert failures == []
-    assert canonicalize_nonempty_cell_selection(index.cells, index.cells) == index.cells
+    assert canonicalize_nonempty_cell_selection(
+        index.cells,
+        index.cells,
+        table=index.tables[0],
+        selected_row_index=1,
+    ) == index.cells
 
     with pytest.raises(
         LocatorDerivationError,
@@ -241,6 +247,7 @@ def test_table_selection_can_cross_empty_logical_cells():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -249,6 +256,7 @@ def test_table_selection_can_cross_empty_logical_cells():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
+                    table_row_index=1,
                     cell_ids=[cell_a, cell_empty, cell_b],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -353,8 +361,213 @@ def test_table_selection_cannot_skip_non_empty_logical_cell():
         for column, text in enumerate(["A", "B", "C"], start=1)
     ]
 
+    table_record = TableRecord(
+        table_id=table,
+        block_ids=["blk_0001"],
+        row_count=1,
+        column_count=3,
+        cell_ids=[cell.cell_id for cell in cells],
+        occurrence_ids=["occ_00000001", "occ_00000002", "occ_00000003"],
+        parser_method="docx_xml",
+        topology_status="complete",
+    )
     with pytest.raises(EvidenceReferenceError, match="omits non-empty logical cells"):
-        canonicalize_nonempty_cell_selection([cells[0], cells[2]], cells)
+        canonicalize_nonempty_cell_selection(
+            [cells[0], cells[2]],
+            cells,
+            table=table_record,
+            selected_row_index=1,
+        )
+
+
+def test_sparse_table_selection_cannot_cross_unknown_column_gap():
+    table = "tbl_00000001"
+    cells = [
+        TableCellRecord(
+            cell_id=f"cell_00000001_r0001_c{column:04d}",
+            table_id=table,
+            row_index=1,
+            column_index=column,
+            text=text,
+            text_sha256=sha256_text(text),
+        )
+        for column, text in [(1, "A"), (5, "B")]
+    ]
+    table_record = TableRecord(
+        table_id=table,
+        block_ids=["blk_0001"],
+        row_count=1,
+        column_count=5,
+        cell_ids=[cell.cell_id for cell in cells],
+        occurrence_ids=["occ_00000001", "occ_00000002"],
+        parser_method="pymupdf_find_tables",
+        topology_status="sparse",
+    )
+
+    with pytest.raises(EvidenceReferenceError, match="unknown column gap"):
+        canonicalize_nonempty_cell_selection(
+            cells,
+            cells,
+            table=table_record,
+            selected_row_index=1,
+        )
+
+
+def test_vertical_merge_cells_are_selected_by_physical_row():
+    table = "tbl_00000001"
+    cell_a = "cell_00000001_r0001_c0001"
+    cell_c = "cell_00000001_r0001_c0002"
+    cell_b = "cell_00000001_r0002_c0002"
+    row_1 = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text="A | C",
+        order=1,
+    )
+    row_2 = DocumentBlock(
+        block_id="blk_0002",
+        document_id="doc_001",
+        type="table",
+        text="A | B",
+        order=2,
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="vertical-merge.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+                source_format="docx",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=row_1.block_id,
+                    text_length=len(row_1.text),
+                    text_sha256=sha256_text(row_1.text),
+                    table_id=table,
+                    table_row_index=1,
+                    cell_ids=[cell_a, cell_c],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                ),
+                BlockEvidenceRecord(
+                    block_id=row_2.block_id,
+                    text_length=len(row_2.text),
+                    text_sha256=sha256_text(row_2.text),
+                    table_id=table,
+                    table_row_index=2,
+                    cell_ids=[cell_a, cell_b],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                ),
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[row_1.block_id, row_2.block_id],
+                    row_count=2,
+                    column_count=2,
+                    cell_ids=[cell_a, cell_c, cell_b],
+                    occurrence_ids=[
+                        "occ_00000001",
+                        "occ_00000002",
+                        "occ_00000003",
+                        "occ_00000004",
+                    ],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell_a,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    row_span=2,
+                    text="A",
+                    text_sha256=sha256_text("A"),
+                ),
+                TableCellRecord(
+                    cell_id=cell_c,
+                    table_id=table,
+                    row_index=1,
+                    column_index=2,
+                    text="C",
+                    text_sha256=sha256_text("C"),
+                ),
+                TableCellRecord(
+                    cell_id=cell_b,
+                    table_id=table,
+                    row_index=2,
+                    column_index=2,
+                    text="B",
+                    text_sha256=sha256_text("B"),
+                ),
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cell_a,
+                    block_id=row_1.block_id,
+                    canonical_start=0,
+                    canonical_end=1,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cell_c,
+                    block_id=row_1.block_id,
+                    canonical_start=4,
+                    canonical_end=5,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000003",
+                    cell_id=cell_a,
+                    block_id=row_2.block_id,
+                    canonical_start=0,
+                    canonical_end=1,
+                    occurrence_role="row_span_projection",
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000004",
+                    cell_id=cell_b,
+                    block_id=row_2.block_id,
+                    canonical_start=4,
+                    canonical_end=5,
+                ),
+            ],
+        )
+    )
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement="A maps to B.",
+        sources=[
+            SourceSpan(
+                document_id="doc_001",
+                block_id=row_2.block_id,
+                quote=row_2.text,
+                source_cell_ids_raw=[cell_b, cell_a],
+            )
+        ],
+    )
+
+    canonicalize_source_cell_ids([requirement], index)
+    source = requirement.sources[0]
+    assert source.canonical_source_cell_ids == [cell_a, cell_b]
+    derived = derive_table_evidence(
+        index,
+        block_id=row_2.block_id,
+        selected_range=QuoteMatchRange(start=0, end=len(row_2.text)),
+        canonical_cell_ids=source.canonical_source_cell_ids,
+        block_text=row_2.text,
+    )
+    assert derived.locator.selected_row_index == 2
+    assert derived.locator.row_indices == [1, 2]
 
 
 def test_page_locator_validates_rotation_derivation_and_source_page():
@@ -374,7 +587,7 @@ def test_page_locator_validates_rotation_derivation_and_source_page():
             source_format="pdf",
             source_sha256="a" * 64,
             parser_identity=ParserIdentity(
-                parser_name="pdf_parser_v2", parser_version="2"
+                parser_name="pdf_parser_v2", parser_version="2", source_format="pdf"
             ),
             evidence_fingerprint="0" * 64,
             pages=[
@@ -474,7 +687,7 @@ def test_ambiguous_quote_uses_separate_provisional_text_locator():
             source_format="markdown",
             source_sha256="a" * 64,
             parser_identity=ParserIdentity(
-                parser_name="markdown_parser_v1", parser_version="1"
+                parser_name="markdown_parser_v1", parser_version="1", source_format="markdown"
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -543,6 +756,7 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -551,6 +765,7 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
+                    table_row_index=1,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -630,6 +845,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -638,6 +854,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
+                    table_row_index=1,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],

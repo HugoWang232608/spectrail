@@ -36,7 +36,7 @@ def test_all_evidence_blocks_must_expect_text_range():
 
 
 def test_available_table_cell_capability_requires_cell_map():
-    with pytest.raises(ValidationError, match="requires table_id and cell_ids"):
+    with pytest.raises(ValidationError, match="requires table_id, table_row_index"):
         BlockEvidenceRecord(
             block_id="blk_0001",
             text_length=1,
@@ -53,12 +53,14 @@ def test_table_locator_requires_canonical_unique_start_columns():
             table_id="tbl_00000001",
             cell_ids=["c2", "c1"],
             row_indices=[1, 1],
+            selected_row_index=1,
             column_indices=[2, 1],
         )
     locator = TableLocator(
         table_id="tbl_00000001",
         cell_ids=["c1", "c3"],
         row_indices=[1, 1],
+        selected_row_index=1,
         column_indices=[1, 3],
     )
     assert locator.column_indices == [1, 3]
@@ -67,6 +69,7 @@ def test_table_locator_requires_canonical_unique_start_columns():
             table_id="tbl_00000001",
             cell_ids=["c1", "c2"],
             row_indices=[1, 1],
+            selected_row_index=1,
             column_indices=[1, 1],
         )
 
@@ -90,6 +93,7 @@ def _topology_index(
     cells: list[TableCellRecord],
 ) -> EvidenceIndex:
     source_format = "pdf" if parser_method == "pymupdf_find_tables" else "docx"
+    parser_name = "pdf_parser_v2" if source_format == "pdf" else "docx_parser_v2"
     block_id = "blk_0001"
     block_text = "".join(cell.text for cell in cells)
     occurrences = []
@@ -112,8 +116,9 @@ def _topology_index(
         source_format=source_format,
         source_sha256="1" * 64,
         parser_identity=ParserIdentity(
-            parser_name="docx_parser_v2",
+            parser_name=parser_name,
             parser_version="2",
+            source_format=source_format,
         ),
         evidence_fingerprint="0" * 64,
         blocks=[
@@ -122,6 +127,7 @@ def _topology_index(
                 text_length=len(block_text),
                 text_sha256=sha256_text(block_text),
                 table_id=table_identifier,
+                table_row_index=1,
                 cell_ids=[cell.cell_id for cell in cells],
                 expected_capabilities=["text_range", "table_cell"],
                 available_capabilities=["text_range", "table_cell"],
@@ -189,6 +195,66 @@ def test_evidence_index_rejects_overlapping_logical_cells():
                 ),
             ],
         )
+
+
+def test_sparse_table_row_with_unknown_gaps_cannot_expose_table_cell():
+    table_identifier = "tbl_00000001"
+    with pytest.raises(
+        ValidationError,
+        match="unknown column gaps cannot expose table_cell capability",
+    ):
+        _topology_index(
+            table_identifier=table_identifier,
+            column_count=5,
+            topology_status="sparse",
+            parser_method="pymupdf_find_tables",
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_00000001_r0001_c0001",
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=1,
+                    text="A",
+                    text_sha256=sha256_text("A"),
+                ),
+                TableCellRecord(
+                    cell_id="cell_00000001_r0001_c0005",
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=5,
+                    text="B",
+                    text_sha256=sha256_text("B"),
+                ),
+            ],
+        )
+
+
+def test_parser_identity_source_format_and_registered_name_must_agree():
+    cell = TableCellRecord(
+        cell_id="cell_00000001_r0001_c0001",
+        table_id="tbl_00000001",
+        row_index=1,
+        column_index=1,
+        text="A",
+        text_sha256=sha256_text("A"),
+    )
+    payload = _topology_index(
+        cells=[cell],
+        column_count=1,
+    ).model_dump(mode="json")
+    payload["parser_identity"]["source_format"] = "pdf"
+    with pytest.raises(ValidationError, match="identity source_format does not match"):
+        EvidenceIndex.model_validate(payload)
+
+    payload = _topology_index(
+        cells=[cell],
+        column_count=1,
+        topology_status="sparse",
+        parser_method="pymupdf_find_tables",
+    ).model_dump(mode="json")
+    payload["parser_identity"]["parser_name"] = "docx_parser_v2"
+    with pytest.raises(ValidationError, match="parser_name does not match"):
+        EvidenceIndex.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -269,6 +335,7 @@ def test_evidence_v1_artifact_is_rejected_explicitly():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
         )
@@ -327,7 +394,7 @@ def test_table_cell_must_be_referenced_by_a_table_block():
     payload["tables"][0]["occurrence_ids"] = [occurrence_id(1)]
     payload["cell_occurrences"] = [payload["cell_occurrences"][0]]
 
-    with pytest.raises(ValidationError, match="not referenced by a table block"):
+    with pytest.raises(ValidationError, match="cell map does not match its physical row"):
         EvidenceIndex.model_validate(payload)
 
 
@@ -353,6 +420,7 @@ def test_evidence_index_rejects_table_without_blocks():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             tables=[
@@ -380,6 +448,7 @@ def test_evidence_index_rejects_table_without_cells():
             parser_identity=ParserIdentity(
                 parser_name="docx_parser_v2",
                 parser_version="2",
+                source_format="docx",
             ),
             evidence_fingerprint="0" * 64,
             blocks=[
@@ -388,6 +457,7 @@ def test_evidence_index_rejects_table_without_cells():
                     text_length=0,
                     text_sha256=sha256_text(""),
                     table_id="tbl_00000001",
+                    table_row_index=1,
                 )
             ],
             tables=[
@@ -439,6 +509,7 @@ def test_evidence_index_supports_repeated_header_occurrences():
             text_length=6,
             text_sha256=sha256_text("Header"),
             table_id=table_identifier,
+            table_row_index=1,
             cell_ids=[header_cell],
             expected_capabilities=["text_range", "table_cell"],
             available_capabilities=["text_range", "table_cell"],
@@ -448,6 +519,7 @@ def test_evidence_index_supports_repeated_header_occurrences():
             text_length=6,
             text_sha256=sha256_text("Header"),
             table_id=table_identifier,
+            table_row_index=1,
             cell_ids=[header_cell],
             expected_capabilities=["text_range", "table_cell"],
             available_capabilities=["text_range", "table_cell"],
@@ -475,7 +547,7 @@ def test_evidence_index_supports_repeated_header_occurrences():
         document_name="sample.docx",
         source_format="docx",
         source_sha256="1" * 64,
-        parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+        parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
         evidence_fingerprint="0" * 64,
         blocks=blocks,
         tables=[
@@ -514,7 +586,7 @@ def test_evidence_index_rejects_dangling_occurrence():
             document_name="sample.docx",
             source_format="docx",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
             evidence_fingerprint="0" * 64,
             blocks=[
                 BlockEvidenceRecord(
@@ -542,7 +614,7 @@ def test_evidence_index_rejects_page_with_foreign_block():
             document_name="sample.pdf",
             source_format="pdf",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="pdf_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="pdf_parser_v2", parser_version="2", source_format="pdf"),
             evidence_fingerprint="0" * 64,
             pages=[
                 PageRecord(
@@ -573,7 +645,7 @@ def test_evidence_index_rejects_block_cells_without_table():
             document_name="sample.docx",
             source_format="docx",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
             evidence_fingerprint="0" * 64,
             blocks=[
                 BlockEvidenceRecord(
@@ -615,7 +687,7 @@ def test_evidence_index_rejects_table_with_foreign_cell():
             document_name="sample.docx",
             source_format="docx",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
             evidence_fingerprint="0" * 64,
             tables=[
                 TableRecord(
@@ -659,7 +731,7 @@ def test_evidence_index_rejects_occurrence_cell_not_registered_by_block():
             document_name="sample.docx",
             source_format="docx",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
             evidence_fingerprint="0" * 64,
             blocks=[
                 BlockEvidenceRecord(
@@ -712,7 +784,7 @@ def test_evidence_index_rejects_block_cell_without_occurrence():
             document_name="sample.docx",
             source_format="docx",
             source_sha256="1" * 64,
-            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2", source_format="docx"),
             evidence_fingerprint="0" * 64,
             blocks=[
                 BlockEvidenceRecord(

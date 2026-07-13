@@ -1,26 +1,33 @@
 from collections.abc import Sequence
 
 from spectrail.evidence.errors import EvidenceReferenceError
-from spectrail.evidence.models import TableCellRecord
+from spectrail.evidence.models import TableCellRecord, TableRecord
 
 
 def canonicalize_nonempty_cell_selection(
     selected_cells: Sequence[TableCellRecord],
     available_cells: Sequence[TableCellRecord],
+    *,
+    table: TableRecord,
+    selected_row_index: int,
 ) -> list[TableCellRecord]:
     if len({cell.cell_id for cell in selected_cells}) != len(selected_cells):
         raise EvidenceReferenceError("source cell IDs must be unique")
     if selected_cells and len({cell.table_id for cell in selected_cells}) != 1:
         raise EvidenceReferenceError("source cells must belong to one table")
-    if selected_cells and len({cell.row_index for cell in selected_cells}) != 1:
-        raise EvidenceReferenceError("source cells must belong to one logical row")
+    if selected_row_index < 1 or selected_row_index > table.row_count:
+        raise EvidenceReferenceError("selected physical table row is out of bounds")
+    if any(not cell.occupies_row(selected_row_index) for cell in selected_cells):
+        raise EvidenceReferenceError(
+            "source cells must occupy the selected physical table row"
+        )
 
     canonical = sorted(
         (cell for cell in selected_cells if cell.text.strip()),
         key=lambda cell: (
             cell.table_id,
-            cell.row_index,
             cell.column_index,
+            cell.row_index,
             cell.cell_id,
         ),
     )
@@ -30,7 +37,6 @@ def canonicalize_nonempty_cell_selection(
         )
 
     table_id = canonical[0].table_id
-    row_index = canonical[0].row_index
     selected_min = canonical[0].column_index
     selected_max = max(
         cell.column_index + cell.column_span for cell in canonical
@@ -39,7 +45,7 @@ def canonicalize_nonempty_cell_selection(
         cell_end = cell.column_index + cell.column_span
         if not cell.text.strip() and not (
             cell.table_id == table_id
-            and cell.row_index == row_index
+            and cell.occupies_row(selected_row_index)
             and cell.column_index >= selected_min
             and cell_end <= selected_max
         ):
@@ -52,7 +58,7 @@ def canonicalize_nonempty_cell_selection(
         cell.cell_id
         for cell in available_cells
         if cell.table_id == table_id
-        and cell.row_index == row_index
+        and cell.occupies_row(selected_row_index)
         and cell.text.strip()
         and cell.column_index < selected_max
         and cell.column_index + cell.column_span > selected_min
@@ -63,4 +69,40 @@ def canonicalize_nonempty_cell_selection(
             "source cell selection omits non-empty logical cells in its column span: "
             f"{missing_non_empty}"
         )
+    if table.topology_status == "sparse" and _has_unknown_gap(
+        available_cells,
+        selected_row_index=selected_row_index,
+        selected_min=selected_min,
+        selected_max=selected_max,
+    ):
+        raise EvidenceReferenceError(
+            "sparse table selection crosses an unknown column gap"
+        )
     return canonical
+
+
+def _has_unknown_gap(
+    cells: Sequence[TableCellRecord],
+    *,
+    selected_row_index: int,
+    selected_min: int,
+    selected_max: int,
+) -> bool:
+    intervals = sorted(
+        (
+            max(cell.column_index, selected_min),
+            min(cell.column_index + cell.column_span, selected_max),
+        )
+        for cell in cells
+        if cell.occupies_row(selected_row_index)
+        and cell.column_index < selected_max
+        and cell.column_index + cell.column_span > selected_min
+    )
+    cursor = selected_min
+    for start, end in intervals:
+        if start > cursor:
+            return True
+        cursor = max(cursor, end)
+        if cursor >= selected_max:
+            return False
+    return cursor < selected_max

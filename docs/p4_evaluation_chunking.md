@@ -63,7 +63,9 @@ Reports are written as JSON and Markdown. The matcher first performs determinist
 
 Evaluation cases may declare a complete `request_profile`, including adapter identity, logical endpoint ID, model name, temperature, response format, and safe request options. A failed extraction writes a structured case report from `run_manifest.json` and does not prevent later cases from running; malformed case schemas and gold packages remain suite-level configuration errors. Reports include raw matching counts, duplicate/quarantine/rejection rates, chunk and model-call counts, execution sizes and timing, outcome fields, and every threshold comparison.
 
-For selected-scope evaluation, every configured block ID must exist in the parsed document. Both candidates and a reusable full-document gold package are filtered to requirements with at least one source in scope, and matching edges may use only in-scope sources. Reports expose both the full gold count and the evaluated scoped gold count.
+For selected-scope evaluation, the document is parsed and every configured block ID is validated before the extraction pipeline starts, so an invalid scope cannot trigger live model calls. Both candidates and a reusable full-document gold package are filtered to requirements with at least one source in scope, and matching edges may use only in-scope sources. Reports expose both the full gold count and the evaluated scoped gold count.
+
+An empty selected-scope gold set is a configuration error by default, even though the metric zero-denominator policy defines an empty/empty score as `1.0`. Set `allow_empty_gold_scope` to `true` only for an intentional negative case. CI cases can additionally require a minimum annotation count with a threshold such as `"gold_requirements_min": 1`.
 
 Live transport settings are resolved once and frozen for the model client. An explicit request profile must use the same logical endpoint ID and model name as the transport mapping; the profile controls canonical request identity while the frozen transport supplies the URL and credentials. Per-response prompt metadata uses the prompt version carried by the final request.
 

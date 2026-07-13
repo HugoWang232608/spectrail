@@ -6,18 +6,17 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from spectrail.core.io import ensure_dir, read_json, write_json
-from spectrail.core.models import DocumentBlock, RequirementIR
+from spectrail.core.models import RequirementIR
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig
 from spectrail.evaluation.matcher import match_requirements
 from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
 from spectrail.llm.errors import ModelError
-from spectrail.parsers import DocumentParseError
+from spectrail.parsers import DocumentParseError, parse_document
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 
 RequirementList = TypeAdapter(list[RequirementIR])
-BlockList = TypeAdapter(list[DocumentBlock])
 
 
 class EvaluationRunner:
@@ -45,6 +44,7 @@ class EvaluationRunner:
         document = _resolve_path(case.document, case_file.parent)
         gold_path = _resolve_path(case.gold, case_file.parent)
         gold = GoldPackage.model_validate(read_json(gold_path))
+        _preflight_selected_scope(document, case, gold)
         pipeline_output = output / "pipeline"
         config = PipelineConfig(
             model_mode=case.model_mode,
@@ -82,20 +82,6 @@ class EvaluationRunner:
                 "execution": {},
             }
         )
-        blocks_path = pipeline_output / "parsed" / "blocks.json"
-        if case.scope_block_ids and blocks_path.exists():
-            blocks = BlockList.validate_python(read_json(blocks_path))
-            parsed_block_ids = {block.block_id for block in blocks}
-            missing_scope_ids = sorted(set(case.scope_block_ids) - parsed_block_ids)
-            if missing_scope_ids:
-                raise ValueError(
-                    "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids)
-                )
-        elif case.scope_block_ids and manifest.get("status") in {
-            "completed",
-            "completed_with_warnings",
-        }:
-            raise ValueError("cannot validate scope_block_ids because parsed blocks are missing")
         export_path = pipeline_output / "exports" / "reqir.json"
         if manifest.get("status") in {"completed", "completed_with_warnings"} and export_path.exists():
             actual_package = read_json(export_path)
@@ -165,6 +151,34 @@ def _resolve_path(value: str | Path, case_dir: Path) -> Path:
     if path.is_absolute() or path.exists():
         return path
     return case_dir / path
+
+
+def _preflight_selected_scope(
+    document: Path,
+    case: EvaluationCase,
+    gold: GoldPackage,
+) -> None:
+    if not case.scope_block_ids:
+        return
+
+    parsed = parse_document(document, document_id="doc_001")
+    scope = set(case.scope_block_ids)
+    parsed_block_ids = {block.block_id for block in parsed.blocks}
+    missing_scope_ids = sorted(scope - parsed_block_ids)
+    if missing_scope_ids:
+        raise ValueError(
+            "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids)
+        )
+
+    scoped_gold_count = sum(
+        any(source.block_id in scope for source in requirement.sources)
+        for requirement in gold.items
+    )
+    if scoped_gold_count == 0 and not case.allow_empty_gold_scope:
+        raise ValueError(
+            "selected scope contains no gold requirements; "
+            "set allow_empty_gold_scope=true only for intentional empty-scope cases"
+        )
 
 
 def _threshold_results(metrics: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any]:

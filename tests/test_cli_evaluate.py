@@ -43,7 +43,9 @@ def test_selected_scope_evaluation_is_reported_explicitly(tmp_path: Path):
     assert report["requirement_exact_recall"] == 1.0
 
 
-def test_selected_scope_rejects_unknown_parsed_block(tmp_path: Path):
+def test_selected_scope_rejects_unknown_parsed_block_before_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     case = tmp_path / "case.json"
     case.write_text(
         '{"name":"invalid-scope","document":"docs/sample_srs.md",'
@@ -51,8 +53,78 @@ def test_selected_scope_rejects_unknown_parsed_block(tmp_path: Path):
         '"scope_block_ids":["blk_missing"]}',
         encoding="utf-8",
     )
+    pipeline_called = False
+
+    def fail_if_pipeline_called(*args, **kwargs):
+        nonlocal pipeline_called
+        pipeline_called = True
+        raise AssertionError("pipeline must not run for an invalid scope")
+
+    monkeypatch.setattr("spectrail.evaluation.runner.PipelineRunner.extract", fail_if_pipeline_called)
+
     with pytest.raises(SystemExit, match="scope_block_ids not found"):
         main(["evaluate", str(case), "--output", str(tmp_path / "invalid-scope-report")])
+    assert pipeline_called is False
+
+
+def test_selected_scope_rejects_empty_gold_before_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    case = tmp_path / "case.json"
+    case.write_text(
+        '{"name":"empty-gold-scope","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"scope_block_ids":["blk_0001"]}',
+        encoding="utf-8",
+    )
+    pipeline_called = False
+
+    def fail_if_pipeline_called(*args, **kwargs):
+        nonlocal pipeline_called
+        pipeline_called = True
+        raise AssertionError("pipeline must not run for an empty gold scope")
+
+    monkeypatch.setattr("spectrail.evaluation.runner.PipelineRunner.extract", fail_if_pipeline_called)
+
+    with pytest.raises(SystemExit, match="selected scope contains no gold requirements"):
+        main(["evaluate", str(case), "--output", str(tmp_path / "empty-scope-report")])
+    assert pipeline_called is False
+
+
+def test_selected_scope_allows_intentional_empty_gold(tmp_path: Path):
+    case = tmp_path / "case.json"
+    case.write_text(
+        '{"name":"allowed-empty-gold-scope","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"scope_block_ids":["blk_0001"],"allow_empty_gold_scope":true}',
+        encoding="utf-8",
+    )
+    output = tmp_path / "allowed-empty-scope-report"
+    assert main(["evaluate", str(case), "--output", str(output)]) == 0
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["gold_requirements"] == 0
+    assert report["validated_candidates_in_scope"] == 0
+    assert report["requirement_exact_recall"] == 1.0
+
+
+def test_gold_requirements_min_prevents_empty_scope_ci_pass(tmp_path: Path):
+    case = tmp_path / "case.json"
+    case.write_text(
+        '{"name":"empty-gold-gate","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json","scope_block_ids":["blk_0001"],'
+        '"allow_empty_gold_scope":true,"thresholds":{"gold_requirements_min":1}}',
+        encoding="utf-8",
+    )
+    output = tmp_path / "empty-scope-gate-report"
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
+    result = read_json(output / "evaluation_report.json")["cases"][0]["threshold_results"]
+    assert result["gold_requirements_min"] == {
+        "metric": "gold_requirements",
+        "operator": ">=",
+        "threshold": 1.0,
+        "actual": 0,
+        "passed": False,
+    }
 
 
 def test_evaluate_cli_returns_one_when_threshold_fails(tmp_path: Path):

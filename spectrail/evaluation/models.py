@@ -58,6 +58,7 @@ class EvaluationCase(BaseModel):
     document: str
     gold: str
     scope_block_ids: list[str] = Field(default_factory=list)
+    allow_empty_gold_scope: bool = False
     model_mode: Literal["mock", "recorded", "live"] = "mock"
     model_name: str | None = None
     request_profile: EvaluationRequestProfile | None = None

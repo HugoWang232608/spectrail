@@ -30,6 +30,7 @@ def validate_evidence_index_against_parsed_document(
         )
 
     evidence_blocks = {block.block_id: block for block in index.blocks}
+    parsed_blocks = {block.block_id: block for block in parsed_document.blocks}
     for block in parsed_document.blocks:
         if block.document_id != parsed_document.document_id:
             raise ValueError(
@@ -47,6 +48,19 @@ def validate_evidence_index_against_parsed_document(
         if evidence.page != block.page:
             raise ValueError(
                 f"evidence block page does not match parsed block: {block.block_id}"
+            )
+
+    cells_by_id = {cell.cell_id: cell for cell in index.cells}
+    for occurrence in index.cell_occurrences:
+        block_text = parsed_blocks[occurrence.block_id].text
+        cell = cells_by_id[occurrence.cell_id]
+        actual = block_text[
+            occurrence.canonical_start : occurrence.canonical_end
+        ]
+        if actual != cell.text:
+            raise ValueError(
+                "cell occurrence text does not match logical cell text: "
+                f"{occurrence.occurrence_id}"
             )
 
 

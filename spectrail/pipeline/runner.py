@@ -188,6 +188,7 @@ class PipelineRunner:
             def request_factory(request_blocks, metadata):
                 metadata = dict(metadata)
                 metadata["insecure"] = pipeline_config.insecure
+                metadata["evidence_policy"] = pipeline_config.evidence_policy
                 metadata["prompt_version"] = (
                     CHUNKED_PROMPT_VERSION if metadata.get("chunked") else PROMPT_VERSION
                 )
@@ -244,11 +245,15 @@ class PipelineRunner:
 
             extractor = ReqIRExtractor()
             successful_responses: list[ModelResponse] = []
-            table_cell_required_block_ids = {
-                block.block_id
-                for block in evidence_index.blocks
-                if "table_cell" in block.available_capabilities
-            }
+            table_cell_required_block_ids = (
+                set()
+                if pipeline_config.evidence_policy == "quote_only"
+                else {
+                    block.block_id
+                    for block in evidence_index.blocks
+                    if "table_cell" in block.available_capabilities
+                }
+            )
 
             for chunk in chunks:
                 chunk_dir = ensure_dir(extracted_dir / "chunk_results" / chunk.chunk_id)

@@ -37,6 +37,8 @@ LocatorStatus = Literal[
 
 STRUCTURED_CAPABILITIES = frozenset({"page_region", "table_cell"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TABLE_ID_RE = re.compile(r"^tbl_(\d{8})$")
+CELL_ID_RE = re.compile(r"^cell_(\d{8})_r(\d{4})_c(\d{4})$")
 
 
 class EvidenceModel(BaseModel):
@@ -115,10 +117,26 @@ class TableCellRef(EvidenceModel):
 
 
 class TableLocator(EvidenceModel):
-    table_id: str
-    cell_ids: list[str]
-    row_indices: list[int]
-    column_indices: list[int]
+    """Evidence-bound table reference whose topology requires an EvidenceIndex."""
+
+    table_id: str = Field(
+        description="Stable table ID resolved and validated against an EvidenceIndex."
+    )
+    cell_ids: list[str] = Field(
+        description=(
+            "Stable logical cell IDs in canonical column order. Selection continuity "
+            "is validated by SourceLocatorValidator against EvidenceIndex cell spans."
+        )
+    )
+    row_indices: list[int] = Field(
+        description="EvidenceIndex row anchors corresponding to cell_ids."
+    )
+    column_indices: list[int] = Field(
+        description=(
+            "EvidenceIndex starting column anchors corresponding to cell_ids; these "
+            "anchors alone cannot prove continuity when cells have column_span > 1."
+        )
+    )
     bbox: BoundingBox | None = None
 
     @model_validator(mode="after")
@@ -478,7 +496,62 @@ class EvidenceIndex(EvidenceModel):
                     raise ValueError(
                         f"block cell has no occurrence in the block: {block.block_id}/{cell_id}"
                     )
+        for table in self.tables:
+            _validate_table_topology(table, cells_by_id)
         return self
+
+
+def _validate_table_topology(
+    table: TableRecord,
+    cells_by_id: dict[str, TableCellRecord],
+) -> None:
+    table_match = TABLE_ID_RE.fullmatch(table.table_id)
+    if table_match is None:
+        raise ValueError(f"table ID is not canonical: {table.table_id}")
+    table_index = table_match.group(1)
+    occupied: dict[tuple[int, int], str] = {}
+    anchors: set[tuple[int, int]] = set()
+
+    for cell_id in table.cell_ids:
+        cell = cells_by_id[cell_id]
+        cell_match = CELL_ID_RE.fullmatch(cell.cell_id)
+        if cell_match is None:
+            raise ValueError(f"cell ID is not canonical: {cell.cell_id}")
+        encoded_table, encoded_row, encoded_column = cell_match.groups()
+        if (
+            encoded_table != table_index
+            or int(encoded_row) != cell.row_index
+            or int(encoded_column) != cell.column_index
+        ):
+            raise ValueError(
+                "cell ID does not match table, row, and column fields: "
+                f"{cell.cell_id}"
+            )
+
+        row_end = cell.row_index + cell.row_span - 1
+        column_end = cell.column_index + cell.column_span - 1
+        if row_end > table.row_count or column_end > table.column_count:
+            raise ValueError(f"cell span exceeds table bounds: {cell.cell_id}")
+
+        anchor = (cell.row_index, cell.column_index)
+        if anchor in anchors:
+            raise ValueError(
+                "table cells share an anchor coordinate: "
+                f"{table.table_id}/r{cell.row_index}/c{cell.column_index}"
+            )
+        anchors.add(anchor)
+
+        for row_index in range(cell.row_index, row_end + 1):
+            for column_index in range(cell.column_index, column_end + 1):
+                coordinate = (row_index, column_index)
+                owner = occupied.get(coordinate)
+                if owner is not None:
+                    raise ValueError(
+                        "table cells overlap at "
+                        f"row {row_index} column {column_index}: "
+                        f"{owner}, {cell.cell_id}"
+                    )
+                occupied[coordinate] = cell.cell_id
 
 
 def aggregate_locator_status(

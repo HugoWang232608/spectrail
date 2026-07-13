@@ -173,7 +173,9 @@ def test_pipeline_isolates_malformed_item_and_exports_valid_siblings(tmp_path: P
     assert read_json(result.output_dir / "extracted" / "chunk_errors.json") == []
 
 
-def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
+def _table_document_with_evidence(
+    tmp_path: Path,
+) -> tuple[Path, ParsedDocument]:
     document = tmp_path / "sample.docx"
     document.write_text("A | B", encoding="utf-8")
     block = DocumentBlock(
@@ -266,6 +268,11 @@ def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
         parser_identity=parser_identity,
         evidence_index=index,
     )
+    return document, parsed
+
+
+def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
+    document, parsed = _table_document_with_evidence(tmp_path)
 
     result = PipelineRunner().extract(
         document,
@@ -290,6 +297,31 @@ def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
         issue["code"] == "MODEL_ITEM_INVALID_CELL_IDS"
         for issue in report["issues"]
     )
+
+
+def test_quote_only_pipeline_does_not_require_table_cell_ids(tmp_path: Path):
+    document, parsed = _table_document_with_evidence(tmp_path)
+    fixture = tmp_path / "quote-only.json"
+    fixture.write_text(
+        '{"items":[{"statement":"A maps to B",'
+        '"source_block_id":"blk_0001","source_quote":"A | B"}]}',
+        encoding="utf-8",
+    )
+
+    result = PipelineRunner().extract(
+        document,
+        tmp_path / "table-quote-only",
+        model_mode="recorded",
+        recorded_fixture=fixture,
+        evidence_policy="quote_only",
+        parsed_document=parsed,
+    )
+
+    manifest = read_json(result.manifest_path)
+    exported = read_json(result.exported_reqir_path)["items"]
+    assert manifest["counts"]["model_items_rejected"] == 0
+    assert manifest["counts"]["validated_requirements"] == 1
+    assert exported[0]["sources"][0]["canonical_source_cell_ids"] == []
 
 
 def test_all_malformed_items_fail_with_distinct_zero_result_reason(tmp_path: Path):

@@ -30,12 +30,34 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
             "- Heading context blocks are context only; never extract or cite them as requirements.\n"
             "- Never cite a block ID that is absent from this chunk.\n\n"
         )
+    quote_only = request.metadata.get("evidence_policy") == "quote_only"
+    table_item_contract = (
+        "a cell_map may optionally include source_cell_ids.\n\n"
+        if quote_only
+        else "a cell_map must also include source_cell_ids.\n\n"
+    )
+    table_cell_contract = (
+        "- For a table block with a cell_map, source_cell_ids are optional under "
+        "the quote_only evidence policy. If supplied, they must contain the logical "
+        "cell IDs covered by source_quote.\n"
+        if quote_only
+        else "- For a table block with a cell_map, source_cell_ids must contain the "
+        "logical cell IDs covered by source_quote.\n"
+    )
+    table_overlap_contract = (
+        "- When optional source_cell_ids are supplied, a table source_quote may "
+        "select part of a cell's text; include every cell whose canonical span "
+        "overlaps the quote.\n"
+        if quote_only
+        else "- A table source_quote may select part of a cell's text; include every "
+        "cell whose canonical span overlaps the quote.\n"
+    )
     return (
         "You are extracting software requirements into ReqIR JSON.\n\n"
         "Return JSON only with a top-level items array.\n\n"
         "Each item must include title, type, ears_pattern, statement, subject, response, "
         "source_block_id, source_quote, confidence, and tags. Table blocks that display "
-        "a cell_map must also include source_cell_ids.\n\n"
+        f"{table_item_contract}"
         "Allowed enum values:\n"
         "- type: functional | non_functional | interface | constraint | business | unknown\n"
         "- ears_pattern: ubiquitous | event_driven | state_driven | optional | unwanted_behavior | unknown\n"
@@ -44,10 +66,8 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "Rules:\n"
         "- source_block_id must be one of the provided block IDs.\n"
         "- source_quote must be an exact substring from the chosen block text.\n"
-        "- For a table block with a cell_map, source_cell_ids must contain the "
-        "logical cell IDs covered by source_quote.\n"
-        "- A table source_quote may select part of a cell's text; include every "
-        "cell whose canonical span overlaps the quote.\n"
+        f"{table_cell_contract}"
+        f"{table_overlap_contract}"
         "- Table source cells must be in one row and contiguous; their output "
         "order is not identity-significant. Use column_span when deciding whether "
         "adjacent logical cells are contiguous.\n"

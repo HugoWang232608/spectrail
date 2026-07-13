@@ -73,7 +73,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                 TableRecord(
                     table_id=table,
                     block_ids=[block.block_id],
-                    row_count=1,
+                    row_count=2,
                     column_count=2,
                     cell_ids=[cell],
                     occurrence_ids=["occ_00000001"],
@@ -123,3 +123,19 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
     assert "column_span=2" in prompt
     assert "row_span=2" in prompt
     assert f'text="{block.text}"' in prompt
+
+    quote_only_prompt = build_reqir_prompt(
+        ModelRequest(
+            document_text=block.text,
+            blocks=[block],
+            document_name="sample.docx",
+            source_format="docx",
+            parser_name="docx_parser_v2",
+            model_mode="mock",
+            metadata={"evidence_policy": "quote_only"},
+            evidence_index=index,
+        )
+    )
+    assert "source_cell_ids are optional under the quote_only evidence policy" in quote_only_prompt
+    assert "When optional source_cell_ids are supplied" in quote_only_prompt
+    assert "must also include source_cell_ids" not in quote_only_prompt

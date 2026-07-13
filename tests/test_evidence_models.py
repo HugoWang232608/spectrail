@@ -59,6 +59,125 @@ def test_table_locator_requires_canonical_unique_start_columns():
         )
 
 
+def test_table_locator_schema_marks_continuity_as_evidence_bound():
+    schema = TableLocator.model_json_schema()
+
+    assert "EvidenceIndex" in schema["description"]
+    assert "SourceLocatorValidator" in schema["properties"]["cell_ids"]["description"]
+    assert "cannot prove continuity" in schema["properties"]["column_indices"]["description"]
+
+
+def _topology_index(
+    *,
+    table_identifier: str = "tbl_00000001",
+    row_count: int = 1,
+    column_count: int = 3,
+    cells: list[TableCellRecord],
+) -> EvidenceIndex:
+    return EvidenceIndex(
+        document_id="doc_001",
+        document_name="sample.docx",
+        source_format="docx",
+        source_sha256="1" * 64,
+        parser_identity=ParserIdentity(
+            parser_name="docx_parser_v2",
+            parser_version="2",
+        ),
+        evidence_fingerprint="0" * 64,
+        tables=[
+            TableRecord(
+                table_id=table_identifier,
+                block_ids=[],
+                row_count=row_count,
+                column_count=column_count,
+                cell_ids=[cell.cell_id for cell in cells],
+                occurrence_ids=[],
+                parser_method="docx_xml",
+            )
+        ],
+        cells=cells,
+    )
+
+
+def test_evidence_index_rejects_cell_span_outside_table_grid():
+    table_identifier = "tbl_00000001"
+    with pytest.raises(ValidationError, match="span exceeds table bounds"):
+        _topology_index(
+            table_identifier=table_identifier,
+            column_count=3,
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_00000001_r0001_c0003",
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=3,
+                    column_span=2,
+                    text="x",
+                    text_sha256=sha256_text("x"),
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_overlapping_logical_cells():
+    table_identifier = "tbl_00000001"
+    with pytest.raises(ValidationError, match="overlap at row 1 column 2"):
+        _topology_index(
+            table_identifier=table_identifier,
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_00000001_r0001_c0001",
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=1,
+                    column_span=2,
+                    text="a",
+                    text_sha256=sha256_text("a"),
+                ),
+                TableCellRecord(
+                    cell_id="cell_00000001_r0001_c0002",
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=2,
+                    text="b",
+                    text_sha256=sha256_text("b"),
+                ),
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    ("table_identifier", "cell_identifier", "message"),
+    [
+        ("table_1", "cell_00000001_r0001_c0001", "table ID is not canonical"),
+        (
+            "tbl_00000001",
+            "cell_00000001_r0002_c0001",
+            "cell ID does not match table, row, and column fields",
+        ),
+    ],
+)
+def test_evidence_index_rejects_noncanonical_or_inconsistent_stable_ids(
+    table_identifier: str,
+    cell_identifier: str,
+    message: str,
+):
+    with pytest.raises(ValidationError, match=message):
+        _topology_index(
+            table_identifier=table_identifier,
+            cells=[
+                TableCellRecord(
+                    cell_id=cell_identifier,
+                    table_id=table_identifier,
+                    row_index=1,
+                    column_index=1,
+                    text="x",
+                    text_sha256=sha256_text("x"),
+                )
+            ],
+        )
+
+
 def test_locator_status_distinguishes_derived_and_structured_sources():
     text_pass = CapabilityValidationResult(capability="text_range", status="PASS")
     page_pass = CapabilityValidationResult(capability="page_region", status="PASS")

@@ -5,6 +5,7 @@ from spectrail.evidence.fingerprint import (
     sha256_bytes,
     sha256_file,
     sha256_text,
+    validate_evidence_fingerprint,
 )
 from spectrail.evidence.ids import cell_id, fragment_id, occurrence_id, page_id, table_id
 from spectrail.evidence.models import (
@@ -87,5 +88,6 @@ __all__ = [
     "sha256_text",
     "source_evidence_key",
     "validate_source_evidence_keys",
+    "validate_evidence_fingerprint",
     "table_id",
 ]

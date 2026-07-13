@@ -25,6 +25,16 @@ def test_bbox_rejects_non_positive_geometry():
         BoundingBox(x0=1, y0=1, x1=1, y1=2)
 
 
+def test_all_evidence_blocks_must_expect_text_range():
+    with pytest.raises(ValidationError, match="must expect text_range"):
+        BlockEvidenceRecord(
+            block_id="blk_0001",
+            text_length=1,
+            text_sha256=sha256_text("x"),
+            expected_capabilities=["page_region"],
+        )
+
+
 def test_table_locator_requires_canonical_contiguous_columns():
     with pytest.raises(ValidationError, match="canonical column order"):
         TableLocator(

@@ -117,3 +117,31 @@ def test_extractor_marks_unknown_confidence_for_recheck():
         "input": "| Label | The system shall show source quotes. |",
         "normalized": "The system shall show source quotes.",
     } in requirement.metadata["field_normalizations"]
+
+
+def test_extractor_preserves_raw_table_cell_ids_without_canonicalizing():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="table",
+            text="A | B",
+            order=1,
+        )
+    ]
+    cell_1 = "cell_00000001_r0001_c0001"
+    cell_2 = "cell_00000001_r0001_c0002"
+    payload = {
+        "items": [
+            {
+                "statement": "A maps to B.",
+                "source_block_id": "blk_0001",
+                "source_quote": "A | B",
+                "source_cell_ids": [cell_2, cell_1],
+            }
+        ]
+    }
+
+    source = ReqIRExtractor().extract(payload, blocks, document_name="sample.docx")[0].sources[0]
+    assert source.source_cell_ids_raw == [cell_2, cell_1]
+    assert source.canonical_source_cell_ids == []

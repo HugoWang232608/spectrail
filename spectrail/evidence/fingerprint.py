@@ -49,6 +49,12 @@ def finalize_evidence_fingerprint(index: EvidenceIndex) -> EvidenceIndex:
     return index.model_copy(update={"evidence_fingerprint": build_evidence_fingerprint(index)})
 
 
+def validate_evidence_fingerprint(index: EvidenceIndex) -> None:
+    actual = build_evidence_fingerprint(index)
+    if index.evidence_fingerprint != actual:
+        raise ValueError("evidence fingerprint does not match its content")
+
+
 def _canonicalize(value: Any) -> Any:
     if isinstance(value, float):
         if not math.isfinite(value):

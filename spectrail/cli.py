@@ -13,10 +13,12 @@ from spectrail.evidence import (
     build_quote_match_registry,
     sha256_text,
     validate_source_evidence_keys,
+    validate_evidence_fingerprint,
 )
 from spectrail.evidence.index_builder import (
     validate_evidence_index_against_parsed_document,
 )
+from spectrail.evidence.source_identity import canonicalize_source_cell_ids
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError, ParsedDocument
@@ -149,6 +151,7 @@ def run_validate(args: argparse.Namespace) -> int:
         else None
     )
     if evidence_index is not None:
+        validate_evidence_fingerprint(evidence_index)
         parsed_document = ParsedDocument(
             document_id=evidence_index.document_id,
             document_name=evidence_index.document_name,
@@ -162,6 +165,7 @@ def run_validate(args: argparse.Namespace) -> int:
             evidence_index,
             parsed_document,
         )
+        canonicalize_source_cell_ids(reqs, evidence_index)
     if quote_matches_path is not None:
         quote_matches = QuoteMatchRegistry.model_validate(read_json(quote_matches_path))
     else:
@@ -213,6 +217,7 @@ def run_validate(args: argparse.Namespace) -> int:
             evidence_index,
             quote_matches,
             policy=args.evidence_policy,
+            document_blocks=blocks,
         )
     valid_ids = {item.id for item in validated} & {item.id for item in locator_validated}
     validated = [item for item in reqs if item.id in valid_ids]

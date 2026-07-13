@@ -219,7 +219,7 @@ def test_structured_diagnostics_explain_every_expected_capability():
                 block_id="blk_0001",
                 text_length=5,
                 text_sha256=sha256_text("quote"),
-                expected_capabilities=["page_region", "table_cell"],
+                expected_capabilities=["text_range", "page_region", "table_cell"],
             )
         ],
     )

@@ -74,7 +74,10 @@ class SourceSpan(BaseModel):
     text_locator: TextLocator | None = None
     page_locator: PageLocator | None = None
     table_locator: TableLocator | None = None
+    source_cell_ids_raw: list[str] = Field(default_factory=list)
+    canonical_source_cell_ids: list[str] = Field(default_factory=list)
     source_evidence_key: str | None = None
+    provisional_text_locator: TextLocator | None = None
     locator_status: LocatorStatus = "UNVERIFIED"
     capability_results: list[CapabilityValidationResult] = Field(default_factory=list)
     locator_score: float | None = None

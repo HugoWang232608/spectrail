@@ -214,7 +214,9 @@ class BlockEvidenceRecord(EvidenceModel):
     fragment_ids: list[str] = Field(default_factory=list)
     table_id: str | None = None
     cell_ids: list[str] = Field(default_factory=list)
-    expected_capabilities: list[EvidenceCapability] = Field(default_factory=list)
+    expected_capabilities: list[EvidenceCapability] = Field(
+        default_factory=lambda: ["text_range"]
+    )
     available_capabilities: list[EvidenceCapability] = Field(default_factory=list)
 
     @field_validator("text_sha256")
@@ -232,6 +234,8 @@ class BlockEvidenceRecord(EvidenceModel):
         _require_unique(self.cell_ids, "block cell IDs")
         _require_unique(self.expected_capabilities, "expected capabilities")
         _require_unique(self.available_capabilities, "available capabilities")
+        if "text_range" not in self.expected_capabilities:
+            raise ValueError("all evidence blocks must expect text_range")
         unexpected = set(self.available_capabilities) - set(self.expected_capabilities)
         if unexpected:
             raise ValueError(f"available capabilities are not expected: {sorted(unexpected)}")

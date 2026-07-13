@@ -166,11 +166,7 @@ def build_quote_match_registry(
     matcher = QuoteMatcher()
     for requirement in requirements:
         for source in requirement.sources:
-            canonical_cell_ids = (
-                source.table_locator.cell_ids
-                if source.table_locator is not None
-                else ()
-            )
+            canonical_cell_ids = source.canonical_source_cell_ids
             key = source_evidence_key(
                 evidence_fingerprint=evidence_fingerprint,
                 document_id=source.document_id,
@@ -204,11 +200,7 @@ def validate_source_evidence_keys(
 ) -> None:
     for requirement in requirements:
         for source in requirement.sources:
-            canonical_cell_ids = (
-                source.table_locator.cell_ids
-                if source.table_locator is not None
-                else ()
-            )
+            canonical_cell_ids = source.canonical_source_cell_ids
             expected = source_evidence_key(
                 evidence_fingerprint=evidence_fingerprint,
                 document_id=source.document_id,

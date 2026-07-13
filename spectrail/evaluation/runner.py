@@ -13,6 +13,7 @@ from spectrail.evaluation.locator_metrics import build_locator_metrics
 from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
 from spectrail.evidence.models import EvidenceIndex
+from spectrail.evidence.fingerprint import validate_evidence_fingerprint
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError, ParsedDocument, parse_document
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
@@ -105,6 +106,8 @@ class EvaluationRunner:
             if evidence_index_path.exists()
             else None
         )
+        if evidence_index is not None:
+            validate_evidence_fingerprint(evidence_index)
         metrics = {
             **build_evaluation_metrics(
                 gold_count=matches.evaluated_gold_count,

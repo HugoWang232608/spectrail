@@ -4,7 +4,7 @@ import shutil
 import pytest
 
 from spectrail.cli import main
-from spectrail.core.io import read_json
+from spectrail.core.io import read_json, write_json
 
 
 def test_validate_cli_writes_report_and_validated_output(tmp_path: Path):
@@ -91,5 +91,28 @@ def test_validate_cli_does_not_rekey_export_without_registry(tmp_path: Path):
                 str(output / "parsed" / "blocks.json"),
                 "--evidence-policy",
                 "quote_only",
+            ]
+        )
+
+
+def test_validate_cli_rejects_stale_evidence_fingerprint(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    evidence = read_json(output / "parsed" / "evidence_index.json")
+    evidence["warnings"].append("tampered")
+    tampered = tmp_path / "tampered_evidence.json"
+    write_json(tampered, evidence)
+
+    with pytest.raises(ValueError, match="fingerprint does not match"):
+        main(
+            [
+                "validate",
+                str(output / "exports" / "reqir.json"),
+                "--blocks",
+                str(output / "parsed" / "blocks.json"),
+                "--quote-matches",
+                str(output / "extracted" / "quote_matches.json"),
+                "--evidence-index",
+                str(tampered),
             ]
         )

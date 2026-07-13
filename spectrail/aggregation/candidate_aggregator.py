@@ -108,11 +108,11 @@ class CandidateAggregator:
     def _build_duplicate_groups(requirements: list[RequirementIR]) -> list[dict[str, Any]]:
         groups: list[dict[str, Any]] = []
         by_statement: dict[str, list[RequirementIR]] = {}
-        by_source: dict[tuple[str, str], list[RequirementIR]] = {}
+        by_source: dict[tuple, list[RequirementIR]] = {}
         for item in requirements:
             by_statement.setdefault(normalize_text(item.statement), []).append(item)
             for source in item.sources:
-                by_source.setdefault((source.block_id, normalize_text(source.quote)), []).append(item)
+                by_source.setdefault(_source_identity(source), []).append(item)
 
         seen: set[tuple[str, tuple[str, ...]]] = set()
         for reason, mapping in (
@@ -137,11 +137,9 @@ class CandidateAggregator:
 
 
 def candidate_key(candidate: RequirementIR, *, document_id: str) -> str:
-    source = candidate.sources[0] if candidate.sources else None
     value = {
-        "document_id": source.document_id if source else document_id,
-        "source_block_id": source.block_id if source else "",
-        "source_quote": normalize_text(source.quote) if source else "",
+        "document_id": document_id,
+        "sources": sorted(_source_identity(source) for source in candidate.sources),
         "statement": normalize_text(candidate.statement),
     }
     return f"cand_{sha256_hex(value)[:16]}"
@@ -161,7 +159,13 @@ def _candidate_sort_key(candidate: RequirementIR, block_map: dict[str, DocumentB
 def _source_sort_key(source: SourceSpan, block_map: dict[str, DocumentBlock]) -> tuple:
     block = block_map.get(source.block_id)
     if block is None:
-        return (inf, inf, source.block_id, normalize_text(source.quote))
+        return (
+            inf,
+            inf,
+            source.block_id,
+            normalize_text(source.quote),
+            tuple(source.canonical_source_cell_ids),
+        )
     exact = block.text.find(source.quote)
     if exact >= 0:
         offset = exact
@@ -170,7 +174,13 @@ def _source_sort_key(source: SourceSpan, block_map: dict[str, DocumentBlock]) ->
         normalized_block = normalize_text(block.text)
         normalized = normalized_block.find(normalized_quote) if normalized_quote else -1
         offset = normalized if normalized >= 0 else inf
-    return (block.order, offset, source.block_id, normalize_text(source.quote))
+    return (
+        block.order,
+        offset,
+        source.block_id,
+        normalize_text(source.quote),
+        tuple(source.canonical_source_cell_ids),
+    )
 
 
 def _stable_union(values: Any) -> list[str]:
@@ -182,7 +192,7 @@ def _merge_sources(variants: list[RequirementIR]) -> list[SourceSpan]:
     seen = set()
     for item in variants:
         for source in item.sources:
-            key = (source.document_id, source.block_id, normalize_text(source.quote))
+            key = _source_identity(source)
             if key not in seen:
                 seen.add(key)
                 result.append(source.model_copy(deep=True))
@@ -202,4 +212,23 @@ def _variant(item: RequirementIR) -> dict[str, Any]:
         "verification_method": item.verification_method,
         "confidence": item.confidence,
         "tags": list(item.tags),
+        "sources": [
+            {
+                "block_id": source.block_id,
+                "source_cell_ids_raw": list(source.source_cell_ids_raw),
+                "canonical_source_cell_ids": list(
+                    source.canonical_source_cell_ids
+                ),
+            }
+            for source in item.sources
+        ],
     }
+
+
+def _source_identity(source: SourceSpan) -> tuple:
+    return (
+        source.document_id,
+        source.block_id,
+        normalize_text(source.quote),
+        tuple(source.canonical_source_cell_ids),
+    )

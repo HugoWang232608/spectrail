@@ -19,6 +19,7 @@ from spectrail.extractors.reqir_extractor import ExtractionBatchResult, ReqIRExt
 from spectrail.evidence.index_builder import ensure_evidence_index
 from spectrail.evidence.enricher import SourceEvidenceEnricher
 from spectrail.evidence.quote_matcher import build_quote_match_registry
+from spectrail.evidence.source_identity import canonicalize_source_cell_ids
 from spectrail.llm.base import ModelRequest, ModelResponse
 from spectrail.llm.errors import (
     ModelPayloadContractError,
@@ -361,6 +362,7 @@ class PipelineRunner:
                 if pipeline_config.dump_prompt and response.prompt:
                     (extracted_dir / "prompt.txt").write_text(response.prompt, encoding="utf-8")
 
+            canonicalize_source_cell_ids(accepted_candidates, evidence_index)
             quote_matches = build_quote_match_registry(
                 accepted_candidates,
                 blocks,
@@ -374,6 +376,7 @@ class PipelineRunner:
                 accepted_candidates,
                 evidence_index,
                 quote_matches,
+                blocks,
             )
             aggregation = CandidateAggregator().aggregate(accepted_candidates, blocks)
             requirements = normalize_requirements(aggregation.requirements)
@@ -423,6 +426,7 @@ class PipelineRunner:
                     evidence_index,
                     quote_matches,
                     policy=pipeline_config.evidence_policy,
+                    document_blocks=blocks,
                 )
             )
             quote_valid_ids = {item.id for item in quote_validated_requirements}

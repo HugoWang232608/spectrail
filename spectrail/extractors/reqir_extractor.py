@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -56,6 +57,7 @@ CONFIDENCE_ALIASES = {
     "low": 0.3,
     "unknown": 0.0,
 }
+CELL_ID_RE = re.compile(r"^cell_\d{8}_r\d{4}_c\d{4}$")
 
 
 @dataclass(frozen=True)
@@ -193,9 +195,14 @@ class ReqIRExtractor:
             field_normalizations,
         )
         source_quote = _normalize_source_quote(str(item["source_quote"]), field_normalizations)
+        source_cell_ids_raw = _source_cell_ids(item.get("source_cell_ids"), index)
 
         source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
+        if source_cell_ids_raw and (source_block is None or source_block.type != "table"):
+            raise ValueError(
+                f"item {index} provides source_cell_ids for a non-table block"
+            )
         section_path = list(source_block.section_path) if source_block else []
         section = " > ".join(section_path) if section_path else None
         source = SourceSpan(
@@ -206,6 +213,7 @@ class ReqIRExtractor:
             section_path=section_path,
             block_id=source_block_id,
             quote=source_quote,
+            source_cell_ids_raw=source_cell_ids_raw,
         )
         metadata = {
             "source_block_id": source_block_id,
@@ -251,6 +259,18 @@ def _normalize_enum(
     if normalized != raw:
         field_normalizations.append({"field": field, "input": raw, "normalized": normalized})
     return normalized
+
+
+def _source_cell_ids(value: Any, item_index: int) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"item {item_index} source_cell_ids must be a string list")
+    if len(set(value)) != len(value):
+        raise ValueError(f"item {item_index} source_cell_ids must be unique")
+    if any(not CELL_ID_RE.fullmatch(item) for item in value):
+        raise ValueError(f"item {item_index} source_cell_ids contain an invalid cell ID")
+    return list(value)
 
 
 def _normalize_tags(value: Any) -> list[str]:

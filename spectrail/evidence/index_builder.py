@@ -6,6 +6,7 @@ from spectrail.evidence.fingerprint import (
     finalize_evidence_fingerprint,
     sha256_file,
     sha256_text,
+    validate_evidence_fingerprint,
 )
 from spectrail.evidence.models import BlockEvidenceRecord, EvidenceIndex, ParserIdentity
 from spectrail.parsers.base import ParsedDocument
@@ -77,6 +78,7 @@ def ensure_evidence_index(
             finalized.evidence_fingerprint,
         }:
             raise ValueError("evidence index fingerprint does not match its content")
+        validate_evidence_fingerprint(finalized)
         return finalized
 
     index = EvidenceIndex(

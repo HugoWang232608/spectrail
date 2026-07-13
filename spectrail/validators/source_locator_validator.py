@@ -1,18 +1,30 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
-from spectrail.core.models import RequirementIR, SourceSpan, ValidationIssue, ValidationReport
+from spectrail.core.models import (
+    DocumentBlock,
+    RequirementIR,
+    SourceSpan,
+    ValidationIssue,
+    ValidationReport,
+)
+from spectrail.evidence.locator_derivation import (
+    derive_page_locator,
+    derive_table_evidence,
+)
 from spectrail.evidence.models import (
     BlockEvidenceRecord,
-    BoundingBox,
     CapabilityValidationResult,
     EvidenceIndex,
     EvidencePolicy,
     aggregate_locator_status,
 )
-from spectrail.evidence.quote_matcher import QuoteMatchRegistry, QuoteMatchResult
+from spectrail.evidence.quote_matcher import (
+    QuoteMatchRegistry,
+    QuoteMatchResult,
+    normalize_text,
+)
 
 
 class SourceLocatorValidator:
@@ -23,11 +35,15 @@ class SourceLocatorValidator:
         quote_matches: QuoteMatchRegistry,
         *,
         policy: EvidencePolicy,
+        document_blocks: list[DocumentBlock] | None = None,
     ) -> tuple[list[RequirementIR], ValidationReport, list[dict[str, Any]]]:
         blocks_by_id = {block.block_id: block for block in evidence_index.blocks}
         report = ValidationReport(valid=True, metadata={"evidence_policy": policy})
         failures: list[dict[str, Any]] = []
         validated: list[RequirementIR] = []
+        document_blocks_by_id = {
+            block.block_id: block for block in document_blocks or []
+        }
 
         for requirement in requirements:
             source_passes: list[bool] = []
@@ -37,6 +53,7 @@ class SourceLocatorValidator:
                     evidence_index,
                     blocks_by_id,
                     quote_matches,
+                    document_blocks_by_id,
                 )
                 source.capability_results = results
                 block = blocks_by_id.get(source.block_id)
@@ -103,6 +120,7 @@ class SourceLocatorValidator:
         evidence_index: EvidenceIndex,
         blocks_by_id: dict[str, BlockEvidenceRecord],
         quote_matches: QuoteMatchRegistry,
+        document_blocks_by_id: dict[str, DocumentBlock] | None = None,
     ) -> list[CapabilityValidationResult]:
         if source.source_evidence_key is None:
             raise ValueError("source_evidence_key is required for locator validation")
@@ -125,6 +143,7 @@ class SourceLocatorValidator:
                 block,
                 evidence_index,
                 quote_match,
+                (document_blocks_by_id or {}).get(source.block_id),
             )
             for capability in block.expected_capabilities
         ]
@@ -136,6 +155,7 @@ class SourceLocatorValidator:
         block: BlockEvidenceRecord,
         evidence_index: EvidenceIndex,
         quote_match: QuoteMatchResult,
+        document_block: DocumentBlock | None,
     ) -> CapabilityValidationResult:
         if capability not in block.available_capabilities:
             return CapabilityValidationResult(
@@ -161,8 +181,20 @@ class SourceLocatorValidator:
                 message="structured locator cannot be derived without a quote range",
             )
         if capability == "page_region":
-            return _validate_page_locator(source, block, evidence_index, quote_match)
-        return _validate_table_locator(source, block, evidence_index, quote_match)
+            return _validate_page_locator(
+                source,
+                block,
+                evidence_index,
+                quote_match,
+                document_block,
+            )
+        return _validate_table_locator(
+            source,
+            block,
+            evidence_index,
+            quote_match,
+            document_block,
+        )
 
 
 def _validate_text_locator(
@@ -170,6 +202,23 @@ def _validate_text_locator(
     quote_match: QuoteMatchResult,
 ) -> CapabilityValidationResult:
     if quote_match.status == "AMBIGUOUS_MATCH":
+        provisional = quote_match.provisional_range
+        locator = source.provisional_text_locator
+        if (
+            source.text_locator is not None
+            or provisional is None
+            or locator is None
+            or locator.block_id != source.block_id
+            or locator.start != provisional.start
+            or locator.end != provisional.end
+            or locator.match_basis != quote_match.match_basis
+        ):
+            return CapabilityValidationResult(
+                capability="text_range",
+                status="FAIL_INVALID_REFERENCE",
+                issue_code="SOURCE_PROVISIONAL_TEXT_LOCATOR_INVALID",
+                message="provisional text locator does not match the registry",
+            )
         return CapabilityValidationResult(
             capability="text_range",
             status="WARNING_AMBIGUOUS",
@@ -206,6 +255,7 @@ def _validate_page_locator(
     block: BlockEvidenceRecord,
     evidence_index: EvidenceIndex,
     quote_match: QuoteMatchResult,
+    document_block: DocumentBlock | None,
 ) -> CapabilityValidationResult:
     locator = source.page_locator
     if locator is None:
@@ -215,17 +265,34 @@ def _validate_page_locator(
             issue_code="SOURCE_PAGE_LOCATOR_MISSING",
             message="available page evidence requires a page locator",
         )
-    page = next((item for item in evidence_index.pages if item.page == block.page), None)
-    expected_bbox = _quote_bbox(block, evidence_index, quote_match)
+    table_evidence = None
+    if source.canonical_source_cell_ids and document_block is not None:
+        try:
+            table_evidence = derive_table_evidence(
+                evidence_index,
+                block_id=source.block_id,
+                selected_range=quote_match.selected_range,  # type: ignore[arg-type]
+                canonical_cell_ids=source.canonical_source_cell_ids,
+                block_text=document_block.text,
+            )
+        except ValueError:
+            table_evidence = None
+    expected = derive_page_locator(
+        evidence_index,
+        block_id=source.block_id,
+        selected_range=quote_match.selected_range,  # type: ignore[arg-type]
+        table_evidence=table_evidence,
+    )
+    if expected is None:
+        return CapabilityValidationResult(
+            capability="page_region",
+            status="FAIL_DERIVATION",
+            issue_code="SOURCE_PAGE_LOCATOR_DERIVATION_FAILED",
+            message="page locator cannot be derived from EvidenceIndex geometry",
+        )
     if (
-        block.page is None
-        or page is None
-        or expected_bbox is None
-        or locator.page != block.page
-        or not math.isclose(locator.page_width, page.width, abs_tol=1e-4)
-        or not math.isclose(locator.page_height, page.height, abs_tol=1e-4)
-        or locator.coordinate_space != page.coordinate_space
-        or not _bbox_equal(locator.bbox, expected_bbox)
+        source.page != block.page
+        or locator.model_dump(mode="json") != expected.model_dump(mode="json")
     ):
         return CapabilityValidationResult(
             capability="page_region",
@@ -241,6 +308,7 @@ def _validate_table_locator(
     block: BlockEvidenceRecord,
     evidence_index: EvidenceIndex,
     quote_match: QuoteMatchResult,
+    document_block: DocumentBlock | None,
 ) -> CapabilityValidationResult:
     locator = source.table_locator
     if locator is None:
@@ -250,26 +318,44 @@ def _validate_table_locator(
             issue_code="SOURCE_TABLE_LOCATOR_MISSING",
             message="available table evidence requires a table locator",
         )
-    cells_by_id = {cell.cell_id: cell for cell in evidence_index.cells}
-    selected_range = quote_match.selected_range
-    expected_cells = [
-        occurrence.cell_id
-        for occurrence in evidence_index.cell_occurrences
-        if occurrence.block_id == block.block_id
-        and occurrence.canonical_start < selected_range.end  # type: ignore[union-attr]
-        and occurrence.canonical_end > selected_range.start  # type: ignore[union-attr]
-        and cells_by_id[occurrence.cell_id].text.strip()
-    ]
-    expected_cells = list(dict.fromkeys(expected_cells))
-    locator_cells = [cells_by_id.get(cell_id) for cell_id in locator.cell_ids]
+    if document_block is None:
+        return CapabilityValidationResult(
+            capability="table_cell",
+            status="FAIL_DERIVATION",
+            issue_code="SOURCE_TABLE_TEXT_UNAVAILABLE",
+            message="source block text is required to validate table evidence",
+        )
+    try:
+        expected = derive_table_evidence(
+            evidence_index,
+            block_id=source.block_id,
+            selected_range=quote_match.selected_range,  # type: ignore[arg-type]
+            canonical_cell_ids=source.canonical_source_cell_ids,
+            block_text=document_block.text,
+        )
+    except ValueError as exc:
+        return CapabilityValidationResult(
+            capability="table_cell",
+            status="FAIL_DERIVATION",
+            issue_code="SOURCE_TABLE_LOCATOR_DERIVATION_FAILED",
+            message=str(exc),
+        )
+    quote_matches = (
+        expected.reconstructed_text == source.quote
+        if quote_match.match_basis == "exact"
+        else normalize_text(expected.reconstructed_text) == normalize_text(source.quote)
+    )
+    table = next(
+        (item for item in evidence_index.tables if item.table_id == block.table_id),
+        None,
+    )
     if (
-        block.table_id is None
-        or locator.table_id != block.table_id
-        or not expected_cells
-        or locator.cell_ids != expected_cells
-        or any(cell is None for cell in locator_cells)
-        or locator.row_indices != [cell.row_index for cell in locator_cells if cell]
-        or locator.column_indices != [cell.column_index for cell in locator_cells if cell]
+        not quote_matches
+        or locator.model_dump(mode="json")
+        != expected.locator.model_dump(mode="json")
+        or expected.page != block.page
+        or (table is not None and table.page != expected.page)
+        or source.page != expected.page
     ):
         return CapabilityValidationResult(
             capability="table_cell",
@@ -280,42 +366,6 @@ def _validate_table_locator(
     return CapabilityValidationResult(capability="table_cell", status="PASS")
 
 
-def _quote_bbox(
-    block: BlockEvidenceRecord,
-    evidence_index: EvidenceIndex,
-    quote_match: QuoteMatchResult,
-) -> BoundingBox | None:
-    selected = quote_match.selected_range
-    fragments_by_id = {
-        fragment.fragment_id: fragment for fragment in evidence_index.fragments
-    }
-    overlapping = [
-        fragments_by_id[fragment_id].bbox
-        for fragment_id in block.fragment_ids
-        if fragments_by_id[fragment_id].start < selected.end  # type: ignore[union-attr]
-        and fragments_by_id[fragment_id].end > selected.start  # type: ignore[union-attr]
-    ]
-    if not overlapping:
-        return block.bbox
-    return BoundingBox(
-        x0=min(box.x0 for box in overlapping),
-        y0=min(box.y0 for box in overlapping),
-        x1=max(box.x1 for box in overlapping),
-        y1=max(box.y1 for box in overlapping),
-        coordinate_space=overlapping[0].coordinate_space,
-    )
-
-
-def _bbox_equal(first: BoundingBox, second: BoundingBox) -> bool:
-    return first.coordinate_space == second.coordinate_space and all(
-        math.isclose(left, right, abs_tol=1e-4)
-        for left, right in zip(
-            (first.x0, first.y0, first.x1, first.y1),
-            (second.x0, second.y0, second.x1, second.y1),
-        )
-    )
-
-
 def _passes_policy(
     block: BlockEvidenceRecord | None,
     results: list[CapabilityValidationResult],
@@ -324,6 +374,8 @@ def _passes_policy(
     if policy == "quote_only":
         return True
     if block is None:
+        return False
+    if not block.expected_capabilities:
         return False
     by_capability = {result.capability: result.status for result in results}
     if policy == "structured_if_available":

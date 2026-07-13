@@ -2,6 +2,72 @@
 
 SpecTrail is a local-first pipeline that turns requirements documents into grounded ReqIR JSON and Excel exports. It currently supports Markdown, DOCX, and text-based PDF inputs with human review and source quote validation.
 
+[![CI](https://github.com/HugoWang232608/spectrail/actions/workflows/ci.yml/badge.svg)](https://github.com/HugoWang232608/spectrail/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](pyproject.toml)
+
+## From source document to reviewed requirement
+
+SpecTrail keeps the generated requirement, its source evidence, review state, and export row connected throughout the workflow.
+
+```json
+{
+  "id": "REQ-0006",
+  "type": "functional",
+  "ears_pattern": "event_driven",
+  "statement": "授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。",
+  "source": {
+    "block_id": "blk_0012",
+    "quote": "授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。",
+    "match_status": "PASS_EXACT"
+  },
+  "review_status": "pending"
+}
+```
+
+> **Source quote:** “授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。”
+>
+> **Validation:** exact match in `blk_0012`; the requirement is eligible for human review and export.
+
+The Review UI keeps the candidate, editable fields, structured ReqIR detail, and highlighted source block visible in one workspace:
+
+![SpecTrail Review UI showing REQ-0006 and its exact source evidence](docs/assets/review-ui.png)
+
+The Excel export preserves the same traceability fields for downstream review and handoff:
+
+| ID | Statement | EARS Pattern | Review Status | Source Block | Source Match |
+| --- | --- | --- | --- | --- | --- |
+| REQ-0006 | 授权用户刷卡成功后，门禁控制器应在一秒内释放门锁。 | event_driven | pending | blk_0012 | PASS_EXACT |
+
+The generated workbook contains 17 columns, including the normalized statement, subject, condition, response, confidence, review status, source quote, match status, and tags.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Markdown / DOCX / text PDF] --> B[Parser Registry]
+    B --> C[Canonical text + DocumentBlock]
+    C --> D{Model mode}
+    D --> E[Mock]
+    D --> F[Recorded]
+    D --> G[Live OpenAI-compatible]
+    E --> H[ReqIR Extractor]
+    F --> H
+    G --> H
+    H --> I[Schema / EARS / source quote validation]
+    I --> J[Review UI + review log]
+    J --> K[ReqIR JSON / Excel / source map]
+```
+
+## Quick start
+
+```bash
+python -m pip install -e ".[dev]"
+python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo
+```
+
+Then inspect `outputs/demo/exports/reqir.json` and `outputs/demo/exports/requirements.xlsx`, or start the API and Review UI using the walkthrough below.
+
 ## P0 Demo
 
 Install dependencies:

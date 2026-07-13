@@ -1,6 +1,6 @@
 # SpecTrail P1b Review UI Demo
 
-P1b adds a minimal browser UI for the P1 task API. It keeps the backend pipeline unchanged and focuses on a local review workflow for Markdown input.
+P1b adds a minimal browser UI for the task API. It keeps the backend pipeline unchanged and provides the same local review workflow for Markdown, DOCX, and text-based PDF input.
 
 ## Install
 
@@ -73,4 +73,4 @@ npm run build
 
 ## Current Non-Goals
 
-P1b does not include login, a database, async queues, multi-document tasks, DOCX/PDF input, complex PDF viewing, Agent Planner, Gherkin, ReqIF, SysML, or production deployment.
+P1b does not include login, a database, async queues, multi-document tasks, OCR or scanned-PDF support, complex PDF viewing, Agent Planner, Gherkin, ReqIF, SysML, or production deployment.

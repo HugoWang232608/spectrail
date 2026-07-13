@@ -78,6 +78,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     cell_ids=[cell],
                     occurrence_ids=["occ_00000001"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[

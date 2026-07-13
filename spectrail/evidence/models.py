@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from typing import Any, Literal
@@ -280,6 +281,8 @@ class TableCellRecord(EvidenceModel):
     def validate_cell(self) -> "TableCellRecord":
         if min(self.row_index, self.column_index, self.row_span, self.column_span) < 1:
             raise ValueError("cell indices and spans must be positive")
+        if self.text_sha256 != hashlib.sha256(self.text.encode("utf-8")).hexdigest():
+            raise ValueError("cell text_sha256 does not match cell text")
         if self.page is not None and self.page < 1:
             raise ValueError("cell page must be 1-based")
         if self.bbox is not None and self.page is None:
@@ -321,6 +324,12 @@ class TableRecord(EvidenceModel):
     cell_ids: list[str]
     occurrence_ids: list[str]
     parser_method: Literal["docx_xml", "pymupdf_find_tables"]
+    topology_status: Literal["complete", "sparse"] = Field(
+        description=(
+            "Whether logical cells cover the complete rectangular grid or an "
+            "explicitly sparse best-effort table topology."
+        )
+    )
     confidence: float | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -334,6 +343,8 @@ class TableRecord(EvidenceModel):
             raise ValueError("a table bbox requires a page")
         if self.confidence is not None and not 0 <= self.confidence <= 1:
             raise ValueError("table confidence must be between 0 and 1")
+        if self.parser_method == "docx_xml" and self.topology_status != "complete":
+            raise ValueError("DOCX tables must declare complete topology")
         _require_unique(self.block_ids, "table block IDs")
         _require_unique(self.cell_ids, "table cell IDs")
         _require_unique(self.occurrence_ids, "table occurrence IDs")
@@ -497,18 +508,51 @@ class EvidenceIndex(EvidenceModel):
                         f"block cell has no occurrence in the block: {block.block_id}/{cell_id}"
                     )
         for table in self.tables:
-            _validate_table_topology(table, cells_by_id)
+            _validate_table_topology(
+                table,
+                cells_by_id,
+                blocks_by_id,
+                occurrences_by_id,
+            )
         return self
 
 
 def _validate_table_topology(
     table: TableRecord,
     cells_by_id: dict[str, TableCellRecord],
+    blocks_by_id: dict[str, BlockEvidenceRecord],
+    occurrences_by_id: dict[str, CellBlockOccurrence],
 ) -> None:
     table_match = TABLE_ID_RE.fullmatch(table.table_id)
     if table_match is None:
         raise ValueError(f"table ID is not canonical: {table.table_id}")
     table_index = table_match.group(1)
+    if int(table_index) < 1:
+        raise ValueError("table ID index must be positive")
+    if not table.block_ids:
+        raise ValueError(f"table must contain at least one block: {table.table_id}")
+    if not table.cell_ids:
+        raise ValueError(f"table must contain at least one cell: {table.table_id}")
+    if not table.occurrence_ids:
+        raise ValueError(
+            f"table must contain at least one cell occurrence: {table.table_id}"
+        )
+
+    block_cell_ids = {
+        cell_id
+        for block_id in table.block_ids
+        for cell_id in blocks_by_id[block_id].cell_ids
+    }
+    occurrence_cell_ids = {
+        occurrences_by_id[occurrence_id].cell_id
+        for occurrence_id in table.occurrence_ids
+    }
+    for cell_id in table.cell_ids:
+        if cell_id not in block_cell_ids:
+            raise ValueError(f"table cell is not referenced by a table block: {cell_id}")
+        if cell_id not in occurrence_cell_ids:
+            raise ValueError(f"table cell has no occurrence: {cell_id}")
+
     occupied: dict[tuple[int, int], str] = {}
     anchors: set[tuple[int, int]] = set()
 
@@ -552,6 +596,12 @@ def _validate_table_topology(
                         f"{owner}, {cell.cell_id}"
                     )
                 occupied[coordinate] = cell.cell_id
+
+    if (
+        table.topology_status == "complete"
+        and len(occupied) != table.row_count * table.column_count
+    ):
+        raise ValueError(f"complete table topology has uncovered cells: {table.table_id}")
 
 
 def aggregate_locator_status(

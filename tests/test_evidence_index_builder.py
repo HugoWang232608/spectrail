@@ -171,6 +171,7 @@ def _parsed_table_with_repeated_and_empty_occurrences() -> tuple[ParsedDocument,
                 cell_ids=[header, empty],
                 occurrence_ids=["occ_00000001", "occ_00000002", "occ_00000003"],
                 parser_method="docx_xml",
+                topology_status="complete",
             )
         ],
         cells=[

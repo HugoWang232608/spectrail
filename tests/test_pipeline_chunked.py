@@ -223,6 +223,7 @@ def _table_document_with_evidence(
                     cell_ids=cells,
                     occurrence_ids=["occ_00000001", "occ_00000002"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[
@@ -319,9 +320,16 @@ def test_quote_only_pipeline_does_not_require_table_cell_ids(tmp_path: Path):
 
     manifest = read_json(result.manifest_path)
     exported = read_json(result.exported_reqir_path)["items"]
+    locator_report = read_json(
+        result.output_dir / "extracted" / "source_locator_report.json"
+    )
+    assert manifest["status"] == "completed"
+    assert manifest["warning_codes"] == []
     assert manifest["counts"]["model_items_rejected"] == 0
     assert manifest["counts"]["validated_requirements"] == 1
+    assert locator_report["issues"] == []
     assert exported[0]["sources"][0]["canonical_source_cell_ids"] == []
+    assert exported[0]["sources"][0]["locator_status"] == "PASS_DERIVED"
 
 
 def test_all_malformed_items_fail_with_distinct_zero_result_reason(tmp_path: Path):

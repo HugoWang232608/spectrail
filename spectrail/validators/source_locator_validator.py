@@ -17,6 +17,7 @@ from spectrail.evidence.locator_derivation import (
 from spectrail.evidence.models import (
     BlockEvidenceRecord,
     CapabilityValidationResult,
+    EvidenceCapability,
     EvidenceIndex,
     EvidencePolicy,
     aggregate_locator_status,
@@ -55,13 +56,12 @@ class SourceLocatorValidator:
                     blocks_by_id,
                     quote_matches,
                     document_blocks_by_id,
+                    policy=policy,
                 )
                 source.capability_results = results
                 block = blocks_by_id.get(source.block_id)
-                expected = (
-                    block.expected_capabilities if block is not None else ["text_range"]
-                )
-                source.locator_status = aggregate_locator_status(expected, results)
+                active = _active_capabilities(block, policy)
+                source.locator_status = aggregate_locator_status(active, results)
                 passed = _passes_policy(block, results, policy)
                 source_passes.append(passed)
 
@@ -122,6 +122,8 @@ class SourceLocatorValidator:
         blocks_by_id: dict[str, BlockEvidenceRecord],
         quote_matches: QuoteMatchRegistry,
         document_blocks_by_id: dict[str, DocumentBlock] | None = None,
+        *,
+        policy: EvidencePolicy = "structured_if_available",
     ) -> list[CapabilityValidationResult]:
         if source.source_evidence_key is None:
             raise ValueError("source_evidence_key is required for locator validation")
@@ -146,7 +148,7 @@ class SourceLocatorValidator:
                 quote_match,
                 (document_blocks_by_id or {}).get(source.block_id),
             )
-            for capability in block.expected_capabilities
+            for capability in _active_capabilities(block, policy)
         ]
 
     def _validate_capability(
@@ -398,6 +400,15 @@ def _passes_policy(
         by_capability.get(capability) == "PASS"
         for capability in block.expected_capabilities
     )
+
+
+def _active_capabilities(
+    block: BlockEvidenceRecord | None,
+    policy: EvidencePolicy,
+) -> list[EvidenceCapability]:
+    if block is None or policy == "quote_only":
+        return ["text_range"]
+    return list(block.expected_capabilities)
 
 
 def _blocks_policy(

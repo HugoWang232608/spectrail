@@ -65,6 +65,7 @@ def test_table_locator_schema_marks_continuity_as_evidence_bound():
     assert "EvidenceIndex" in schema["description"]
     assert "SourceLocatorValidator" in schema["properties"]["cell_ids"]["description"]
     assert "cannot prove continuity" in schema["properties"]["column_indices"]["description"]
+    assert "topology_status" in TableRecord.model_json_schema()["required"]
 
 
 def _topology_index(
@@ -72,8 +73,26 @@ def _topology_index(
     table_identifier: str = "tbl_00000001",
     row_count: int = 1,
     column_count: int = 3,
+    topology_status: str = "complete",
+    parser_method: str = "docx_xml",
     cells: list[TableCellRecord],
 ) -> EvidenceIndex:
+    block_id = "blk_0001"
+    block_text = "".join(cell.text for cell in cells)
+    occurrences = []
+    offset = 0
+    for index, cell in enumerate(cells, start=1):
+        end = offset + len(cell.text)
+        occurrences.append(
+            CellBlockOccurrence(
+                occurrence_id=occurrence_id(index),
+                cell_id=cell.cell_id,
+                block_id=block_id,
+                canonical_start=offset,
+                canonical_end=end,
+            )
+        )
+        offset = end
     return EvidenceIndex(
         document_id="doc_001",
         document_name="sample.docx",
@@ -84,18 +103,31 @@ def _topology_index(
             parser_version="2",
         ),
         evidence_fingerprint="0" * 64,
+        blocks=[
+            BlockEvidenceRecord(
+                block_id=block_id,
+                text_length=len(block_text),
+                text_sha256=sha256_text(block_text),
+                table_id=table_identifier,
+                cell_ids=[cell.cell_id for cell in cells],
+                expected_capabilities=["text_range", "table_cell"],
+                available_capabilities=["text_range", "table_cell"],
+            )
+        ],
         tables=[
             TableRecord(
                 table_id=table_identifier,
-                block_ids=[],
+                block_ids=[block_id],
                 row_count=row_count,
                 column_count=column_count,
                 cell_ids=[cell.cell_id for cell in cells],
-                occurrence_ids=[],
-                parser_method="docx_xml",
+                occurrence_ids=[item.occurrence_id for item in occurrences],
+                parser_method=parser_method,
+                topology_status=topology_status,
             )
         ],
         cells=cells,
+        cell_occurrences=occurrences,
     )
 
 
@@ -151,6 +183,11 @@ def test_evidence_index_rejects_overlapping_logical_cells():
     [
         ("table_1", "cell_00000001_r0001_c0001", "table ID is not canonical"),
         (
+            "tbl_00000000",
+            "cell_00000000_r0001_c0001",
+            "table ID index must be positive",
+        ),
+        (
             "tbl_00000001",
             "cell_00000001_r0002_c0001",
             "cell ID does not match table, row, and column fields",
@@ -173,6 +210,132 @@ def test_evidence_index_rejects_noncanonical_or_inconsistent_stable_ids(
                     column_index=1,
                     text="x",
                     text_sha256=sha256_text("x"),
+                )
+            ],
+        )
+
+
+def test_complete_topology_requires_full_grid_but_sparse_topology_allows_holes():
+    table_identifier = "tbl_00000001"
+    cell = TableCellRecord(
+        cell_id="cell_00000001_r0001_c0001",
+        table_id=table_identifier,
+        row_index=1,
+        column_index=1,
+        text="x",
+        text_sha256=sha256_text("x"),
+    )
+
+    with pytest.raises(ValidationError, match="uncovered cells"):
+        _topology_index(cells=[cell], column_count=3)
+
+    sparse = _topology_index(
+        cells=[cell],
+        column_count=3,
+        topology_status="sparse",
+        parser_method="pymupdf_find_tables",
+    )
+    assert sparse.tables[0].topology_status == "sparse"
+
+    with pytest.raises(ValidationError, match="DOCX tables must declare complete"):
+        _topology_index(
+            cells=[cell],
+            column_count=3,
+            topology_status="sparse",
+        )
+
+
+def test_table_cell_must_be_referenced_by_a_table_block():
+    table_identifier = "tbl_00000001"
+    cells = [
+        TableCellRecord(
+            cell_id=f"cell_00000001_r0001_c{column:04d}",
+            table_id=table_identifier,
+            row_index=1,
+            column_index=column,
+            text=text,
+            text_sha256=sha256_text(text),
+        )
+        for column, text in enumerate(["A", "B"], start=1)
+    ]
+    payload = _topology_index(cells=cells, column_count=2).model_dump(mode="json")
+    payload["blocks"][0]["cell_ids"] = [cells[0].cell_id]
+    payload["tables"][0]["occurrence_ids"] = [occurrence_id(1)]
+    payload["cell_occurrences"] = [payload["cell_occurrences"][0]]
+
+    with pytest.raises(ValidationError, match="not referenced by a table block"):
+        EvidenceIndex.model_validate(payload)
+
+
+def test_table_cell_hash_must_match_cell_text():
+    with pytest.raises(ValidationError, match="text_sha256 does not match"):
+        TableCellRecord(
+            cell_id="cell_00000001_r0001_c0001",
+            table_id="tbl_00000001",
+            row_index=1,
+            column_index=1,
+            text="A",
+            text_sha256=sha256_text("B"),
+        )
+
+
+def test_evidence_index_rejects_table_without_blocks():
+    with pytest.raises(ValidationError, match="at least one block"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+            tables=[
+                TableRecord(
+                    table_id="tbl_00000001",
+                    block_ids=[],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=[],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_table_without_cells():
+    with pytest.raises(ValidationError, match="at least one cell"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=0,
+                    text_sha256=sha256_text(""),
+                    table_id="tbl_00000001",
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id="tbl_00000001",
+                    block_ids=["blk_0001"],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=[],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
         )
@@ -260,6 +423,7 @@ def test_evidence_index_supports_repeated_header_occurrences():
                 cell_ids=[header_cell],
                 occurrence_ids=[item.occurrence_id for item in occurrences],
                 parser_method="docx_xml",
+                topology_status="complete",
             )
         ],
         cells=[
@@ -374,6 +538,7 @@ def test_evidence_index_rejects_block_cells_without_table():
                     cell_ids=["cell_1"],
                     occurrence_ids=[],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
         )
@@ -397,6 +562,7 @@ def test_evidence_index_rejects_table_with_foreign_cell():
                     cell_ids=["cell_2"],
                     occurrence_ids=[],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 ),
                 TableRecord(
                     table_id="table_2",
@@ -406,6 +572,7 @@ def test_evidence_index_rejects_table_with_foreign_cell():
                     cell_ids=[],
                     occurrence_ids=[],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 ),
             ],
             cells=[
@@ -448,6 +615,7 @@ def test_evidence_index_rejects_occurrence_cell_not_registered_by_block():
                     cell_ids=["cell_1", "cell_2"],
                     occurrence_ids=["occ_1"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[
@@ -500,6 +668,7 @@ def test_evidence_index_rejects_block_cell_without_occurrence():
                     cell_ids=["cell_1"],
                     occurrence_ids=[],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[

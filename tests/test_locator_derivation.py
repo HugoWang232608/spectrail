@@ -82,6 +82,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     cell_ids=[cell_1, cell_2],
                     occurrence_ids=["occ_00000001", "occ_00000002"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[
@@ -415,6 +416,7 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     cell_ids=[cell],
                     occurrence_ids=["occ_00000001", "occ_00000002"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[
@@ -501,6 +503,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
                     cell_ids=[cell],
                     occurrence_ids=["occ_00000001"],
                     parser_method="docx_xml",
+                    topology_status="complete",
                 )
             ],
             cells=[

@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from spectrail.evidence.models import BoundingBox
 from spectrail.llm.request_profile import ModelRequestProfile
 
 
@@ -12,6 +13,25 @@ class GoldSource(BaseModel):
 
     block_id: str
     quote: str
+    page: int | None = None
+    table_id: str | None = None
+    cell_ids: list[str] = Field(default_factory=list)
+    bbox: BoundingBox | None = None
+    bbox_iou_threshold: float = 0.8
+
+    @model_validator(mode="after")
+    def validate_locator_gold(self) -> "GoldSource":
+        if self.page is not None and self.page < 1:
+            raise ValueError("gold source page must be 1-based")
+        if len(set(self.cell_ids)) != len(self.cell_ids):
+            raise ValueError("gold source cell IDs must be unique")
+        if self.cell_ids and self.table_id is None:
+            raise ValueError("gold source cell IDs require table_id")
+        if not 0 <= self.bbox_iou_threshold <= 1:
+            raise ValueError("bbox_iou_threshold must be between 0 and 1")
+        if self.bbox is not None and self.page is None:
+            raise ValueError("gold source bbox requires page")
+        return self
 
 
 class GoldRequirement(BaseModel):

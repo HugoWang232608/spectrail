@@ -5,6 +5,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from spectrail.evidence.models import (
+    CapabilityValidationResult,
+    LocatorStatus,
+    PageLocator,
+    TableLocator,
+    TextLocator,
+)
+
 
 RequirementType = Literal[
     "functional",
@@ -63,6 +71,13 @@ class SourceSpan(BaseModel):
     bbox: list[float] | None = None
     table_cell: str | None = None
     image_region: str | None = None
+    text_locator: TextLocator | None = None
+    page_locator: PageLocator | None = None
+    table_locator: TableLocator | None = None
+    source_evidence_key: str | None = None
+    locator_status: LocatorStatus = "UNVERIFIED"
+    capability_results: list[CapabilityValidationResult] = Field(default_factory=list)
+    locator_score: float | None = None
 
 
 class ReviewRecord(BaseModel):

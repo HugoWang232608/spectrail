@@ -17,7 +17,8 @@ class MatchPair:
     gold_index: int
     candidate_id: str
     gold_id: str
-    source_index: int
+    candidate_source_index: int
+    gold_source_index: int
     quote_match: str
     statement_match: str | None
     quality: int
@@ -37,7 +38,8 @@ class EvaluationMatches:
 class _EdgeCandidate:
     candidate_index: int
     gold_index: int
-    source_index: int
+    candidate_source_index: int
+    gold_source_index: int
     quote_match: str
     statement_match: str | None
     quality: int
@@ -83,7 +85,8 @@ def match_requirements(
                     _EdgeCandidate(
                         candidate_index=local_candidate_index,
                         gold_index=local_gold_index,
-                        source_index=source_edge.source_index,
+                        candidate_source_index=source_edge.candidate_source_index,
+                        gold_source_index=source_edge.gold_source_index,
                         quote_match=source_edge.quote_match,
                         statement_match=statement_match,
                         quality=source_edge.quality + (40 if statement_match == "primary" else 30),
@@ -105,13 +108,22 @@ def match_requirements(
                     gold_index=original_gold_index,
                     candidate_id=candidate.id,
                     gold_id=gold_item.gold_id,
-                    source_index=edge.source_index,
+                    candidate_source_index=edge.candidate_source_index,
+                    gold_source_index=edge.gold_source_index,
                     quote_match=edge.quote_match,
                     statement_match=edge.statement_match,
                     quality=edge.quality,
                 )
             )
-        return sorted(result, key=lambda pair: (pair.gold_id, pair.candidate_id, pair.source_index))
+        return sorted(
+            result,
+            key=lambda pair: (
+                pair.gold_id,
+                pair.candidate_id,
+                pair.candidate_source_index,
+                pair.gold_source_index,
+            ),
+        )
 
     return EvaluationMatches(
         source_alignment_matches=materialize(source_pairs),
@@ -131,18 +143,36 @@ def _best_source_edge(
     scope_block_ids: set[str],
 ) -> _EdgeCandidate | None:
     best: _EdgeCandidate | None = None
-    for source_index, source in enumerate(candidate.sources):
+    for candidate_source_index, source in enumerate(candidate.sources):
         if scope_block_ids and source.block_id not in scope_block_ids:
             continue
-        for gold_source in gold.sources:
+        for gold_source_index, gold_source in enumerate(gold.sources):
             if scope_block_ids and gold_source.block_id not in scope_block_ids:
                 continue
             quote_match = _source_match(source.block_id, source.quote, gold_source)
             if quote_match is None:
                 continue
-            quality = (20 if quote_match == "exact" else 10) + max(0, 9 - source_index)
-            edge = _EdgeCandidate(candidate_index, gold_index, source_index, quote_match, None, quality)
-            if best is None or (edge.quality, -edge.source_index) > (best.quality, -best.source_index):
+            quality = (20 if quote_match == "exact" else 10) + max(
+                0, 9 - candidate_source_index
+            )
+            edge = _EdgeCandidate(
+                candidate_index,
+                gold_index,
+                candidate_source_index,
+                gold_source_index,
+                quote_match,
+                None,
+                quality,
+            )
+            if best is None or (
+                edge.quality,
+                -edge.candidate_source_index,
+                -edge.gold_source_index,
+            ) > (
+                best.quality,
+                -best.candidate_source_index,
+                -best.gold_source_index,
+            ):
                 best = edge
     return best
 
@@ -201,7 +231,15 @@ def _maximum_weight_matching(
     for index in range(gold_count):
         add_edge(gold_base + index, sink, 1, 0)
 
-    stable_edges = sorted(edges, key=lambda edge: (edge.candidate_index, edge.gold_index, edge.source_index))
+    stable_edges = sorted(
+        edges,
+        key=lambda edge: (
+            edge.candidate_index,
+            edge.gold_index,
+            edge.candidate_source_index,
+            edge.gold_source_index,
+        ),
+    )
     for rank, edge in enumerate(stable_edges):
         # Flow is always maximized first. Cost then maximizes quality, while the
         # stable rank makes equal-quality traversals independent of input order.

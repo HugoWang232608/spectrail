@@ -1,69 +1,38 @@
 from __future__ import annotations
 
-import difflib
-import re
-import unicodedata
-
 from spectrail.core.models import DocumentBlock, RequirementIR, SourceSpan, ValidationIssue, ValidationReport
-
-
-PUNCT_MAP = str.maketrans(
-    {
-        "，": ",",
-        "。": ".",
-        "：": ":",
-        "；": ";",
-        "（": "(",
-        "）": ")",
-        "！": "!",
-        "？": "?",
-        "、": ",",
-        "“": '"',
-        "”": '"',
-        "‘": "'",
-        "’": "'",
-    }
-)
-
-
-def normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.translate(PUNCT_MAP)
-    normalized = re.sub(r"\s*\|\s*", "|", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized.strip()
+from spectrail.evidence.quote_matcher import QuoteMatcher, QuoteMatchResult, normalize_text
 
 
 class SourceQuoteValidator:
     pass_statuses = {"PASS_EXACT", "PASS_NORMALIZED"}
 
-    def validate_source(self, source: SourceSpan, blocks_by_id: dict[str, DocumentBlock]) -> SourceSpan:
+    def validate_source(
+        self,
+        source: SourceSpan,
+        blocks_by_id: dict[str, DocumentBlock],
+        *,
+        match_result: QuoteMatchResult | None = None,
+    ) -> SourceSpan:
         block = blocks_by_id.get(source.block_id)
         if block is None:
             source.match_status = "FAIL_NOT_FOUND"
             source.match_score = 0.0
             return source
 
-        if source.quote in block.text:
+        result = match_result or QuoteMatcher().match(block.text, source.quote)
+        source.match_score = result.score
+        if result.status != "NO_MATCH" and result.match_basis == "exact":
             source.match_status = "PASS_EXACT"
-            source.match_score = 1.0
             return source
-
-        normalized_quote = normalize_text(source.quote)
-        normalized_block = normalize_text(block.text)
-        if normalized_quote and normalized_quote in normalized_block:
+        if result.status != "NO_MATCH" and result.match_basis == "normalized":
             source.match_status = "PASS_NORMALIZED"
-            source.match_score = 0.95
             return source
-
-        score = difflib.SequenceMatcher(None, normalized_quote, normalized_block).ratio()
-        if score >= 0.85:
+        if result.score >= 0.85:
             source.match_status = "WARNING_FUZZY"
-            source.match_score = score
             return source
 
         source.match_status = "FAIL_NOT_FOUND"
-        source.match_score = score
         return source
 
     def validate(

@@ -138,5 +138,5 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
         )
     )
     assert "source_cell_ids are optional under the quote_only evidence policy" in quote_only_prompt
-    assert "When optional source_cell_ids are supplied" in quote_only_prompt
+    assert "Omit empty cells from source_cell_ids" in quote_only_prompt
     assert "must also include source_cell_ids" not in quote_only_prompt

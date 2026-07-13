@@ -2,7 +2,7 @@
   "metadata": {
     "bundle_version": 2,
     "document": "eval/cases/sample_srs_long/document.md",
-    "prompt_version": "reqir_extraction_v3_evidence",
+    "prompt_version": "reqir_extraction_v4_evidence_v2",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",
       "provider_endpoint_id": "mock",
@@ -22,7 +22,7 @@
     {
       "chunk_id": "chk_00000001",
       "chunk_fingerprint": "0eef8f4601df4d162013b8f50c9a5fb73df969a4d6154107c8c7eb87f71ad321",
-      "request_fingerprint": "61c8c64504dd79ec6b27fd3f909f855ca0cd215fc302d7ee7dfb002cd9205c87",
+      "request_fingerprint": "ce487bec0355a0d61db4539820acf95f09137b7d90785ecd027be6613b4d0cbe",
       "block_ids": [
         "blk_0001", "blk_0002", "blk_0003", "blk_0004", "blk_0005", "blk_0006",
         "blk_0007", "blk_0008", "blk_0009", "blk_0010", "blk_0011", "blk_0012",
@@ -33,25 +33,24 @@
     },
     {
       "chunk_id": "chk_00000002",
-      "chunk_fingerprint": "33f1b6c2c13652cd192e013f5ae7a5c49e593adf20d35355177bdd43f9fad6c7",
-      "request_fingerprint": "3219f9efec29ec17a1640a3dab4615856eeb0d622c62c9daa9b312492b16235a",
+      "chunk_fingerprint": "27c1d0986c268b922b359802e406b9f5d42c122f0f8428f0a40d4cd4c4f23fee",
+      "request_fingerprint": "bf68baf0cd53371ed181081e489198d5b10187f12ce8c8df9b8f4ccb26de43f1",
       "block_ids": [
         "blk_0023", "blk_0024", "blk_0025", "blk_0026", "blk_0027", "blk_0028",
         "blk_0029", "blk_0030", "blk_0031", "blk_0032", "blk_0033", "blk_0034",
         "blk_0035", "blk_0036", "blk_0037", "blk_0038", "blk_0039", "blk_0040",
-        "blk_0041", "blk_0042"
+        "blk_0041", "blk_0042", "blk_0043"
       ],
-      "fixture": "responses/3219f9efec29ec17a1640a3dab4615856eeb0d622c62c9daa9b312492b16235a.json"
+      "fixture": "responses/bf68baf0cd53371ed181081e489198d5b10187f12ce8c8df9b8f4ccb26de43f1.json"
     },
     {
       "chunk_id": "chk_00000003",
-      "chunk_fingerprint": "7369c4585a2e4e20c6b56b7d6c5998eecd400891e7c30bcda0b46d2ec79bc1e8",
-      "request_fingerprint": "dae5ea6c4d4b07404d7fa45e5cc005d8e03a1eab76ea2a87d659bf135a1d02d6",
+      "chunk_fingerprint": "44155c11165b217bf1c10e90cae285d81057422f2b1bada6a6cdb49a21a9dc5a",
+      "request_fingerprint": "904ab10e1a6ca67e715e584a41f9a1e243ca40707a28bc702974f10b1b85e839",
       "block_ids": [
-        "blk_0001", "blk_0023", "blk_0042", "blk_0043", "blk_0044", "blk_0045", "blk_0046", "blk_0047", "blk_0048",
-        "blk_0049", "blk_0050"
+        "blk_0043", "blk_0044", "blk_0045", "blk_0046", "blk_0047", "blk_0048", "blk_0049", "blk_0050"
       ],
-      "fixture": "responses/dae5ea6c4d4b07404d7fa45e5cc005d8e03a1eab76ea2a87d659bf135a1d02d6.json"
+      "fixture": "responses/904ab10e1a6ca67e715e584a41f9a1e243ca40707a28bc702974f10b1b85e839.json"
     }
   ]
 }

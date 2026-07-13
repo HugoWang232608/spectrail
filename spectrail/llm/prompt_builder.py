@@ -7,7 +7,7 @@ from spectrail.evidence.models import EvidenceIndex, TableCellRecord
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v3_evidence"
+PROMPT_VERSION = "reqir_extraction_v4_evidence_v2"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
@@ -39,19 +39,12 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
     table_cell_contract = (
         "- For a table block with a cell_map, source_cell_ids are optional under "
         "the quote_only evidence policy. If supplied, they must contain the logical "
-        "cell IDs covered by source_quote.\n"
+        "non-empty cell IDs covered by source_quote.\n"
         if quote_only
         else "- For a table block with a cell_map, source_cell_ids must contain the "
-        "logical cell IDs covered by source_quote.\n"
+        "non-empty logical cell IDs covered by source_quote.\n"
     )
-    table_overlap_contract = (
-        "- When optional source_cell_ids are supplied, a table source_quote may "
-        "select part of a cell's text; include every cell whose canonical span "
-        "overlaps the quote.\n"
-        if quote_only
-        else "- A table source_quote may select part of a cell's text; include every "
-        "cell whose canonical span overlaps the quote.\n"
-    )
+    table_overlap_contract = "- A table source_quote may select part of a cell's text.\n"
     return (
         "You are extracting software requirements into ReqIR JSON.\n\n"
         "Return JSON only with a top-level items array.\n\n"
@@ -68,9 +61,9 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "- source_quote must be an exact substring from the chosen block text.\n"
         f"{table_cell_contract}"
         f"{table_overlap_contract}"
-        "- Table source cells must be in one row and contiguous; their output "
-        "order is not identity-significant. Use column_span when deciding whether "
-        "adjacent logical cells are contiguous.\n"
+        "- Table cells must share one row. Omit empty cells from source_cell_ids; "
+        "within the selected column span, include every non-empty cell. Output order "
+        "is identity-insignificant.\n"
         "- Never invent a cell ID or cite a cell that is absent from the chosen "
         "block cell_map.\n"
         "- Do not output page, bbox, row, or column fields.\n"

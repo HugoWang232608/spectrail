@@ -7,7 +7,7 @@ from spectrail.evidence.models import (
     EvidenceIndex,
     TableCellRecord,
 )
-from spectrail.evidence.table_cells import require_contiguous_cell_spans
+from spectrail.evidence.table_cells import canonicalize_nonempty_cell_selection
 
 
 def canonicalize_source_cell_ids(
@@ -69,14 +69,8 @@ def _canonical_cell_ids(
         raise EvidenceReferenceError(
             "source cells must belong to one logical row"
         )
-    canonical = sorted(
+    canonical = canonicalize_nonempty_cell_selection(
         cells,
-        key=lambda cell: (
-            cell.table_id,
-            cell.row_index,
-            cell.column_index,
-            cell.cell_id,
-        ),
+        [cells_by_id[cell_id] for cell_id in block.cell_ids],
     )
-    require_contiguous_cell_spans(canonical)
     return [cell.cell_id for cell in canonical]

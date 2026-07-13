@@ -93,6 +93,8 @@ def test_locator_metrics_use_source_alignment_pair_and_expected_capabilities():
                 block_id="blk_0001",
                 text_length=12,
                 text_sha256=sha256_text("source quote"),
+                table_id="tbl_00000001",
+                cell_ids=["cell_00000001_r0001_c0001"],
                 expected_capabilities=["text_range", "page_region", "table_cell"],
                 available_capabilities=["text_range", "page_region", "table_cell"],
             )

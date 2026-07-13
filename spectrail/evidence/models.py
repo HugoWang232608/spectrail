@@ -253,6 +253,12 @@ class BlockEvidenceRecord(EvidenceModel):
         _require_unique(self.available_capabilities, "available capabilities")
         if "text_range" not in self.expected_capabilities:
             raise ValueError("all evidence blocks must expect text_range")
+        if "table_cell" in self.available_capabilities and (
+            self.table_id is None or not self.cell_ids
+        ):
+            raise ValueError(
+                "available table_cell capability requires table_id and cell_ids"
+            )
         unexpected = set(self.available_capabilities) - set(self.expected_capabilities)
         if unexpected:
             raise ValueError(f"available capabilities are not expected: {sorted(unexpected)}")
@@ -352,7 +358,7 @@ class TableRecord(EvidenceModel):
 
 
 class EvidenceIndex(EvidenceModel):
-    schema_version: Literal["evidence_v1"] = "evidence_v1"
+    schema_version: Literal["evidence_v2"] = "evidence_v2"
     document_id: str
     document_name: str
     source_format: str
@@ -391,6 +397,26 @@ class EvidenceIndex(EvidenceModel):
         occurrences_by_id = {
             item.occurrence_id: item for item in self.cell_occurrences
         }
+
+        parser_method_by_format = {
+            "docx": "docx_xml",
+            "pdf": "pymupdf_find_tables",
+        }
+        if self.tables and self.source_format not in parser_method_by_format:
+            raise ValueError(
+                f"evidence tables are unsupported for source format: {self.source_format}"
+            )
+        expected_parser_method = parser_method_by_format.get(self.source_format)
+        for table in self.tables:
+            if table.parser_method != expected_parser_method:
+                raise ValueError(
+                    "table parser_method does not match evidence source_format: "
+                    f"{table.table_id}"
+                )
+            if self.source_format == "docx" and table.topology_status != "complete":
+                raise ValueError(
+                    f"DOCX table topology must be complete: {table.table_id}"
+                )
 
         for page in self.pages:
             _require_subset(page.block_ids, block_ids, f"page {page.page_id} block IDs")

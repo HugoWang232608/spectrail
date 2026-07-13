@@ -11,7 +11,7 @@ from spectrail.evidence.models import (
     TableLocator,
 )
 from spectrail.evidence.quote_matcher import QuoteMatchRange
-from spectrail.evidence.table_cells import require_contiguous_cell_spans
+from spectrail.evidence.table_cells import canonicalize_nonempty_cell_selection
 
 
 @dataclass(frozen=True)
@@ -47,14 +47,9 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             f"table locator references an unknown cell: {exc.args[0]}"
         ) from exc
-    canonical = sorted(
+    canonical = canonicalize_nonempty_cell_selection(
         cells,
-        key=lambda cell: (
-            cell.table_id,
-            cell.row_index,
-            cell.column_index,
-            cell.cell_id,
-        ),
+        [cells_by_id[cell_id] for cell_id in block.cell_ids],
     )
     if [cell.cell_id for cell in canonical] != canonical_cell_ids:
         raise EvidenceReferenceError(
@@ -64,12 +59,6 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             "source cells do not belong to the source block table"
         )
-    if len({cell.row_index for cell in canonical}) != 1:
-        raise EvidenceReferenceError(
-            "source cells must belong to one logical row"
-        )
-    require_contiguous_cell_spans(canonical)
-
     occurrences = sorted(
         (
             occurrence

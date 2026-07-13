@@ -35,6 +35,18 @@ def test_all_evidence_blocks_must_expect_text_range():
         )
 
 
+def test_available_table_cell_capability_requires_cell_map():
+    with pytest.raises(ValidationError, match="requires table_id and cell_ids"):
+        BlockEvidenceRecord(
+            block_id="blk_0001",
+            text_length=1,
+            text_sha256=sha256_text("x"),
+            table_id="tbl_00000001",
+            expected_capabilities=["text_range", "table_cell"],
+            available_capabilities=["text_range", "table_cell"],
+        )
+
+
 def test_table_locator_requires_canonical_unique_start_columns():
     with pytest.raises(ValidationError, match="canonical column order"):
         TableLocator(
@@ -77,6 +89,7 @@ def _topology_index(
     parser_method: str = "docx_xml",
     cells: list[TableCellRecord],
 ) -> EvidenceIndex:
+    source_format = "pdf" if parser_method == "pymupdf_find_tables" else "docx"
     block_id = "blk_0001"
     block_text = "".join(cell.text for cell in cells)
     occurrences = []
@@ -95,8 +108,8 @@ def _topology_index(
         offset = end
     return EvidenceIndex(
         document_id="doc_001",
-        document_name="sample.docx",
-        source_format="docx",
+        document_name=f"sample.{source_format}",
+        source_format=source_format,
         source_sha256="1" * 64,
         parser_identity=ParserIdentity(
             parser_name="docx_parser_v2",
@@ -243,6 +256,57 @@ def test_complete_topology_requires_full_grid_but_sparse_topology_allows_holes()
             column_count=3,
             topology_status="sparse",
         )
+
+
+def test_evidence_v1_artifact_is_rejected_explicitly():
+    with pytest.raises(ValidationError, match="evidence_v2"):
+        EvidenceIndex(
+            schema_version="evidence_v1",  # type: ignore[arg-type]
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("source_format", "parser_method"),
+    [
+        ("docx", "pymupdf_find_tables"),
+        ("pdf", "docx_xml"),
+    ],
+)
+def test_table_parser_method_must_match_source_format(
+    source_format: str,
+    parser_method: str,
+):
+    cell = TableCellRecord(
+        cell_id="cell_00000001_r0001_c0001",
+        table_id="tbl_00000001",
+        row_index=1,
+        column_index=1,
+        text="x",
+        text_sha256=sha256_text("x"),
+    )
+    base_parser = (
+        "pymupdf_find_tables" if source_format == "docx" else "docx_xml"
+    )
+    payload = _topology_index(
+        cells=[cell],
+        column_count=1,
+        parser_method=base_parser,
+        topology_status="sparse" if base_parser == "pymupdf_find_tables" else "complete",
+    ).model_dump(mode="json")
+    payload["source_format"] = source_format
+    payload["tables"][0]["parser_method"] = parser_method
+
+    with pytest.raises(ValidationError, match="does not match evidence source_format"):
+        EvidenceIndex.model_validate(payload)
 
 
 def test_table_cell_must_be_referenced_by_a_table_block():

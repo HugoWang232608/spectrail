@@ -20,7 +20,7 @@ from spectrail.evidence.errors import EvidenceReferenceError, LocatorDerivationE
 from spectrail.evidence.locator_derivation import derive_table_evidence
 from spectrail.evidence.quote_matcher import QuoteMatchRange
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
-from spectrail.evidence.table_cells import require_contiguous_cell_spans
+from spectrail.evidence.table_cells import canonicalize_nonempty_cell_selection
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
@@ -156,11 +156,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     assert validated == [requirement]
     assert report.valid is True
     assert failures == []
-    require_contiguous_cell_spans(index.cells)
-    with pytest.raises(EvidenceReferenceError, match="occupied column spans"):
-        require_contiguous_cell_spans(
-            [index.cells[0].model_copy(update={"column_span": 1}), index.cells[1]]
-        )
+    assert canonicalize_nonempty_cell_selection(index.cells, index.cells) == index.cells
 
     with pytest.raises(
         LocatorDerivationError,
@@ -206,6 +202,159 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     assert next(
         result for result in results if result.capability == "table_cell"
     ).status == "FAIL_DERIVATION"
+
+
+def test_table_selection_can_cross_empty_logical_cells():
+    table = "tbl_00000001"
+    cell_a = "cell_00000001_r0001_c0001"
+    cell_empty = "cell_00000001_r0001_c0002"
+    cell_b = "cell_00000001_r0001_c0003"
+    text = "A |  | B"
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text=text,
+        order=1,
+    )
+    cells = [
+        TableCellRecord(
+            cell_id=cell_id,
+            table_id=table,
+            row_index=1,
+            column_index=column,
+            text=cell_text,
+            text_sha256=sha256_text(cell_text),
+        )
+        for cell_id, column, cell_text in [
+            (cell_a, 1, "A"),
+            (cell_empty, 2, ""),
+            (cell_b, 3, "B"),
+        ]
+    ]
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="empty-cell.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(text),
+                    text_sha256=sha256_text(text),
+                    table_id=table,
+                    cell_ids=[cell_a, cell_empty, cell_b],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=1,
+                    column_count=3,
+                    cell_ids=[cell_a, cell_empty, cell_b],
+                    occurrence_ids=[
+                        "occ_00000001",
+                        "occ_00000002",
+                        "occ_00000003",
+                    ],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+            cells=cells,
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cell_a,
+                    block_id=block.block_id,
+                    canonical_start=0,
+                    canonical_end=1,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cell_empty,
+                    block_id=block.block_id,
+                    canonical_start=4,
+                    canonical_end=4,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000003",
+                    cell_id=cell_b,
+                    block_id=block.block_id,
+                    canonical_start=7,
+                    canonical_end=8,
+                ),
+            ],
+        )
+    )
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement="A maps to B.",
+        sources=[
+            SourceSpan(
+                document_id="doc_001",
+                block_id=block.block_id,
+                quote=text,
+                source_cell_ids_raw=[cell_b, cell_empty, cell_a],
+            )
+        ],
+    )
+
+    canonicalize_source_cell_ids([requirement], index)
+    source = requirement.sources[0]
+    assert source.canonical_source_cell_ids == [cell_a, cell_b]
+    derived = derive_table_evidence(
+        index,
+        block_id=block.block_id,
+        selected_range=QuoteMatchRange(start=0, end=len(text)),
+        canonical_cell_ids=source.canonical_source_cell_ids,
+        block_text=text,
+    )
+    assert derived.locator.cell_ids == [cell_a, cell_b]
+    assert derived.reconstructed_text == text
+    registry = build_quote_match_registry(
+        [requirement],
+        [block],
+        evidence_fingerprint=index.evidence_fingerprint,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_required",
+        document_blocks=[block],
+    )
+    assert validated == [requirement]
+    assert report.valid is True
+    assert failures == []
+
+
+def test_table_selection_cannot_skip_non_empty_logical_cell():
+    table = "tbl_00000001"
+    cells = [
+        TableCellRecord(
+            cell_id=f"cell_00000001_r0001_c{column:04d}",
+            table_id=table,
+            row_index=1,
+            column_index=column,
+            text=text,
+            text_sha256=sha256_text(text),
+        )
+        for column, text in enumerate(["A", "B", "C"], start=1)
+    ]
+
+    with pytest.raises(EvidenceReferenceError, match="omits non-empty logical cells"):
+        canonicalize_nonempty_cell_selection([cells[0], cells[2]], cells)
 
 
 def test_page_locator_validates_rotation_derivation_and_source_page():

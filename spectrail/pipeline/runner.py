@@ -16,6 +16,9 @@ from spectrail.exporters.source_map_exporter import build_source_map
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.extractors.ears_normalizer import normalize_requirements
 from spectrail.extractors.reqir_extractor import ExtractionBatchResult, ReqIRExtractor
+from spectrail.evidence.index_builder import ensure_evidence_index
+from spectrail.evidence.enricher import SourceEvidenceEnricher
+from spectrail.evidence.quote_matcher import build_quote_match_registry
 from spectrail.llm.base import ModelRequest, ModelResponse
 from spectrail.llm.errors import (
     ModelPayloadContractError,
@@ -138,6 +141,8 @@ class PipelineRunner:
         requirements = []
         quarantined = []
         aggregation = None
+        evidence_index = None
+        quote_matches = None
         try:
             if parsed_document is None:
                 parsed_document = parse_document(document, document_id="doc_001")
@@ -149,6 +154,7 @@ class PipelineRunner:
             blocks = parsed_document.blocks
             if not blocks:
                 raise PipelineValidationError("NO_EXTRACTABLE_CONTENT")
+            evidence_index = ensure_evidence_index(document, parsed_document)
             plan.steps[0].config = {
                 "selected_parser": parsed_document.parser_name,
                 "source_format": parsed_document.source_format,
@@ -157,6 +163,10 @@ class PipelineRunner:
             write_json(plan_path, plan.model_dump(mode="json"))
             (parsed_dir / "document.md").write_text(parsed_document.text, encoding="utf-8")
             write_json(parsed_dir / "blocks.json", model_list_dump(blocks))
+            write_json(
+                parsed_dir / "evidence_index.json",
+                evidence_index.model_dump(mode="json"),
+            )
 
             model_client = create_model_client(
                 model_mode=model_mode,
@@ -348,6 +358,20 @@ class PipelineRunner:
                 if pipeline_config.dump_prompt and response.prompt:
                     (extracted_dir / "prompt.txt").write_text(response.prompt, encoding="utf-8")
 
+            quote_matches = build_quote_match_registry(
+                accepted_candidates,
+                blocks,
+                evidence_fingerprint=evidence_index.evidence_fingerprint,
+            )
+            write_json(
+                extracted_dir / "quote_matches.json",
+                quote_matches.model_dump(mode="json"),
+            )
+            SourceEvidenceEnricher().enrich(
+                accepted_candidates,
+                evidence_index,
+                quote_matches,
+            )
             aggregation = CandidateAggregator().aggregate(accepted_candidates, blocks)
             requirements = normalize_requirements(aggregation.requirements)
             primary_response = successful_responses[0]
@@ -385,7 +409,11 @@ class PipelineRunner:
                 write_json(extracted_dir / "validation_report.json", schema_report.model_dump(mode="json"))
                 raise PipelineValidationError("schema validation failed")
 
-            validated_requirements, source_report = SourceQuoteValidator().validate(requirements, blocks)
+            validated_requirements, source_report = SourceQuoteValidator().validate(
+                requirements,
+                blocks,
+                quote_matches,
+            )
             valid_ids = {item.id for item in validated_requirements}
             quarantined = [item for item in requirements if item.id not in valid_ids]
             ears_report = BasicEARSValidator().validate(validated_requirements)
@@ -509,11 +537,13 @@ class PipelineRunner:
                 outputs={
                     "document": "parsed/document.md",
                     "blocks": "parsed/blocks.json",
+                    "evidence_index": "parsed/evidence_index.json",
                     "chunks": "parsed/chunks.json",
                     "reqir_raw": "extracted/reqir.raw.json",
                     "reqir_validated": "extracted/reqir.validated.json",
                     "reqir_quarantined": "extracted/reqir.quarantined.json",
                     "source_map": "extracted/source_map.json",
+                    "quote_matches": "extracted/quote_matches.json",
                     "validation_report": "extracted/validation_report.json",
                     "review_log": "review/review_log.json",
                     "reqir_export": "exports/reqir.json",
@@ -536,6 +566,15 @@ class PipelineRunner:
                 "source_format": parsed_document.source_format,
                 "parser_name": parsed_document.parser_name,
                 "warnings": parsed_document.warnings,
+            }
+            completed_manifest["evidence"] = {
+                "schema_version": evidence_index.schema_version,
+                "source_sha256": evidence_index.source_sha256,
+                "evidence_fingerprint": evidence_index.evidence_fingerprint,
+                "block_count": len(evidence_index.blocks),
+                "table_count": len(evidence_index.tables),
+                "cell_count": len(evidence_index.cells),
+                "quote_match_count": len(quote_matches.entries),
             }
             completed_manifest["execution"] = {
                 "elapsed_ms": total_elapsed_ms,

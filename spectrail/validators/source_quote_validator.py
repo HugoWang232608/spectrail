@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from spectrail.core.models import DocumentBlock, RequirementIR, SourceSpan, ValidationIssue, ValidationReport
-from spectrail.evidence.quote_matcher import QuoteMatcher, QuoteMatchResult, normalize_text
+from spectrail.evidence.quote_matcher import QuoteMatchRegistry, normalize_text
 
 
 class SourceQuoteValidator:
@@ -11,16 +11,17 @@ class SourceQuoteValidator:
         self,
         source: SourceSpan,
         blocks_by_id: dict[str, DocumentBlock],
-        *,
-        match_result: QuoteMatchResult | None = None,
+        quote_matches: QuoteMatchRegistry,
     ) -> SourceSpan:
+        if source.source_evidence_key is None:
+            raise ValueError("source_evidence_key is required for quote validation")
+        result = quote_matches.require(source.source_evidence_key)
         block = blocks_by_id.get(source.block_id)
         if block is None:
             source.match_status = "FAIL_NOT_FOUND"
             source.match_score = 0.0
             return source
 
-        result = match_result or QuoteMatcher().match(block.text, source.quote)
         source.match_score = result.score
         if result.status != "NO_MATCH" and result.match_basis == "exact":
             source.match_status = "PASS_EXACT"
@@ -36,7 +37,10 @@ class SourceQuoteValidator:
         return source
 
     def validate(
-        self, requirements: list[RequirementIR], blocks: list[DocumentBlock]
+        self,
+        requirements: list[RequirementIR],
+        blocks: list[DocumentBlock],
+        quote_matches: QuoteMatchRegistry,
     ) -> tuple[list[RequirementIR], ValidationReport]:
         blocks_by_id = {block.block_id: block for block in blocks}
         validated: list[RequirementIR] = []
@@ -44,7 +48,9 @@ class SourceQuoteValidator:
         for requirement in requirements:
             passed = False
             for index, source in enumerate(requirement.sources):
-                requirement.sources[index] = self.validate_source(source, blocks_by_id)
+                requirement.sources[index] = self.validate_source(
+                    source, blocks_by_id, quote_matches
+                )
                 if requirement.sources[index].match_status in self.pass_statuses:
                     passed = True
             if passed:

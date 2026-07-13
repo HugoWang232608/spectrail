@@ -349,23 +349,59 @@ class EvidenceIndex(EvidenceModel):
         del page_ids
 
         blocks_by_id = {item.block_id: item for item in self.blocks}
+        fragments_by_id = {item.fragment_id: item for item in self.fragments}
         tables_by_id = {item.table_id: item for item in self.tables}
         cells_by_id = {item.cell_id: item for item in self.cells}
+        occurrences_by_id = {
+            item.occurrence_id: item for item in self.cell_occurrences
+        }
 
         for page in self.pages:
             _require_subset(page.block_ids, block_ids, f"page {page.page_id} block IDs")
             _require_subset(page.table_ids, table_ids, f"page {page.page_id} table IDs")
+            for block_id in page.block_ids:
+                if blocks_by_id[block_id].page != page.page:
+                    raise ValueError(
+                        f"page {page.page_id} contains block from another page: {block_id}"
+                    )
+            for table_id in page.table_ids:
+                if tables_by_id[table_id].page != page.page:
+                    raise ValueError(
+                        f"page {page.page_id} contains table from another page: {table_id}"
+                    )
         for fragment in self.fragments:
             block = blocks_by_id.get(fragment.block_id)
             if block is None:
                 raise ValueError(f"fragment references unknown block: {fragment.block_id}")
             if fragment.end > block.text_length:
                 raise ValueError(f"fragment range exceeds block text: {fragment.fragment_id}")
+            if block.page != fragment.page:
+                raise ValueError(
+                    f"fragment and block pages differ: {fragment.fragment_id}"
+                )
         for block in self.blocks:
             _require_subset(block.fragment_ids, fragment_ids, f"block {block.block_id} fragment IDs")
             _require_subset(block.cell_ids, cell_ids, f"block {block.block_id} cell IDs")
+            for fragment_id in block.fragment_ids:
+                if fragments_by_id[fragment_id].block_id != block.block_id:
+                    raise ValueError(
+                        f"block references fragment owned by another block: {fragment_id}"
+                    )
+            if block.cell_ids and block.table_id is None:
+                raise ValueError(f"block cell IDs require table_id: {block.block_id}")
             if block.table_id is not None and block.table_id not in table_ids:
                 raise ValueError(f"block references unknown table: {block.table_id}")
+            if block.table_id is not None:
+                table = tables_by_id[block.table_id]
+                if block.block_id not in table.block_ids:
+                    raise ValueError(
+                        f"block is not registered by its table: {block.block_id}"
+                    )
+                for cell_id in block.cell_ids:
+                    if cells_by_id[cell_id].table_id != block.table_id:
+                        raise ValueError(
+                            f"block references cell owned by another table: {cell_id}"
+                        )
         for table in self.tables:
             _require_subset(table.block_ids, block_ids, f"table {table.table_id} block IDs")
             _require_subset(table.cell_ids, cell_ids, f"table {table.table_id} cell IDs")
@@ -374,9 +410,32 @@ class EvidenceIndex(EvidenceModel):
                 occurrence_ids,
                 f"table {table.table_id} occurrence IDs",
             )
+            for block_id in table.block_ids:
+                if blocks_by_id[block_id].table_id != table.table_id:
+                    raise ValueError(
+                        f"table contains block owned by another table: {block_id}"
+                    )
+            for cell_id in table.cell_ids:
+                if cells_by_id[cell_id].table_id != table.table_id:
+                    raise ValueError(
+                        f"table contains cell owned by another table: {cell_id}"
+                    )
+            for occurrence_id in table.occurrence_ids:
+                occurrence = occurrences_by_id[occurrence_id]
+                if occurrence.cell_id not in table.cell_ids:
+                    raise ValueError(
+                        f"table occurrence references a cell outside the table: {occurrence_id}"
+                    )
+                if occurrence.block_id not in table.block_ids:
+                    raise ValueError(
+                        f"table occurrence references a block outside the table: {occurrence_id}"
+                    )
         for cell in self.cells:
-            if cell.table_id not in tables_by_id:
+            table = tables_by_id.get(cell.table_id)
+            if table is None:
                 raise ValueError(f"cell references unknown table: {cell.table_id}")
+            if cell.cell_id not in table.cell_ids:
+                raise ValueError(f"cell is not registered by its table: {cell.cell_id}")
         for occurrence in self.cell_occurrences:
             cell = cells_by_id.get(occurrence.cell_id)
             block = blocks_by_id.get(occurrence.block_id)
@@ -392,6 +451,11 @@ class EvidenceIndex(EvidenceModel):
                 raise ValueError(
                     f"occurrence cell and block tables differ: {occurrence.occurrence_id}"
                 )
+            table = tables_by_id[cell.table_id]
+            if occurrence.occurrence_id not in table.occurrence_ids:
+                raise ValueError(
+                    f"occurrence is not registered by its table: {occurrence.occurrence_id}"
+                )
         return self
 
 
@@ -403,6 +467,11 @@ def aggregate_locator_status(
     by_capability = {result.capability: result.status for result in results}
     if len(by_capability) != len(results):
         raise ValueError("capability validation results must be unique")
+    unexpected = set(by_capability) - expected
+    if unexpected:
+        raise ValueError(
+            f"capability validation results are not expected: {sorted(unexpected)}"
+        )
 
     statuses = [by_capability.get(capability, "UNVERIFIED") for capability in expected]
     for failure in ("FAIL_INVALID_REFERENCE", "FAIL_DERIVATION"):
@@ -416,7 +485,11 @@ def aggregate_locator_status(
     expected_structured = expected & STRUCTURED_CAPABILITIES
     if expected_structured and statuses and all(status == "PASS" for status in statuses):
         return "PASS_STRUCTURED"
-    if not expected_structured and by_capability.get("text_range") == "PASS":
+    if (
+        "text_range" in expected
+        and not expected_structured
+        and by_capability.get("text_range") == "PASS"
+    ):
         return "PASS_DERIVED"
     return "UNVERIFIED"
 

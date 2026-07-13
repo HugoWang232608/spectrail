@@ -6,7 +6,8 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Iterable
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -151,6 +152,48 @@ class QuoteMatcher:
             match_basis="none",
             score=score,
         )
+
+
+def build_quote_match_registry(
+    requirements: Iterable[Any],
+    blocks: Iterable[Any],
+    *,
+    evidence_fingerprint: str,
+    provisional: bool = True,
+) -> QuoteMatchRegistry:
+    blocks_by_id = {block.block_id: block for block in blocks}
+    registry = QuoteMatchRegistry()
+    matcher = QuoteMatcher()
+    for requirement in requirements:
+        for source in requirement.sources:
+            canonical_cell_ids = (
+                source.table_locator.cell_ids
+                if source.table_locator is not None
+                else ()
+            )
+            key = source_evidence_key(
+                evidence_fingerprint=evidence_fingerprint,
+                document_id=source.document_id,
+                block_id=source.block_id,
+                quote=source.quote,
+                canonical_cell_ids=canonical_cell_ids,
+            )
+            if source.source_evidence_key not in {None, key}:
+                raise ValueError(
+                    "source_evidence_key does not match canonical source identity"
+                )
+            source.source_evidence_key = key
+            if key not in registry.entries:
+                block = blocks_by_id.get(source.block_id)
+                registry.add(
+                    key,
+                    matcher.match(
+                        block.text if block is not None else "",
+                        source.quote,
+                        provisional=provisional,
+                    ),
+                )
+    return registry
 
 
 def find_all_exact_ranges(text: str, quote: str) -> list[QuoteMatchRange]:

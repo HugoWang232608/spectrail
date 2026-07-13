@@ -9,8 +9,10 @@ from spectrail.core.io import ensure_dir, read_json, write_json
 from spectrail.core.models import RequirementIR
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig
 from spectrail.evaluation.matcher import match_requirements
+from spectrail.evaluation.locator_metrics import build_locator_metrics
 from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
+from spectrail.evidence.models import EvidenceIndex
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError, ParsedDocument, parse_document
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
@@ -96,34 +98,56 @@ class EvaluationRunner:
         matches = match_requirements(candidates, gold.items, scope_block_ids=case.scope_block_ids)
         counts = manifest.get("counts", {})
         execution = manifest.get("execution", {})
-        metrics = build_evaluation_metrics(
-            gold_count=matches.evaluated_gold_count,
-            candidate_count=matches.evaluated_candidate_count,
-            matches=matches,
-            aggregated_count=counts.get("aggregated_requirements", len(candidates)),
-            validated_count=counts.get("validated_requirements", len(candidates)),
-            exported_count=len(candidates),
-            grounded_exported_count=sum(
-                any(source.match_status in {"PASS_EXACT", "PASS_NORMALIZED"} for source in item.sources)
-                for item in candidates
-            ),
-            quarantined_count=counts.get("quarantined_requirements", 0),
-            model_items_total=counts.get("model_items_total", 0),
-            rejected_item_count=counts.get("model_items_rejected", 0),
-            raw_candidate_count=counts.get("raw_candidates", counts.get("raw_requirements", 0)),
-            collapsed_duplicate_count=counts.get("collapsed_overlap_duplicates", 0),
-            chunk_count=counts.get("chunks", 0),
-            chunk_completed_count=(
-                counts.get("chunks_completed", 0)
-                + counts.get("chunks_completed_with_warnings", 0)
-            ),
-            chunk_failed_count=counts.get("chunks_failed", 0),
-            model_call_count=counts.get("model_call_count", 0),
-            elapsed_ms=execution.get("elapsed_ms", 0),
-            rendered_prompt_chars=execution.get("rendered_prompt_chars", 0),
-            response_chars=execution.get("response_chars", 0),
-            estimated_tokens=execution.get("estimated_tokens", 0),
+        evidence_index_path = pipeline_output / "parsed" / "evidence_index.json"
+        evidence_index = (
+            EvidenceIndex.model_validate(read_json(evidence_index_path))
+            if evidence_index_path.exists()
+            else None
         )
+        metrics = {
+            **build_evaluation_metrics(
+                gold_count=matches.evaluated_gold_count,
+                candidate_count=matches.evaluated_candidate_count,
+                matches=matches,
+                aggregated_count=counts.get("aggregated_requirements", len(candidates)),
+                validated_count=counts.get("validated_requirements", len(candidates)),
+                exported_count=len(candidates),
+                grounded_exported_count=sum(
+                    any(
+                        source.match_status in {"PASS_EXACT", "PASS_NORMALIZED"}
+                        for source in item.sources
+                    )
+                    for item in candidates
+                ),
+                quarantined_count=counts.get("quarantined_requirements", 0),
+                model_items_total=counts.get("model_items_total", 0),
+                rejected_item_count=counts.get("model_items_rejected", 0),
+                raw_candidate_count=counts.get(
+                    "raw_candidates", counts.get("raw_requirements", 0)
+                ),
+                collapsed_duplicate_count=counts.get(
+                    "collapsed_overlap_duplicates", 0
+                ),
+                chunk_count=counts.get("chunks", 0),
+                chunk_completed_count=(
+                    counts.get("chunks_completed", 0)
+                    + counts.get("chunks_completed_with_warnings", 0)
+                ),
+                chunk_failed_count=counts.get("chunks_failed", 0),
+                model_call_count=counts.get("model_call_count", 0),
+                elapsed_ms=execution.get("elapsed_ms", 0),
+                rendered_prompt_chars=execution.get("rendered_prompt_chars", 0),
+                response_chars=execution.get("response_chars", 0),
+                estimated_tokens=execution.get("estimated_tokens", 0),
+            ),
+            **build_locator_metrics(
+                candidates=candidates,
+                gold=gold.items,
+                matches=matches,
+                block_evidence=evidence_index.blocks if evidence_index else (),
+            ),
+            "evidence_index_available": evidence_index is not None,
+        }
         threshold_results = _threshold_results(metrics, case.thresholds)
         outcome_pass = (
             manifest.get("status") in case.allowed_pipeline_statuses
@@ -261,6 +285,36 @@ def _case_markdown(report: dict[str, Any]) -> str:
         f"- Duplicate / quarantine / rejected rates: {report['duplicate_rate']:.4f} / "
         f"{report['quarantine_rate']:.4f} / {report['rejected_item_rate']:.4f}",
         f"- Local top-edge ties: {report['local_top_edge_tie_count']}",
+        f"- Evidence index available: {report['evidence_index_available']}",
+        f"- Text locator pass rate (evaluated): {report['text_locator_pass_rate']:.4f} "
+        f"({report['text_locator_evaluated_count']})",
+        f"- Page accuracy (evaluated): {report['page_accuracy']:.4f} "
+        f"({report['page_evaluated_count']})",
+        f"- Table cell precision / recall / F1 (evaluated): "
+        f"{report['table_cell_precision']:.4f} / {report['table_cell_recall']:.4f} / "
+        f"{report['table_cell_f1']:.4f} ({report['table_cell_evaluated_count']})",
+        f"- BBox IoU mean / pass rate (evaluated): {report['bbox_iou_mean']:.4f} / "
+        f"{report['bbox_iou_pass_rate']:.4f} ({report['bbox_evaluated_count']})",
+        f"- Structured grounding coverage (passed / eligible): "
+        f"{report['structured_grounding_coverage']:.4f} "
+        f"({report['structured_grounding_pass_count']} / "
+        f"{report['structured_grounding_eligible_count']})",
+        f"- Structured source missing / ambiguous / unverified / failed: "
+        f"{report['structured_grounding_missing_count']} / "
+        f"{report['structured_grounding_ambiguous_count']} / "
+        f"{report['structured_grounding_unverified_count']} / "
+        f"{report['structured_grounding_failed_count']}",
+        f"- Structured capability pass / expected: "
+        f"{report['structured_capability_pass_count']} / "
+        f"{report['structured_capability_expected_count']}",
+        f"- Structured capability missing / ambiguous / unverified / failed: "
+        f"{report['structured_capability_missing_count']} / "
+        f"{report['structured_capability_ambiguous_count']} / "
+        f"{report['structured_capability_unverified_count']} / "
+        f"{report['structured_capability_failed_count']}",
+        f"- Structured invalid reference / derivation failure: "
+        f"{report['structured_invalid_reference_count']} / "
+        f"{report['structured_derivation_failed_count']}",
         "",
         "## Thresholds",
         "",

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from spectrail.core.models import DocumentBlock
+from spectrail.evidence.models import EvidenceIndex, ParserIdentity
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,9 @@ class ParsedDocument:
     blocks: list[DocumentBlock]
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_sha256: str | None = None
+    parser_identity: ParserIdentity | None = None
+    evidence_index: EvidenceIndex | None = None
 
 
 class DocumentParseError(ValueError):

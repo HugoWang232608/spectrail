@@ -48,8 +48,18 @@ def build_locator_metrics(
     text_passed = 0
     structured_eligible = 0
     structured_passed = 0
-    structured_missing = 0
-    structured_ambiguous = 0
+    structured_source_missing = 0
+    structured_source_ambiguous = 0
+    structured_source_unverified = 0
+    structured_source_failed = 0
+    structured_capability_expected = 0
+    structured_capability_passed = 0
+    structured_capability_missing = 0
+    structured_capability_ambiguous = 0
+    structured_capability_unverified = 0
+    structured_capability_failed = 0
+    structured_invalid_reference = 0
+    structured_derivation_failed = 0
 
     for pair in matches.source_alignment_matches:
         source = candidates[pair.candidate_index].sources[pair.candidate_source_index]
@@ -74,8 +84,17 @@ def build_locator_metrics(
             cell_gold_total += len(gold_cells)
 
         if gold_source.bbox is not None:
-            actual_bbox = _source_bbox(source)
-            value = 0.0 if actual_bbox is None else bbox_iou(actual_bbox, gold_source.bbox)
+            actual_bbox = _source_bbox(source, prefer_table=bool(gold_source.cell_ids))
+            actual_page = (
+                source.page_locator.page
+                if source.page_locator is not None
+                else source.page
+            )
+            value = (
+                0.0
+                if actual_bbox is None or actual_page != gold_source.page
+                else bbox_iou(actual_bbox, gold_source.bbox)
+            )
             bbox_values.append(value)
             if value >= gold_source.bbox_iou_threshold:
                 bbox_passed += 1
@@ -89,13 +108,38 @@ def build_locator_metrics(
                     item.capability: item.status for item in source.capability_results
                 }
                 expected_statuses = [statuses.get(capability) for capability in expected_structured]
+                structured_capability_expected += len(expected_statuses)
+                for status in expected_statuses:
+                    if status == "PASS":
+                        structured_capability_passed += 1
+                    elif status in {None, "WARNING_UNAVAILABLE"}:
+                        structured_capability_missing += 1
+                    elif status == "WARNING_AMBIGUOUS":
+                        structured_capability_ambiguous += 1
+                    elif status == "UNVERIFIED":
+                        structured_capability_unverified += 1
+                    elif status == "FAIL_INVALID_REFERENCE":
+                        structured_capability_failed += 1
+                        structured_invalid_reference += 1
+                    elif status == "FAIL_DERIVATION":
+                        structured_capability_failed += 1
+                        structured_derivation_failed += 1
                 if all(status == "PASS" for status in expected_statuses):
                     structured_passed += 1
+                elif any(
+                    status in {"FAIL_INVALID_REFERENCE", "FAIL_DERIVATION"}
+                    for status in expected_statuses
+                ):
+                    structured_source_failed += 1
+                elif any(status == "WARNING_AMBIGUOUS" for status in expected_statuses):
+                    structured_source_ambiguous += 1
+                elif any(
+                    status in {None, "WARNING_UNAVAILABLE"}
+                    for status in expected_statuses
+                ):
+                    structured_source_missing += 1
                 else:
-                    if any(status == "WARNING_AMBIGUOUS" for status in expected_statuses):
-                        structured_ambiguous += 1
-                    if any(status in {None, "WARNING_UNAVAILABLE"} for status in expected_statuses):
-                        structured_missing += 1
+                    structured_source_unverified += 1
 
     cell_precision = _ratio(cell_true_positive, cell_actual_total)
     cell_recall = _ratio(cell_true_positive, cell_gold_total)
@@ -124,8 +168,18 @@ def build_locator_metrics(
         ),
         "structured_grounding_eligible_count": structured_eligible,
         "structured_grounding_pass_count": structured_passed,
-        "structured_capability_missing_count": structured_missing,
-        "structured_capability_ambiguous_count": structured_ambiguous,
+        "structured_grounding_missing_count": structured_source_missing,
+        "structured_grounding_ambiguous_count": structured_source_ambiguous,
+        "structured_grounding_unverified_count": structured_source_unverified,
+        "structured_grounding_failed_count": structured_source_failed,
+        "structured_capability_expected_count": structured_capability_expected,
+        "structured_capability_pass_count": structured_capability_passed,
+        "structured_capability_missing_count": structured_capability_missing,
+        "structured_capability_ambiguous_count": structured_capability_ambiguous,
+        "structured_capability_unverified_count": structured_capability_unverified,
+        "structured_capability_failed_count": structured_capability_failed,
+        "structured_invalid_reference_count": structured_invalid_reference,
+        "structured_derivation_failed_count": structured_derivation_failed,
     }
 
 
@@ -136,12 +190,10 @@ def _capability_passed(source: SourceSpan, capability: str) -> bool:
     )
 
 
-def _source_bbox(source: SourceSpan) -> BoundingBox | None:
-    if source.page_locator is not None:
-        return source.page_locator.bbox
-    if source.table_locator is not None:
-        return source.table_locator.bbox
-    return None
+def _source_bbox(source: SourceSpan, *, prefer_table: bool) -> BoundingBox | None:
+    if prefer_table:
+        return source.table_locator.bbox if source.table_locator is not None else None
+    return source.page_locator.bbox if source.page_locator is not None else None
 
 
 def _ratio(numerator: int, denominator: int) -> float:

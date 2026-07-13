@@ -7,6 +7,7 @@ from spectrail.evidence import (
     CapabilityValidationResult,
     CellBlockOccurrence,
     EvidenceIndex,
+    PageRecord,
     ParserIdentity,
     TableCellRecord,
     TableLocator,
@@ -57,6 +58,13 @@ def test_locator_status_distinguishes_derived_and_structured_sources():
             ),
         ],
     ) == "WARNING_AMBIGUOUS"
+
+
+def test_locator_status_rejects_unexpected_results_and_empty_expected_set():
+    text_pass = CapabilityValidationResult(capability="text_range", status="PASS")
+    assert aggregate_locator_status([], []) == "UNVERIFIED"
+    with pytest.raises(ValueError, match="not expected"):
+        aggregate_locator_status([], [text_pass])
 
 
 def test_evidence_index_supports_repeated_header_occurrences():
@@ -158,6 +166,120 @@ def test_evidence_index_rejects_dangling_occurrence():
                     block_id="blk_0001",
                     canonical_start=0,
                     canonical_end=1,
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_page_with_foreign_block():
+    with pytest.raises(ValidationError, match="block from another page"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.pdf",
+            source_format="pdf",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(parser_name="pdf_parser_v2", parser_version="2"),
+            evidence_fingerprint="0" * 64,
+            pages=[
+                PageRecord(
+                    page_id="page_0001",
+                    page=1,
+                    width=100,
+                    height=100,
+                    source_rotation=0,
+                    block_ids=["blk_0001"],
+                    table_ids=[],
+                )
+            ],
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=1,
+                    text_sha256=sha256_text("x"),
+                    page=2,
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_block_cells_without_table():
+    with pytest.raises(ValidationError, match="cell IDs require table_id"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id="blk_0001",
+                    text_length=1,
+                    text_sha256=sha256_text("x"),
+                    cell_ids=["cell_1"],
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_1",
+                    table_id="table_1",
+                    row_index=1,
+                    column_index=1,
+                    text="x",
+                    text_sha256=sha256_text("x"),
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id="table_1",
+                    block_ids=[],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=["cell_1"],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                )
+            ],
+        )
+
+
+def test_evidence_index_rejects_table_with_foreign_cell():
+    with pytest.raises(ValidationError, match="cell owned by another table"):
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="sample.docx",
+            source_format="docx",
+            source_sha256="1" * 64,
+            parser_identity=ParserIdentity(parser_name="docx_parser_v2", parser_version="2"),
+            evidence_fingerprint="0" * 64,
+            tables=[
+                TableRecord(
+                    table_id="table_1",
+                    block_ids=[],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=["cell_2"],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                ),
+                TableRecord(
+                    table_id="table_2",
+                    block_ids=[],
+                    row_count=1,
+                    column_count=1,
+                    cell_ids=[],
+                    occurrence_ids=[],
+                    parser_method="docx_xml",
+                ),
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id="cell_2",
+                    table_id="table_2",
+                    row_index=1,
+                    column_index=1,
+                    text="x",
+                    text_sha256=sha256_text("x"),
                 )
             ],
         )

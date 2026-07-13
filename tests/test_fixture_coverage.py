@@ -4,6 +4,7 @@ from spectrail.llm.base import ModelRequest
 from spectrail.llm.mock_model import MockModel
 from spectrail.parsers.markdown_parser import MarkdownParser
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
+from spectrail.evidence import build_quote_match_registry
 
 
 def test_mock_fixture_covers_markdown_block_types():
@@ -36,7 +37,12 @@ def test_mock_fixture_covers_markdown_block_types():
     }
     assert {"paragraph", "list", "table", "blockquote", "code"}.issubset(covered_types)
 
-    validated, report = SourceQuoteValidator().validate(requirements, blocks)
+    quote_matches = build_quote_match_registry(
+        requirements, blocks, evidence_fingerprint="a" * 64
+    )
+    validated, report = SourceQuoteValidator().validate(
+        requirements, blocks, quote_matches
+    )
     assert report.valid
     assert len(validated) == len(requirements)
     for requirement in validated:

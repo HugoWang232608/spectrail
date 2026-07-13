@@ -110,3 +110,121 @@ def test_bbox_iou_rejects_non_overlapping_boxes():
         BoundingBox(x0=0, y0=0, x1=1, y1=1),
         BoundingBox(x0=2, y0=2, x1=3, y1=3),
     ) == 0.0
+
+
+def test_bbox_metric_requires_matching_page():
+    bbox = BoundingBox(x0=10, y0=20, x1=50, y1=60)
+    source = SourceSpan(
+        document_id="doc_001",
+        block_id="blk_0001",
+        quote="quote",
+        page_locator=PageLocator(
+            page=3,
+            bbox=bbox,
+            page_width=100,
+            page_height=100,
+            derivation="quote_span_union",
+        ),
+    )
+    candidates = [RequirementIR(id="C1", statement="S", sources=[source])]
+    gold = [
+        GoldRequirement(
+            gold_id="G1",
+            statement="S",
+            sources=[GoldSource(block_id="blk_0001", quote="quote", page=2, bbox=bbox)],
+        )
+    ]
+    metrics = build_locator_metrics(
+        candidates=candidates,
+        gold=gold,
+        matches=match_requirements(candidates, gold),
+    )
+    assert metrics["page_accuracy"] == 0.0
+    assert metrics["bbox_iou_pass_rate"] == 0.0
+
+
+def test_bbox_metric_prefers_table_bbox_for_cell_gold():
+    page_bbox = BoundingBox(x0=0, y0=0, x1=20, y1=20)
+    table_bbox = BoundingBox(x0=40, y0=40, x1=80, y1=80)
+    source = SourceSpan(
+        document_id="doc_001",
+        block_id="blk_0001",
+        quote="quote",
+        page_locator=PageLocator(
+            page=2,
+            bbox=page_bbox,
+            page_width=100,
+            page_height=100,
+            derivation="quote_span_union",
+        ),
+        table_locator=TableLocator(
+            table_id="table_1",
+            cell_ids=["cell_1"],
+            row_indices=[1],
+            column_indices=[1],
+            bbox=table_bbox,
+        ),
+    )
+    candidates = [RequirementIR(id="C1", statement="S", sources=[source])]
+    gold = [
+        GoldRequirement(
+            gold_id="G1",
+            statement="S",
+            sources=[
+                GoldSource(
+                    block_id="blk_0001",
+                    quote="quote",
+                    page=2,
+                    table_id="table_1",
+                    cell_ids=["cell_1"],
+                    bbox=table_bbox,
+                )
+            ],
+        )
+    ]
+    metrics = build_locator_metrics(
+        candidates=candidates,
+        gold=gold,
+        matches=match_requirements(candidates, gold),
+    )
+    assert metrics["bbox_iou_pass_rate"] == 1.0
+
+
+def test_structured_diagnostics_explain_every_expected_capability():
+    source = SourceSpan(
+        document_id="doc_001",
+        block_id="blk_0001",
+        quote="quote",
+        capability_results=[
+            CapabilityValidationResult(
+                capability="page_region", status="FAIL_INVALID_REFERENCE"
+            ),
+            CapabilityValidationResult(capability="table_cell", status="UNVERIFIED"),
+        ],
+    )
+    candidates = [RequirementIR(id="C1", statement="S", sources=[source])]
+    gold = [
+        GoldRequirement(
+            gold_id="G1",
+            statement="S",
+            sources=[GoldSource(block_id="blk_0001", quote="quote")],
+        )
+    ]
+    metrics = build_locator_metrics(
+        candidates=candidates,
+        gold=gold,
+        matches=match_requirements(candidates, gold),
+        block_evidence=[
+            BlockEvidenceRecord(
+                block_id="blk_0001",
+                text_length=5,
+                text_sha256=sha256_text("quote"),
+                expected_capabilities=["page_region", "table_cell"],
+            )
+        ],
+    )
+    assert metrics["structured_grounding_failed_count"] == 1
+    assert metrics["structured_capability_expected_count"] == 2
+    assert metrics["structured_capability_failed_count"] == 1
+    assert metrics["structured_capability_unverified_count"] == 1
+    assert metrics["structured_invalid_reference_count"] == 1

@@ -7,6 +7,7 @@ from pydantic import TypeAdapter
 
 from spectrail.core.io import model_list_dump, read_json, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
+from spectrail.evidence import QuoteMatchRegistry, build_quote_match_registry, sha256_text
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError
@@ -114,7 +115,23 @@ def run_validate(args: argparse.Namespace) -> int:
     reqs = _load_requirements(args.reqir)
     blocks = BlockListAdapter.validate_python(read_json(args.blocks))
     schema_report = SchemaValidator().validate(reqs)
-    validated, source_report = SourceQuoteValidator().validate(reqs, blocks)
+    quote_matches_path = Path(args.reqir).parent / "quote_matches.json"
+    if quote_matches_path.exists():
+        quote_matches = QuoteMatchRegistry.model_validate(read_json(quote_matches_path))
+    else:
+        validation_fingerprint = sha256_text(
+            "\n".join(f"{block.document_id}:{block.block_id}:{block.text}" for block in blocks)
+        )
+        quote_matches = build_quote_match_registry(
+            reqs,
+            blocks,
+            evidence_fingerprint=validation_fingerprint,
+        )
+    validated, source_report = SourceQuoteValidator().validate(
+        reqs,
+        blocks,
+        quote_matches,
+    )
     report = merge_reports(schema_report, source_report, BasicEARSValidator().validate(validated))
     if args.output:
         write_json(args.output, report.model_dump(mode="json"))

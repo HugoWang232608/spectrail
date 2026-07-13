@@ -4,6 +4,7 @@ from spectrail.core.models import DocumentBlock, SourceSpan
 from spectrail.evidence import (
     QuoteMatcher,
     QuoteMatchRegistry,
+    build_quote_match_registry,
     find_all_normalized_ranges,
     normalize_with_mapping,
     source_evidence_key,
@@ -29,10 +30,14 @@ def test_exact_ambiguity_keeps_quote_pass_but_has_no_selected_range():
     assert result.provisional_range == result.original_ranges[0]
 
     source = SourceSpan(document_id="doc_001", block_id="blk_0001", quote="repeat")
+    block = _block("repeat / repeat")
+    requirement = type("Requirement", (), {"sources": [source]})()
+    registry = build_quote_match_registry(
+        [requirement], [block], evidence_fingerprint="a" * 64
+    )
+    assert registry.require(source.source_evidence_key) == result
     validated = SourceQuoteValidator().validate_source(
-        source,
-        {"blk_0001": _block("repeat / repeat")},
-        match_result=result,
+        source, {"blk_0001": block}, registry
     )
     assert validated.match_status == "PASS_EXACT"
 

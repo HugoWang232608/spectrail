@@ -14,7 +14,9 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
         output / "plan.json",
         output / "run_manifest.json",
         output / "parsed" / "blocks.json",
+        output / "parsed" / "evidence_index.json",
         output / "extracted" / "reqir.raw.json",
+        output / "extracted" / "quote_matches.json",
         output / "extracted" / "reqir.validated.json",
         output / "extracted" / "source_map.json",
         output / "extracted" / "validation_report.json",
@@ -35,12 +37,16 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
     run_manifest = read_json(output / "run_manifest.json")
     assert run_manifest["status"] == "completed"
     assert run_manifest["counts"]["validated_requirements"] >= 14
+    assert run_manifest["evidence"]["block_count"] > 0
+    assert run_manifest["evidence"]["quote_match_count"] > 0
 
     for requirement in requirements:
         assert requirement["id"]
         assert requirement["statement"]
         assert requirement["review_status"] == "pending"
         assert requirement["sources"]
+        assert all(source["source_evidence_key"] for source in requirement["sources"])
+        assert all(source["text_locator"] for source in requirement["sources"])
         assert any(
             source["match_status"] in {"PASS_EXACT", "PASS_NORMALIZED"}
             for source in requirement["sources"]

@@ -15,11 +15,14 @@ def test_evaluate_cli_generates_passing_report(tmp_path: Path):
     assert report["cases"][0]["chunk_count"] == 1
     assert report["cases"][0]["model_call_count"] == 1
     assert report["cases"][0]["raw_candidates"] == 15
+    assert report["cases"][0]["evidence_index_available"] is True
+    assert report["cases"][0]["text_locator_pass_rate"] == 1.0
     case_markdown = (output / "cases" / "sample_srs" / "case_report.md").read_text(
         encoding="utf-8"
     )
     assert "## Counts and execution" in case_markdown
     assert "## Thresholds" in case_markdown
+    assert "Structured grounding coverage" in case_markdown
 
 
 def test_selected_scope_evaluation_is_reported_explicitly(
@@ -144,6 +147,25 @@ def test_evaluate_cli_returns_one_when_threshold_fails(tmp_path: Path):
         encoding="utf-8",
     )
     assert main(["evaluate", str(case), "--output", str(tmp_path / "report")]) == 1
+
+
+def test_locator_metrics_participate_in_threshold_gate(tmp_path: Path):
+    case = tmp_path / "case.json"
+    case.write_text(
+        '{"name":"locator-gate","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"thresholds":{"text_locator_pass_rate_min":1.0,'
+        '"text_locator_evaluated_count_min":1}}',
+        encoding="utf-8",
+    )
+    output = tmp_path / "locator-gate-report"
+    assert main(["evaluate", str(case), "--output", str(output)]) == 0
+    results = read_json(output / "evaluation_report.json")["cases"][0][
+        "threshold_results"
+    ]
+    assert results["text_locator_pass_rate_min"]["actual"] == 1.0
+    assert results["text_locator_pass_rate_min"]["passed"] is True
+    assert results["text_locator_evaluated_count_min"]["actual"] > 0
 
 
 def test_evaluation_suite_reports_failed_pipeline_and_continues(tmp_path: Path):

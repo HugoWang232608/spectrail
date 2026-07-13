@@ -22,7 +22,9 @@ def test_evaluate_cli_generates_passing_report(tmp_path: Path):
     assert "## Thresholds" in case_markdown
 
 
-def test_selected_scope_evaluation_is_reported_explicitly(tmp_path: Path):
+def test_selected_scope_evaluation_is_reported_explicitly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     case = tmp_path / "case.json"
     case.write_text(
         "{"
@@ -32,6 +34,12 @@ def test_selected_scope_evaluation_is_reported_explicitly(tmp_path: Path):
         "}",
         encoding="utf-8",
     )
+
+    def fail_if_document_is_parsed_again(*args, **kwargs):
+        raise AssertionError("selected-scope pipeline must reuse the preflight parse")
+
+    monkeypatch.setattr("spectrail.pipeline.runner.parse_document", fail_if_document_is_parsed_again)
+
     output = tmp_path / "selected-evaluation"
     assert main(["evaluate", str(case), "--output", str(output)]) == 0
     report = read_json(output / "evaluation_report.json")["cases"][0]
@@ -171,3 +179,39 @@ def test_evaluation_suite_reports_failed_pipeline_and_continues(tmp_path: Path):
     markdown = (output / "cases" / "a_failing" / "case_report.md").read_text(encoding="utf-8")
     assert "Pipeline status: failed" in markdown
     assert "Zero result reason: None" in markdown
+
+
+def test_selected_scope_parse_failure_is_reported_and_suite_continues(tmp_path: Path):
+    cases = tmp_path / "cases"
+    failing = cases / "a_parse_failure"
+    passing = cases / "b_passing"
+    failing.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    invalid_document = failing / "invalid.docx"
+    invalid_document.write_text("not a docx package", encoding="utf-8")
+    (failing / "case.json").write_text(
+        '{"name":"selected-scope-parse-failure",'
+        f'"document":"{invalid_document.as_posix()}",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"scope_block_ids":["blk_0001"]}',
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        '{"name":"passing-after-parse-failure","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"thresholds":{"requirement_exact_recall_min":1.0}}',
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "parse-failure-suite-report"
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    failed = suite["cases"][0]
+    assert failed["name"] == "selected-scope-parse-failure"
+    assert failed["pipeline_status"] == "failed"
+    assert failed["error_code"] == "DocumentParseError"
+    assert failed["passed"] is False
+    assert suite["cases"][1]["passed"] is True
+    assert (output / "cases" / "a_parse_failure" / "case_report.json").exists()

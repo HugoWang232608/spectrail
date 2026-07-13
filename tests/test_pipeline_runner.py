@@ -4,6 +4,7 @@ import pytest
 
 from spectrail.core.io import read_json
 from spectrail.llm.errors import ModelConfigurationError
+from spectrail.parsers import parse_document
 from spectrail.pipeline import PipelineResult, PipelineRunner, UnsupportedModelModeError
 
 
@@ -23,6 +24,25 @@ def test_pipeline_runner_extract_generates_outputs(tmp_path: Path):
     manifest = read_json(result.manifest_path)
     assert manifest["status"] == "completed"
     assert manifest["counts"]["validated_requirements"] == result.validated_count
+
+
+def test_pipeline_runner_reuses_preparsed_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    document = Path("docs/sample_srs.md")
+    parsed_document = parse_document(document, document_id="doc_001")
+
+    def fail_if_document_is_parsed_again(*args, **kwargs):
+        raise AssertionError("preparsed document must be reused")
+
+    monkeypatch.setattr("spectrail.pipeline.runner.parse_document", fail_if_document_is_parsed_again)
+
+    result = PipelineRunner().extract(
+        document,
+        tmp_path / "preparsed",
+        parsed_document=parsed_document,
+    )
+    assert result.status == "completed"
 
 
 def test_pipeline_runner_failure_marks_manifest_failed(tmp_path: Path):

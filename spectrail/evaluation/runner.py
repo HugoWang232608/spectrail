@@ -12,7 +12,7 @@ from spectrail.evaluation.matcher import match_requirements
 from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
 from spectrail.llm.errors import ModelError
-from spectrail.parsers import DocumentParseError, parse_document
+from spectrail.parsers import DocumentParseError, ParsedDocument, parse_document
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 
@@ -44,7 +44,6 @@ class EvaluationRunner:
         document = _resolve_path(case.document, case_file.parent)
         gold_path = _resolve_path(case.gold, case_file.parent)
         gold = GoldPackage.model_validate(read_json(gold_path))
-        _preflight_selected_scope(document, case, gold)
         pipeline_output = output / "pipeline"
         config = PipelineConfig(
             model_mode=case.model_mode,
@@ -64,7 +63,13 @@ class EvaluationRunner:
         )
         pipeline_exception: Exception | None = None
         try:
-            PipelineRunner().extract(document, pipeline_output, config=config)
+            parsed_document = _preflight_selected_scope(document, case, gold)
+            PipelineRunner().extract(
+                document,
+                pipeline_output,
+                config=config,
+                parsed_document=parsed_document,
+            )
         except (PipelineError, ChunkPlanningError, DocumentParseError, ModelError) as exc:
             pipeline_exception = exc
 
@@ -157,9 +162,9 @@ def _preflight_selected_scope(
     document: Path,
     case: EvaluationCase,
     gold: GoldPackage,
-) -> None:
+) -> ParsedDocument | None:
     if not case.scope_block_ids:
-        return
+        return None
 
     parsed = parse_document(document, document_id="doc_001")
     scope = set(case.scope_block_ids)
@@ -179,6 +184,7 @@ def _preflight_selected_scope(
             "selected scope contains no gold requirements; "
             "set allow_empty_gold_scope=true only for intentional empty-scope cases"
         )
+    return parsed
 
 
 def _threshold_results(metrics: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any]:

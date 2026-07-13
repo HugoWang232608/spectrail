@@ -27,7 +27,7 @@ from spectrail.llm.fingerprints import build_request_identity
 from spectrail.llm.openai_compatible import OpenAICompatibleModel
 from spectrail.llm.prompt_builder import CHUNKED_PROMPT_VERSION, PROMPT_VERSION, build_reqir_prompt
 from spectrail.llm.request_profile import ModelRequestProfile, adapter_for_profile
-from spectrail.parsers.registry import parse_document
+from spectrail.parsers import ParsedDocument, parse_document
 from spectrail.pipeline.config import PipelineConfig
 from spectrail.review.review_log import collect_review_log
 from spectrail.validators.ears_validator import BasicEARSValidator
@@ -77,6 +77,7 @@ class PipelineRunner:
         validation_policy: str = "strict",
         fail_fast: bool = False,
         config: PipelineConfig | None = None,
+        parsed_document: ParsedDocument | None = None,
     ) -> PipelineResult:
         pipeline_config = config or PipelineConfig(
             model_mode=model_mode,
@@ -138,7 +139,13 @@ class PipelineRunner:
         quarantined = []
         aggregation = None
         try:
-            parsed_document = parse_document(document, document_id="doc_001")
+            if parsed_document is None:
+                parsed_document = parse_document(document, document_id="doc_001")
+            elif (
+                parsed_document.document_id != "doc_001"
+                or parsed_document.document_name != document.name
+            ):
+                raise PipelineValidationError("PREPARSED_DOCUMENT_MISMATCH")
             blocks = parsed_document.blocks
             if not blocks:
                 raise PipelineValidationError("NO_EXTRACTABLE_CONTENT")

@@ -24,7 +24,12 @@ from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.evaluation.runner import EvaluationRunner
-from spectrail.review.service import apply_review_to_package, load_requirements, refresh_review_package
+from spectrail.review.service import (
+    apply_review_to_package,
+    load_requirement_package,
+    load_requirements,
+    refresh_review_package,
+)
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
@@ -309,9 +314,15 @@ def run_review(args: argparse.Namespace) -> int:
         print(f"Applied {args.action} to {args.requirement_id}")
         return 0
 
-    reqs = load_requirements(reqs_path)
-    refresh_review_package(reqs_path, review_log_path, xlsx_path, reqs)
-    print(f"Refreshed review outputs for {len(reqs)} requirements")
+    package = load_requirement_package(reqs_path)
+    refresh_review_package(
+        reqs_path,
+        review_log_path,
+        xlsx_path,
+        package.items,
+        metadata=package.metadata,
+    )
+    print(f"Refreshed review outputs for {len(package.items)} requirements")
     return 0
 
 

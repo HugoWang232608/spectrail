@@ -95,16 +95,18 @@ def _topology_index(
     source_format = "pdf" if parser_method == "pymupdf_find_tables" else "docx"
     parser_name = "pdf_parser_v2" if source_format == "pdf" else "docx_parser_v2"
     block_id = "blk_0001"
-    block_text = "".join(cell.text for cell in cells)
     occurrences = []
+    block_text_parts = []
     offset = 0
     occurrence_index = 0
-    for cell in cells:
-        end = offset + len(cell.text)
-        for physical_row_index in range(
-            cell.row_index,
-            cell.row_index + cell.row_span,
-        ):
+    for physical_row_index in range(1, row_count + 1):
+        row_cells = sorted(
+            (cell for cell in cells if cell.occupies_row(physical_row_index)),
+            key=lambda cell: (cell.column_index, cell.row_index, cell.cell_id),
+        )
+        for cell in row_cells:
+            block_text_parts.append(cell.text)
+            end = offset + len(cell.text)
             occurrence_index += 1
             occurrences.append(
                 CellBlockOccurrence(
@@ -121,7 +123,8 @@ def _topology_index(
                     ),
                 )
             )
-        offset = end
+            offset = end
+    block_text = "".join(block_text_parts)
     return EvidenceIndex(
         document_id="doc_001",
         document_name=f"sample.{source_format}",
@@ -339,10 +342,10 @@ def test_complete_topology_requires_full_grid_but_sparse_topology_allows_holes()
         )
 
 
-def test_evidence_v2_artifact_is_rejected_explicitly():
-    with pytest.raises(ValidationError, match="evidence_v3"):
+def test_previous_evidence_artifacts_are_rejected_explicitly():
+    with pytest.raises(ValidationError, match="evidence_v4"):
         EvidenceIndex(
-            schema_version="evidence_v2",  # type: ignore[arg-type]
+            schema_version="evidence_v3",  # type: ignore[arg-type]
             document_id="doc_001",
             document_name="sample.docx",
             source_format="docx",
@@ -354,6 +357,35 @@ def test_evidence_v2_artifact_is_rejected_explicitly():
             ),
             evidence_fingerprint="0" * 64,
         )
+
+
+def test_structural_occurrences_from_different_rows_must_not_overlap():
+    table_identifier = "tbl_00000001"
+    cell = TableCellRecord(
+        cell_id="cell_00000001_r0001_c0001",
+        table_id=table_identifier,
+        row_index=1,
+        column_index=1,
+        row_span=2,
+        text="A",
+        text_sha256=sha256_text("A"),
+    )
+    index = _topology_index(
+        table_identifier=table_identifier,
+        row_count=2,
+        column_count=1,
+        cells=[cell],
+    )
+    assert [
+        (item.canonical_start, item.canonical_end)
+        for item in index.cell_occurrences
+    ] == [(0, 1), (1, 2)]
+
+    payload = index.model_dump(mode="json")
+    payload["cell_occurrences"][1]["canonical_start"] = 0
+    payload["cell_occurrences"][1]["canonical_end"] = 1
+    with pytest.raises(ValidationError, match="different physical rows must not overlap"):
+        EvidenceIndex.model_validate(payload)
 
 
 @pytest.mark.parametrize(

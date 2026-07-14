@@ -386,7 +386,7 @@ class TableRecord(EvidenceModel):
 
 
 class EvidenceIndex(EvidenceModel):
-    schema_version: Literal["evidence_v3"] = "evidence_v3"
+    schema_version: Literal["evidence_v4"] = "evidence_v4"
     document_id: str
     document_name: str
     source_format: str
@@ -613,6 +613,10 @@ class EvidenceIndex(EvidenceModel):
             blocks_by_id,
             tables_by_id,
         )
+        _validate_structural_occurrence_ranges(
+            cells_by_id,
+            self.cell_occurrences,
+        )
         return self
 
 
@@ -790,6 +794,41 @@ def _validate_occurrence_roles(
                 "repeated header occurrence must be in a later table block than "
                 f"its original: {occurrence.occurrence_id}"
             )
+
+
+def _validate_structural_occurrence_ranges(
+    cells_by_id: dict[str, TableCellRecord],
+    occurrences: list[CellBlockOccurrence],
+) -> None:
+    structural_roles = {"original", "row_span_projection"}
+    by_block: dict[str, list[CellBlockOccurrence]] = {}
+    for occurrence in occurrences:
+        if (
+            occurrence.occurrence_role in structural_roles
+            and cells_by_id[occurrence.cell_id].text.strip()
+        ):
+            by_block.setdefault(occurrence.block_id, []).append(occurrence)
+
+    for block_id, block_occurrences in by_block.items():
+        ordered = sorted(
+            block_occurrences,
+            key=lambda item: (
+                item.canonical_start,
+                item.canonical_end,
+                item.physical_row_index,
+                item.occurrence_id,
+            ),
+        )
+        for index, current in enumerate(ordered):
+            for following in ordered[index + 1 :]:
+                if following.canonical_start >= current.canonical_end:
+                    break
+                if current.physical_row_index != following.physical_row_index:
+                    raise ValueError(
+                        "non-empty structural occurrences from different physical "
+                        "rows must not overlap: "
+                        f"{block_id}/{current.occurrence_id}/{following.occurrence_id}"
+                    )
 
 
 def _validate_table_topology(

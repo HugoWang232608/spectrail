@@ -2,7 +2,7 @@
   "metadata": {
     "bundle_version": 2,
     "document": "eval/cases/sample_srs_long/document.md",
-    "prompt_version": "reqir_extraction_v7_row_group_evidence_v3",
+    "prompt_version": "reqir_extraction_v8_row_group_evidence_v4",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",
       "provider_endpoint_id": "mock",

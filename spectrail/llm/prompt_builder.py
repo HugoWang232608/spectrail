@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 
 from spectrail.core.models import DocumentBlock
-from spectrail.evidence.models import EvidenceIndex, TableCellRecord
+from spectrail.evidence.models import (
+    CellBlockOccurrence,
+    EvidenceIndex,
+    TableCellRecord,
+)
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v7_row_group_evidence_v3"
+PROMPT_VERSION = "reqir_extraction_v8_row_group_evidence_v4"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
@@ -137,20 +142,33 @@ def _table_projection(
         return None
     cells_by_id = {cell.cell_id: cell for cell in evidence_index.cells}
     table = next(item for item in evidence_index.tables if item.table_id == block.table_id)
-    projected_rows = [
-        (
-            "row",
-            row_index,
-            _sort_cells(
-                cells_by_id[cell_id]
-                for cell_id in table.cell_ids
-                if cells_by_id[cell_id].occupies_row(row_index)
-            ),
-        )
-        for row_index in range(block.table_row_start, block.table_row_end + 1)
+    block_occurrences = [
+        occurrence
+        for occurrence in evidence_index.cell_occurrences
+        if occurrence.block_id == block_id
     ]
+    rendered_rows = []
+    for row_index in range(block.table_row_start, block.table_row_end + 1):
+        row_occurrences = [
+            occurrence
+            for occurrence in block_occurrences
+            if occurrence.physical_row_index == row_index
+            and occurrence.occurrence_role in {"original", "row_span_projection"}
+        ]
+        rendered_rows.append(
+            _rendered_row_entry(
+                "row",
+                row_index,
+                _sort_cells(
+                    cells_by_id[cell_id]
+                    for cell_id in table.cell_ids
+                    if cells_by_id[cell_id].occupies_row(row_index)
+                ),
+                row_occurrences,
+            )
+        )
     repeated_by_row: dict[int, set[str]] = {}
-    for occurrence in evidence_index.cell_occurrences:
+    for occurrence in block_occurrences:
         if (
             occurrence.block_id == block_id
             and occurrence.occurrence_role == "repeated_header"
@@ -158,14 +176,28 @@ def _table_projection(
             repeated_by_row.setdefault(occurrence.physical_row_index, set()).add(
                 occurrence.cell_id
             )
-    projected_rows.extend(
-        (
-            "repeated_header_row",
-            row_index,
-            _sort_cells(cells_by_id[cell_id] for cell_id in cell_ids),
+    for row_index, cell_ids in repeated_by_row.items():
+        row_occurrences = [
+            occurrence
+            for occurrence in block_occurrences
+            if occurrence.physical_row_index == row_index
+            and occurrence.occurrence_role == "repeated_header"
+        ]
+        rendered_rows.append(
+            _rendered_row_entry(
+                "repeated_header_row",
+                row_index,
+                _sort_cells(cells_by_id[cell_id] for cell_id in cell_ids),
+                row_occurrences,
+            )
         )
-        for row_index, cell_ids in sorted(repeated_by_row.items())
-    )
+    projected_rows = [
+        (label, row_index, cells)
+        for _, _, row_index, label, cells in sorted(
+            rendered_rows,
+            key=lambda item: item[:4],
+        )
+    ]
     return (
         block.table_id,
         block.table_row_start,
@@ -174,7 +206,7 @@ def _table_projection(
     )
 
 
-def _sort_cells(cells) -> list[TableCellRecord]:
+def _sort_cells(cells: Iterable[TableCellRecord]) -> list[TableCellRecord]:
     return sorted(
         cells,
         key=lambda cell: (
@@ -183,4 +215,23 @@ def _sort_cells(cells) -> list[TableCellRecord]:
             cell.row_index,
             cell.cell_id,
         ),
+    )
+
+
+def _rendered_row_entry(
+    label: str,
+    row_index: int,
+    cells: list[TableCellRecord],
+    occurrences: Sequence[CellBlockOccurrence],
+) -> tuple[int, int, int, str, list[TableCellRecord]]:
+    if not occurrences:
+        raise ValueError(
+            f"rendered table row has no canonical occurrences: {label}/{row_index}"
+        )
+    return (
+        min(item.canonical_start for item in occurrences),
+        max(item.canonical_end for item in occurrences),
+        row_index,
+        label,
+        cells,
     )

@@ -696,6 +696,109 @@ def test_row_group_block_derives_source_physical_row_from_occurrences():
     assert derived.locator.cell_ids == [data]
 
 
+def test_row_group_row_span_cell_derives_each_physical_row_independently():
+    table = "tbl_00000001"
+    merged = "cell_00000001_r0001_c0001"
+    cell_text = "Merged"
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text=f"{cell_text}\n{cell_text}",
+        order=1,
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="row-span.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+                source_format="docx",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(block.text),
+                    text_sha256=sha256_text(block.text),
+                    table_id=table,
+                    table_row_start=1,
+                    table_row_end=2,
+                    cell_ids=[merged],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=2,
+                    column_count=1,
+                    cell_ids=[merged],
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=merged,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    row_span=2,
+                    text=cell_text,
+                    text_sha256=sha256_text(cell_text),
+                )
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=merged,
+                    block_id=block.block_id,
+                    physical_row_index=1,
+                    canonical_start=0,
+                    canonical_end=len(cell_text),
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=merged,
+                    block_id=block.block_id,
+                    physical_row_index=2,
+                    canonical_start=len(cell_text) + 1,
+                    canonical_end=len(block.text),
+                    occurrence_role="row_span_projection",
+                ),
+            ],
+        )
+    )
+
+    first = derive_table_evidence(
+        index,
+        block_id=block.block_id,
+        selected_range=QuoteMatchRange(start=0, end=len(cell_text)),
+        canonical_cell_ids=[merged],
+        block_text=block.text,
+    )
+    second = derive_table_evidence(
+        index,
+        block_id=block.block_id,
+        selected_range=QuoteMatchRange(
+            start=len(cell_text) + 1,
+            end=len(block.text),
+        ),
+        canonical_cell_ids=[merged],
+        block_text=block.text,
+    )
+
+    assert first.locator.selected_row_index == 1
+    assert second.locator.selected_row_index == 2
+
+
 def test_page_locator_validates_rotation_derivation_and_source_page():
     bbox = BoundingBox(x0=10, y0=20, x1=50, y1=60)
     block = DocumentBlock(

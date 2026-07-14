@@ -6,6 +6,32 @@ from spectrail.cli import main
 from spectrail.core.io import read_json, write_json
 
 
+def test_review_cli_refresh_without_action_preserves_package_metadata(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert (
+        main(
+            [
+                "extract",
+                "docs/sample_srs.md",
+                "--model-mode",
+                "mock",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    before = read_json(output / "exports" / "reqir.json")
+    assert main(["review", str(output)]) == 0
+    after = read_json(output / "exports" / "reqir.json")
+
+    assert after["metadata"] == {
+        **before["metadata"],
+        "export_state": "review_snapshot",
+    }
+
+
 def test_review_cli_applies_actions_and_refreshes_outputs(tmp_path: Path):
     output = tmp_path / "demo"
     assert main(["extract", "docs/sample_srs.md", "--model-mode", "mock", "--output", str(output)]) == 0

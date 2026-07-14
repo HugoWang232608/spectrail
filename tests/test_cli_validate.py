@@ -5,6 +5,7 @@ import shutil
 
 import pytest
 
+import spectrail.migrations as migrations
 from spectrail.cli import main
 from spectrail.core.io import read_json, write_json
 
@@ -217,6 +218,26 @@ def test_migrate_cli_rebinds_transient_v3_keys_and_unblocks_review(
         for item in migrated_reqir["items"]
         for source in item["sources"]
     )
+    migration_report = read_json(output / "migration" / "migration_report.json")
+    assert migration_report["statistics"] == {
+        "processed_source_occurrences": 45,
+        "unique_source_identities": 15,
+        "rebound_source_keys": 15,
+        "bound_missing_source_keys": 0,
+    }
+    assert len(migration_report["sources"]) == 45
+    assert {
+        "artifact_path",
+        "requirement_id",
+        "source_index",
+        "old_source_evidence_key",
+        "new_source_evidence_key",
+        "old_locator_status",
+        "new_locator_status",
+        "old_match_status",
+        "new_match_status",
+    } <= migration_report["sources"][0].keys()
+    assert (output / migration_report["backup_path"]).is_dir()
     assert (
         main(
             [
@@ -229,6 +250,118 @@ def test_migrate_cli_rebinds_transient_v3_keys_and_unblocks_review(
         == 0
     )
     assert main(["review", str(output)]) == 0
+
+
+def test_migrate_rejects_invalid_export_without_writing_any_artifact(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    export_path = output / "exports" / "reqir.json"
+    package = read_json(export_path)
+    package["items"][0]["sources"][0]["quote"] = "not present in the document"
+    write_json(export_path, package)
+    observed_paths = [
+        output / "parsed" / "evidence_index.json",
+        output / "extracted" / "quote_matches.json",
+        output / "extracted" / "reqir.raw.json",
+        output / "extracted" / "reqir.validated.json",
+        export_path,
+        output / "run_manifest.json",
+    ]
+    before = {path: path.read_bytes() for path in observed_paths}
+
+    with pytest.raises(SystemExit, match="REQIR_LEGACY_REENRICHMENT_FAILED"):
+        main(["migrate", str(output)])
+
+    assert {path: path.read_bytes() for path in observed_paths} == before
+    assert not (output / ".migration_tmp").exists()
+    assert not (output / "migration" / "migration_report.json").exists()
+
+
+def test_migrate_rejects_invalid_cell_reference_without_writing(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    export_path = output / "exports" / "reqir.json"
+    package = read_json(export_path)
+    source = package["items"][0]["sources"][0]
+    source["source_cell_ids_raw"] = ["cell_00000001_r0001_c0001"]
+    source["canonical_source_cell_ids"] = ["cell_00000001_r0001_c0001"]
+    source["source_table_row_index"] = 1
+    write_json(export_path, package)
+    before = export_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="REQIR_LEGACY_REENRICHMENT_FAILED"):
+        main(["migrate", str(output)])
+
+    assert export_path.read_bytes() == before
+    assert not (output / ".migration_tmp").exists()
+
+
+def test_migrate_allows_invalid_raw_package_and_records_validation_report(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    raw_path = output / "extracted" / "reqir.raw.json"
+    raw = read_json(raw_path)
+    raw["items"][0]["sources"][0]["quote"] = "not present in the document"
+    write_json(raw_path, raw)
+
+    assert main(["migrate", str(output)]) == 0
+    report = read_json(output / "migration" / "migration_report.json")
+    raw_report = next(
+        item for item in report["packages"] if item["package_kind"] == "raw"
+    )
+    assert raw_report["strict_validation_required"] is False
+    assert raw_report["quote_report"]["valid"] is False
+    assert raw_report["quote_validated_count"] == 14
+    assert read_json(output / "exports" / "reqir.json")["schema_version"] == (
+        "reqir_v4"
+    )
+
+
+def test_migrate_recovers_interrupted_commit_before_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    reqir_paths = [
+        output / "extracted" / "reqir.raw.json",
+        output / "extracted" / "reqir.validated.json",
+        output / "extracted" / "reqir.quarantined.json",
+        output / "exports" / "reqir.json",
+    ]
+    for path in reqir_paths:
+        package = read_json(path)
+        package["schema_version"] = "reqir_v3"
+        write_json(path, package)
+
+    original_replace = migrations._replace_staged_file
+    replace_count = 0
+
+    def interrupt_fourth_replace(source: Path, target: Path) -> None:
+        nonlocal replace_count
+        replace_count += 1
+        if replace_count == 4:
+            raise OSError("simulated commit interruption")
+        original_replace(source, target)
+
+    monkeypatch.setattr(migrations, "_replace_staged_file", interrupt_fourth_replace)
+    with pytest.raises(SystemExit, match="MIGRATION_COMMIT_INTERRUPTED"):
+        main(["migrate", str(output)])
+    assert read_json(output / ".migration_tmp" / "state.json")["status"] == (
+        "committing"
+    )
+    assert read_json(reqir_paths[0])["schema_version"] == "reqir_v4"
+    assert read_json(reqir_paths[1])["schema_version"] == "reqir_v3"
+
+    monkeypatch.setattr(migrations, "_replace_staged_file", original_replace)
+    assert main(["migrate", str(output)]) == 0
+    assert not (output / ".migration_tmp").exists()
+    assert all(read_json(path)["schema_version"] == "reqir_v4" for path in reqir_paths)
+    assert len(list((output / ".migration_backup").iterdir())) == 2
 
 
 def test_migrate_cli_upgrades_valid_evidence_v4(tmp_path: Path):

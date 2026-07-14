@@ -314,7 +314,9 @@ def run_migrate(args: argparse.Namespace) -> int:
     print(
         "Migrated "
         f"{report['reqir_packages']} ReqIR package(s), "
-        f"rebound {report['rebound_sources']} source(s), and wrote "
+        f"processed {report['processed_source_occurrences']} serialized source "
+        f"occurrence(s), rebound {report['rebound_source_keys']} unique source "
+        "key(s), and wrote "
         f"{report['quote_matches_schema_version']}"
     )
     return 0

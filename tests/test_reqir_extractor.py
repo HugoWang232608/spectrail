@@ -71,7 +71,7 @@ def test_extractor_normalizes_live_enum_drift():
     assert requirement.confidence == 0.9
     assert requirement.sources[0].quote == "The system shall reject unsafe access."
     assert requirement.metadata["extractor_version"] == (
-        "reqir_extractor_v3_evidence"
+        "reqir_extractor_v4_table_row_evidence"
     )
     assert requirement.tags == ["security"]
     assert requirement.metadata["field_normalizations"] == [
@@ -140,6 +140,7 @@ def test_extractor_preserves_raw_table_cell_ids_without_canonicalizing():
                 "source_block_id": "blk_0001",
                 "source_quote": "| A | B |",
                 "source_cell_ids": [cell_2, cell_1],
+                "source_table_row_index": 1,
             }
         ]
     }
@@ -147,4 +148,5 @@ def test_extractor_preserves_raw_table_cell_ids_without_canonicalizing():
     source = ReqIRExtractor().extract(payload, blocks, document_name="sample.docx")[0].sources[0]
     assert source.source_cell_ids_raw == [cell_2, cell_1]
     assert source.canonical_source_cell_ids == []
+    assert source.source_table_row_index == 1
     assert source.quote == "| A | B |"

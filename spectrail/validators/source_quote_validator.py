@@ -29,6 +29,9 @@ class SourceQuoteValidator:
         if result.status != "NO_MATCH" and result.match_basis == "normalized":
             source.match_status = "PASS_NORMALIZED"
             return source
+        if result.status == "NO_MATCH" and result.original_ranges:
+            source.match_status = "FAIL_NOT_FOUND"
+            return source
         if result.score >= 0.85:
             source.match_status = "WARNING_FUZZY"
             return source

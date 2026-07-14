@@ -8,6 +8,7 @@
         "cell_00000001_r0001_c0001",
         "cell_00000001_r0001_c0002"
       ],
+      "source_table_row_index": 1,
       "confidence": 0.9,
       "tags": ["table"]
     },
@@ -19,6 +20,7 @@
         "cell_00000001_r0001_c0001",
         "cell_99999999_r0001_c0002"
       ],
+      "source_table_row_index": 1,
       "confidence": 0.8,
       "tags": ["table"]
     }

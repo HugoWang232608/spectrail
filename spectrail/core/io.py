@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from spectrail.core.models import ReqIRPackage
 
 
-REQIR_SCHEMA_VERSION = "reqir_v2"
+REQIR_SCHEMA_VERSION = "reqir_v3"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -47,7 +50,7 @@ def read_reqir_items(path: str | Path) -> list[Any]:
     return read_reqir_package(path).items
 
 
-def read_reqir_package(path: str | Path):
+def read_reqir_package(path: str | Path) -> ReqIRPackage:
     from spectrail.core.models import ReqIRPackage
 
     payload = read_json(path)
@@ -55,14 +58,14 @@ def read_reqir_package(path: str | Path):
         if "items" not in payload:
             raise ValueError("ReqIR package must contain items")
         schema_version = payload.get("schema_version")
-        if schema_version not in {None, "reqir_v1", REQIR_SCHEMA_VERSION}:
+        if schema_version not in {None, "reqir_v1", "reqir_v2", REQIR_SCHEMA_VERSION}:
             raise ValueError(f"unsupported ReqIR schema version: {schema_version}")
         items = payload["items"]
-        if schema_version in {None, "reqir_v1"}:
-            _validate_legacy_reqir_items(items)
+        if schema_version in {None, "reqir_v1", "reqir_v2"}:
+            _validate_legacy_reqir_items(items, schema_version=schema_version)
     elif isinstance(payload, list):
         items = payload
-        _validate_legacy_reqir_items(items)
+        _validate_legacy_reqir_items(items, schema_version=None)
     else:
         raise ValueError("ReqIR payload must be a package object or item list")
     if not isinstance(items, list):
@@ -76,7 +79,11 @@ def read_reqir_package(path: str | Path):
     )
 
 
-def _validate_legacy_reqir_items(items: object) -> None:
+def _validate_legacy_reqir_items(
+    items: object,
+    *,
+    schema_version: str | None,
+) -> None:
     if not isinstance(items, list):
         raise ValueError("ReqIR package items must be a list")
     for item in items:
@@ -93,3 +100,15 @@ def _validate_legacy_reqir_items(items: object) -> None:
                 raise ValueError(
                     "REQIR_V1_TABLE_LOCATOR_REQUIRES_REENRICHMENT"
                 )
+            has_cell_identity = bool(
+                source.get("source_cell_ids_raw")
+                or source.get("canonical_source_cell_ids")
+                or table_locator
+            )
+            if has_cell_identity and "source_table_row_index" not in source:
+                code = (
+                    "REQIR_V2_TABLE_SOURCE_REQUIRES_REENRICHMENT"
+                    if schema_version == "reqir_v2"
+                    else "REQIR_LEGACY_TABLE_SOURCE_REQUIRES_REENRICHMENT"
+                )
+                raise ValueError(code)

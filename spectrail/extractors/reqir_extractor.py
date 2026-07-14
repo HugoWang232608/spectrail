@@ -58,7 +58,7 @@ CONFIDENCE_ALIASES = {
     "unknown": 0.0,
 }
 CELL_ID_RE = re.compile(r"^cell_\d{8}_r\d{4}_c\d{4}$")
-EXTRACTOR_VERSION = "reqir_extractor_v3_evidence"
+EXTRACTOR_VERSION = "reqir_extractor_v4_table_row_evidence"
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,10 @@ class ReqIRExtractor:
         source_block_id = str(item["source_block_id"])
         source_block = by_id.get(source_block_id)
         if source_block_id in context_block_ids:
-            if item.get("source_cell_ids") is not None:
+            if (
+                item.get("source_cell_ids") is not None
+                or item.get("source_table_row_index") is not None
+            ):
                 raise ModelItemValidationError(
                     "MODEL_ITEM_CONTEXT_CELL_REFERENCE",
                     f"item {index} cites cells from a context-only block",
@@ -219,16 +222,32 @@ class ReqIRExtractor:
             source_block=source_block,
         )
         source_cell_ids_raw = _source_cell_ids(item.get("source_cell_ids"), index)
+        source_table_row_index = _source_table_row_index(
+            item.get("source_table_row_index"),
+            index,
+        )
 
-        if source_cell_ids_raw and source_block is None:
+        if (source_cell_ids_raw or source_table_row_index is not None) and source_block is None:
             raise ModelItemValidationError(
                 "MODEL_ITEM_INVALID_CELL_IDS",
-                f"item {index} provides source_cell_ids for an unknown block",
+                f"item {index} provides table evidence for an unknown block",
             )
-        if source_cell_ids_raw and source_block.type != "table":  # type: ignore[union-attr]
+        if (
+            source_cell_ids_raw or source_table_row_index is not None
+        ) and source_block.type != "table":  # type: ignore[union-attr]
             raise ModelItemValidationError(
                 "MODEL_ITEM_NON_TABLE_WITH_CELL_IDS",
-                f"item {index} provides source_cell_ids for a non-table block",
+                f"item {index} provides table evidence for a non-table block",
+            )
+        if source_cell_ids_raw and source_table_row_index is None:
+            raise ModelItemValidationError(
+                "MODEL_ITEM_TABLE_SOURCE_MISSING_ROW_INDEX",
+                f"item {index} source_cell_ids require source_table_row_index",
+            )
+        if source_table_row_index is not None and not source_cell_ids_raw:
+            raise ModelItemValidationError(
+                "MODEL_ITEM_TABLE_ROW_WITHOUT_CELL_IDS",
+                f"item {index} source_table_row_index requires source_cell_ids",
             )
         if (
             source_block_id in table_cell_required_block_ids
@@ -249,6 +268,7 @@ class ReqIRExtractor:
             block_id=source_block_id,
             quote=source_quote,
             source_cell_ids_raw=source_cell_ids_raw,
+            source_table_row_index=source_table_row_index,
         )
         metadata = {
             "source_block_id": source_block_id,
@@ -315,6 +335,17 @@ def _source_cell_ids(value: Any, item_index: int) -> list[str]:
             f"item {item_index} source_cell_ids contain an invalid cell ID",
         )
     return list(value)
+
+
+def _source_table_row_index(value: Any, item_index: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ModelItemValidationError(
+            "MODEL_ITEM_INVALID_TABLE_ROW_INDEX",
+            f"item {item_index} source_table_row_index must be a positive integer",
+        )
+    return value
 
 
 def _normalize_tags(value: Any) -> list[str]:

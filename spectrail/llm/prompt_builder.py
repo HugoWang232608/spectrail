@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
 from spectrail.core.models import DocumentBlock
 from spectrail.evidence.models import (
-    CellBlockOccurrence,
     EvidenceIndex,
     TableCellRecord,
+    rendered_table_row_groups,
 )
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v8_row_group_evidence_v4"
+PROMPT_VERSION = "reqir_extraction_v9_table_row_evidence_v4"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
@@ -24,58 +24,48 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
     chunk_context = ""
     if request.metadata.get("chunked") or request.metadata.get("chunk_id"):
         chunk_context = (
-            "Chunk context:\n"
+            "Chunk:\n"
             f"- chunk_id: {request.metadata.get('chunk_id', '')}\n"
             f"- chunk_index: {request.metadata.get('chunk_index_rendered', request.metadata.get('chunk_index', ''))}\n"
             f"- chunk_count: {request.metadata.get('chunk_count_rendered', request.metadata.get('chunk_count', ''))}\n"
             f"- new_block_ids: {request.metadata.get('new_block_ids', [])}\n"
             f"- overlap_block_ids: {request.metadata.get('overlap_block_ids', [])}\n"
             f"- context_block_ids: {request.metadata.get('context_block_ids', [])}\n"
-            "- Extract requirements only from the blocks in this chunk.\n"
-            "- Heading context blocks are context only; never extract or cite them as requirements.\n"
-            "- Never cite a block ID that is absent from this chunk.\n\n"
+            "- Use only shown blocks; context headings are never sources.\n\n"
         )
     quote_only = request.metadata.get("evidence_policy") == "quote_only"
     table_item_contract = (
-        "a cell_map may optionally include source_cell_ids.\n\n"
+        "cell_map sources may omit source_cell_ids and source_table_row_index.\n\n"
         if quote_only
-        else "a cell_map must also include source_cell_ids.\n\n"
+        else "cell_map sources require source_cell_ids and source_table_row_index.\n\n"
     )
     table_cell_contract = (
-        "- For a table block with a cell_map, source_cell_ids are optional under "
-        "the quote_only evidence policy. If supplied, they must contain the logical "
-        "non-empty cell IDs covered by source_quote.\n"
+        "- In quote_only, table identity is optional; if used, follow the table rules.\n"
         if quote_only
-        else "- For a table block with a cell_map, source_cell_ids must contain the "
-        "non-empty logical cell IDs covered by source_quote.\n"
+        else "- For cell_map sources, output table identity using the table rules.\n"
     )
     table_overlap_contract = "- A table source_quote may select part of a cell's text.\n"
     return (
-        "You are extracting software requirements into ReqIR JSON.\n\n"
-        "Return JSON only with a top-level items array.\n\n"
-        "Each item must include title, type, ears_pattern, statement, subject, response, "
-        "source_block_id, source_quote, confidence, and tags. Table blocks that display "
+        "Extract software requirements into ReqIR JSON.\n"
+        "Return JSON only with top-level items.\n\n"
+        "Item fields: title, type, ears_pattern, statement, subject, response, "
+        "source_block_id, source_quote, confidence, tags. "
         f"{table_item_contract}"
-        "Allowed enum values:\n"
+        "Enums:\n"
         "- type: functional | non_functional | interface | constraint | business | unknown\n"
         "- ears_pattern: ubiquitous | event_driven | state_driven | optional | unwanted_behavior | unknown\n"
         "- priority: high | medium | low | unknown\n"
         "- verification_method: test | inspection | analysis | demonstration | unknown\n\n"
         "Rules:\n"
-        "- source_block_id must be one of the provided block IDs.\n"
-        "- source_quote must be an exact substring from the chosen block text.\n"
+        "- Use a shown source_block_id and an exact source_quote substring.\n"
         f"{table_cell_contract}"
         f"{table_overlap_contract}"
-        "- Table cells must occupy one physical row displayed in the cell_map. Omit empty cells from "
-        "source_cell_ids; "
-        "within the selected column span, include every non-empty cell. Output order "
-        "is identity-insignificant.\n"
-        "- Never invent a cell ID or cite a cell that is absent from the chosen "
-        "block cell_map.\n"
-        "- Do not output page, bbox, row, or column fields.\n"
-        "- confidence must be a number from 0.0 to 1.0, not textual labels such as high/medium/low.\n"
-        "- Use unknown for unsupported enum values instead of inventing new enum labels.\n"
-        "- Do not invent requirements not supported by source text.\n\n"
+        "- Selected table cells must occupy one displayed physical row. Include every "
+        "non-empty cell in the quote's column span; omit empty cells. ID order is irrelevant.\n"
+        "- source_table_row_index equals N in row N or repeated_header_row N.\n"
+        "- Never invent cell IDs. Do not output page, bbox, or derived row/column arrays.\n"
+        "- confidence is numeric 0.0..1.0. Use unknown for unsupported enums.\n"
+        "- Do not invent unsupported requirements.\n\n"
         f"Document: {request.document_name}\n"
         f"Source format: {request.source_format}\n"
         f"Parser: {request.parser_name}\n\n"
@@ -147,57 +137,25 @@ def _table_projection(
         for occurrence in evidence_index.cell_occurrences
         if occurrence.block_id == block_id
     ]
-    rendered_rows = []
-    for row_index in range(block.table_row_start, block.table_row_end + 1):
-        row_occurrences = [
-            occurrence
-            for occurrence in block_occurrences
-            if occurrence.physical_row_index == row_index
-            and occurrence.occurrence_role in {"original", "row_span_projection"}
-        ]
-        rendered_rows.append(
-            _rendered_row_entry(
-                "row",
-                row_index,
-                _sort_cells(
-                    cells_by_id[cell_id]
-                    for cell_id in table.cell_ids
-                    if cells_by_id[cell_id].occupies_row(row_index)
-                ),
-                row_occurrences,
+    projected_rows = []
+    for _, _, label, row_index, row_occurrences in rendered_table_row_groups(
+        block,
+        block_occurrences,
+    ):
+        if label == "row":
+            cells = _sort_cells(
+                cells_by_id[cell_id]
+                for cell_id in table.cell_ids
+                if cells_by_id[cell_id].occupies_row(row_index)
             )
-        )
-    repeated_by_row: dict[int, set[str]] = {}
-    for occurrence in block_occurrences:
-        if (
-            occurrence.block_id == block_id
-            and occurrence.occurrence_role == "repeated_header"
-        ):
-            repeated_by_row.setdefault(occurrence.physical_row_index, set()).add(
-                occurrence.cell_id
+        else:
+            cells = _sort_cells(
+                cells_by_id[cell_id]
+                for cell_id in {
+                    occurrence.cell_id for occurrence in row_occurrences
+                }
             )
-    for row_index, cell_ids in repeated_by_row.items():
-        row_occurrences = [
-            occurrence
-            for occurrence in block_occurrences
-            if occurrence.physical_row_index == row_index
-            and occurrence.occurrence_role == "repeated_header"
-        ]
-        rendered_rows.append(
-            _rendered_row_entry(
-                "repeated_header_row",
-                row_index,
-                _sort_cells(cells_by_id[cell_id] for cell_id in cell_ids),
-                row_occurrences,
-            )
-        )
-    projected_rows = [
-        (label, row_index, cells)
-        for _, _, row_index, label, cells in sorted(
-            rendered_rows,
-            key=lambda item: item[:4],
-        )
-    ]
+        projected_rows.append((label, row_index, cells))
     return (
         block.table_id,
         block.table_row_start,
@@ -215,23 +173,4 @@ def _sort_cells(cells: Iterable[TableCellRecord]) -> list[TableCellRecord]:
             cell.row_index,
             cell.cell_id,
         ),
-    )
-
-
-def _rendered_row_entry(
-    label: str,
-    row_index: int,
-    cells: list[TableCellRecord],
-    occurrences: Sequence[CellBlockOccurrence],
-) -> tuple[int, int, int, str, list[TableCellRecord]]:
-    if not occurrences:
-        raise ValueError(
-            f"rendered table row has no canonical occurrences: {label}/{row_index}"
-        )
-    return (
-        min(item.canonical_start for item in occurrences),
-        max(item.canonical_end for item in occurrences),
-        row_index,
-        label,
-        cells,
     )

@@ -52,7 +52,7 @@ def test_review_cli_applies_actions_and_refreshes_outputs(tmp_path: Path):
         == 0
     )
     reqir = read_json(output / "exports" / "reqir.json")
-    assert reqir["schema_version"] == "reqir_v2"
+    assert reqir["schema_version"] == "reqir_v3"
     assert reqir["metadata"] == {
         "export_state": "review_snapshot",
         "document": "sample_srs.md",

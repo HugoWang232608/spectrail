@@ -395,6 +395,7 @@ class PipelineRunner:
                 accepted_candidates,
                 blocks,
                 evidence_fingerprint=evidence_index.evidence_fingerprint,
+                evidence_index=evidence_index,
             )
             write_json(
                 extracted_dir / "quote_matches.json",
@@ -817,7 +818,7 @@ def _prepare_evidence_batch(
                     chunk_id=candidate.metadata.get("chunk_id"),
                     item_index=item_index,
                     raw_item=raw_item,
-                    error_code="MODEL_ITEM_INVALID_CELL_IDS",
+                    error_code=_evidence_preparation_error_code(exc),
                     error_message=str(exc),
                 )
             )
@@ -827,6 +828,13 @@ def _prepare_evidence_batch(
         accepted_candidates=prepared,
         rejected_items=rejected,
     )
+
+
+def _evidence_preparation_error_code(exc: EvidenceReferenceError) -> str:
+    message = str(exc).lower()
+    if "row" in message:
+        return "MODEL_ITEM_INVALID_TABLE_ROW_INDEX"
+    return "MODEL_ITEM_INVALID_CELL_IDS"
 
 
 def _merge_reports(*reports: ValidationReport) -> ValidationReport:

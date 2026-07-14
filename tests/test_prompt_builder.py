@@ -33,8 +33,7 @@ def test_reqir_prompt_requires_numeric_confidence():
         )
     )
 
-    assert "confidence must be a number from 0.0 to 1.0" in prompt
-    assert "not textual labels such as high/medium/low" in prompt
+    assert "confidence is numeric 0.0..1.0" in prompt
 
 
 def test_reqir_v4_prompt_renders_table_cell_map_without_changing_canonical_text():
@@ -132,6 +131,7 @@ def test_reqir_v4_prompt_renders_table_cell_map_without_changing_canonical_text(
     )
 
     assert "source_cell_ids" in prompt
+    assert "source_table_row_index" in prompt
     assert f"table_id: {table}" in prompt
     assert "primary_rows: 1-2" in prompt
     assert "row 1:" in prompt
@@ -155,9 +155,10 @@ def test_reqir_v4_prompt_renders_table_cell_map_without_changing_canonical_text(
             evidence_index=index,
         )
     )
-    assert "source_cell_ids are optional under the quote_only evidence policy" in quote_only_prompt
-    assert "Omit empty cells from source_cell_ids" in quote_only_prompt
-    assert "must also include source_cell_ids" not in quote_only_prompt
+    assert "cell_map sources may omit source_cell_ids" in quote_only_prompt
+    assert "source_table_row_index" in quote_only_prompt
+    assert "omit empty cells" in quote_only_prompt
+    assert "cell_map sources require source_cell_ids" not in quote_only_prompt
 
 
 def test_repeated_header_cell_map_follows_canonical_occurrence_order():

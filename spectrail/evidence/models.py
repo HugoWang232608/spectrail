@@ -613,9 +613,10 @@ class EvidenceIndex(EvidenceModel):
             blocks_by_id,
             tables_by_id,
         )
-        _validate_structural_occurrence_ranges(
+        _validate_occurrence_ranges(
             cells_by_id,
             self.cell_occurrences,
+            blocks_by_id,
         )
         return self
 
@@ -796,17 +797,19 @@ def _validate_occurrence_roles(
             )
 
 
-def _validate_structural_occurrence_ranges(
+def _validate_occurrence_ranges(
     cells_by_id: dict[str, TableCellRecord],
     occurrences: list[CellBlockOccurrence],
+    blocks_by_id: dict[str, BlockEvidenceRecord],
 ) -> None:
-    structural_roles = {"original", "row_span_projection"}
     by_block: dict[str, list[CellBlockOccurrence]] = {}
     for occurrence in occurrences:
-        if (
-            occurrence.occurrence_role in structural_roles
-            and cells_by_id[occurrence.cell_id].text.strip()
-        ):
+        if cells_by_id[occurrence.cell_id].text:
+            if occurrence.canonical_end <= occurrence.canonical_start:
+                raise ValueError(
+                    "non-empty cell occurrence must use a non-empty canonical range: "
+                    f"{occurrence.occurrence_id}"
+                )
             by_block.setdefault(occurrence.block_id, []).append(occurrence)
 
     for block_id, block_occurrences in by_block.items():
@@ -823,12 +826,68 @@ def _validate_structural_occurrence_ranges(
             for following in ordered[index + 1 :]:
                 if following.canonical_start >= current.canonical_end:
                     break
-                if current.physical_row_index != following.physical_row_index:
-                    raise ValueError(
-                        "non-empty structural occurrences from different physical "
-                        "rows must not overlap: "
-                        f"{block_id}/{current.occurrence_id}/{following.occurrence_id}"
-                    )
+                raise ValueError(
+                    "non-empty cell occurrence ranges must not overlap: "
+                    f"{block_id}/{current.occurrence_id}/{following.occurrence_id}"
+                )
+
+        row_groups = rendered_table_row_groups(
+            blocks_by_id[block_id],
+            block_occurrences,
+        )
+        for index, current in enumerate(row_groups):
+            current_start, current_end, current_label, current_row, _ = current
+            for following in row_groups[index + 1 :]:
+                following_start, following_end, following_label, following_row, _ = (
+                    following
+                )
+                if following_start >= current_end:
+                    break
+                raise ValueError(
+                    "rendered table row occurrence ranges must not interleave: "
+                    f"{block_id}/{current_label}:{current_row}="
+                    f"{current_start}:{current_end}/"
+                    f"{following_label}:{following_row}="
+                    f"{following_start}:{following_end}"
+                )
+
+
+def rendered_table_row_groups(
+    block: BlockEvidenceRecord,
+    occurrences: list[CellBlockOccurrence],
+) -> list[tuple[int, int, str, int, list[CellBlockOccurrence]]]:
+    if block.table_row_start is None or block.table_row_end is None:
+        raise ValueError("rendered table rows require a primary row range")
+    grouped: dict[tuple[str, int], list[CellBlockOccurrence]] = {}
+    for occurrence in occurrences:
+        if occurrence.block_id != block.block_id:
+            continue
+        in_primary_range = (
+            block.table_row_start
+            <= occurrence.physical_row_index
+            <= block.table_row_end
+        )
+        label = "row" if in_primary_range else "repeated_header_row"
+        grouped.setdefault((label, occurrence.physical_row_index), []).append(
+            occurrence
+        )
+    return sorted(
+        (
+            min(item.canonical_start for item in items),
+            max(item.canonical_end for item in items),
+            label,
+            row_index,
+            sorted(
+                items,
+                key=lambda item: (
+                    item.canonical_start,
+                    item.canonical_end,
+                    item.occurrence_id,
+                ),
+            ),
+        )
+        for (label, row_index), items in grouped.items()
+    )
 
 
 def _validate_table_topology(

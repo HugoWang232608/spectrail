@@ -192,6 +192,7 @@ def run_validate(args: argparse.Namespace) -> int:
             reqs,
             blocks,
             evidence_fingerprint=validation_fingerprint,
+            evidence_index=evidence_index,
         )
     if evidence_index is not None:
         validate_source_evidence_keys(

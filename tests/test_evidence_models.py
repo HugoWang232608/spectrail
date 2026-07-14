@@ -384,7 +384,76 @@ def test_structural_occurrences_from_different_rows_must_not_overlap():
     payload = index.model_dump(mode="json")
     payload["cell_occurrences"][1]["canonical_start"] = 0
     payload["cell_occurrences"][1]["canonical_end"] = 1
-    with pytest.raises(ValidationError, match="different physical rows must not overlap"):
+    with pytest.raises(ValidationError, match="occurrence ranges must not overlap"):
+        EvidenceIndex.model_validate(payload)
+
+
+def test_non_empty_occurrence_ranges_must_be_unique_for_all_roles():
+    table_identifier = "tbl_00000001"
+    cells = [
+        TableCellRecord(
+            cell_id=f"cell_00000001_r0001_c{column:04d}",
+            table_id=table_identifier,
+            row_index=1,
+            column_index=column,
+            text="A",
+            text_sha256=sha256_text("A"),
+        )
+        for column in (1, 2)
+    ]
+    index = _topology_index(
+        table_identifier=table_identifier,
+        row_count=1,
+        column_count=2,
+        cells=cells,
+    )
+    payload = index.model_dump(mode="json")
+    payload["cell_occurrences"][1]["canonical_start"] = 0
+    payload["cell_occurrences"][1]["canonical_end"] = 1
+    with pytest.raises(ValidationError, match="occurrence ranges must not overlap"):
+        EvidenceIndex.model_validate(payload)
+
+    payload = index.model_dump(mode="json")
+    duplicate = {
+        **payload["cell_occurrences"][0],
+        "occurrence_id": "occ_00000003",
+        "occurrence_role": "duplicate_text_occurrence",
+    }
+    payload["cell_occurrences"].append(duplicate)
+    payload["tables"][0]["occurrence_ids"].append("occ_00000003")
+    with pytest.raises(ValidationError, match="occurrence ranges must not overlap"):
+        EvidenceIndex.model_validate(payload)
+
+
+def test_rendered_table_row_ranges_must_not_interleave():
+    table_identifier = "tbl_00000001"
+    cells = [
+        TableCellRecord(
+            cell_id=f"cell_00000001_r0001_c{column:04d}",
+            table_id=table_identifier,
+            row_index=1,
+            column_index=column,
+            row_span=2,
+            text=text,
+            text_sha256=sha256_text(text),
+        )
+        for column, text in ((1, "A"), (2, "C"))
+    ]
+    index = _topology_index(
+        table_identifier=table_identifier,
+        row_count=2,
+        column_count=2,
+        cells=cells,
+    )
+    payload = index.model_dump(mode="json")
+    by_id = {
+        item["occurrence_id"]: item for item in payload["cell_occurrences"]
+    }
+    by_id["occ_00000002"]["canonical_start"] = 2
+    by_id["occ_00000002"]["canonical_end"] = 3
+    by_id["occ_00000003"]["canonical_start"] = 1
+    by_id["occ_00000003"]["canonical_end"] = 2
+    with pytest.raises(ValidationError, match="must not interleave"):
         EvidenceIndex.model_validate(payload)
 
 
@@ -646,6 +715,12 @@ def test_evidence_index_supports_repeated_header_occurrences():
     )
     assert len(index.cell_occurrences) == 3
     assert index.cell_occurrences[1].occurrence_role == "repeated_header"
+
+    overlapping_projection = index.model_dump(mode="json")
+    overlapping_projection["cell_occurrences"][2]["canonical_start"] = 0
+    overlapping_projection["cell_occurrences"][2]["canonical_end"] = 4
+    with pytest.raises(ValidationError, match="occurrence ranges must not overlap"):
+        EvidenceIndex.model_validate(overlapping_projection)
 
     same_block = index.model_dump(mode="json")
     same_block_occurrence = {

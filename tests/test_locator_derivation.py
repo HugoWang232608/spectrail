@@ -133,6 +133,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                 block_id=block.block_id,
                 quote=block.text,
                 source_cell_ids_raw=[cell_2, cell_1],
+                source_table_row_index=1,
             )
         ],
     )
@@ -141,7 +142,10 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
     source = requirement.sources[0]
     assert source.canonical_source_cell_ids == [cell_1, cell_2]
     registry = build_quote_match_registry(
-        [requirement], [block], evidence_fingerprint=index.evidence_fingerprint
+        [requirement],
+        [block],
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
     )
     SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
     assert source.table_locator is not None
@@ -320,6 +324,7 @@ def test_table_selection_can_cross_empty_logical_cells():
                 block_id=block.block_id,
                 quote=text,
                 source_cell_ids_raw=[cell_b, cell_empty, cell_a],
+                source_table_row_index=1,
             )
         ],
     )
@@ -340,6 +345,7 @@ def test_table_selection_can_cross_empty_logical_cells():
         [requirement],
         [block],
         evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
     )
     SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
     validated, report, failures = SourceLocatorValidator().validate(
@@ -565,6 +571,7 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                 block_id=row_2.block_id,
                 quote=row_2.text,
                 source_cell_ids_raw=[cell_b, cell_a],
+                source_table_row_index=2,
             )
         ],
     )
@@ -679,6 +686,7 @@ def test_row_group_block_derives_source_physical_row_from_occurrences():
                 block_id=block.block_id,
                 quote="Data",
                 source_cell_ids_raw=[data],
+                source_table_row_index=2,
             )
         ],
     )
@@ -797,6 +805,37 @@ def test_row_group_row_span_cell_derives_each_physical_row_independently():
 
     assert first.locator.selected_row_index == 1
     assert second.locator.selected_row_index == 2
+
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement="Merged applies on the second row.",
+        sources=[
+            SourceSpan(
+                document_id="doc_001",
+                block_id=block.block_id,
+                quote=cell_text,
+                source_cell_ids_raw=[merged],
+                source_table_row_index=2,
+            )
+        ],
+    )
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        [block],
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    match = registry.require(requirement.sources[0].source_evidence_key)
+    assert match.status == "UNIQUE_MATCH"
+    assert match.selection_basis == "table_evidence"
+    assert len(match.original_ranges) == 2
+    assert match.eligible_ranges == [QuoteMatchRange(start=7, end=13)]
+
+    SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
+    assert requirement.sources[0].text_locator is not None
+    assert requirement.sources[0].table_locator is not None
+    assert requirement.sources[0].table_locator.selected_row_index == 2
 
 
 def test_page_locator_validates_rotation_derivation_and_source_page():
@@ -1136,6 +1175,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
                 block_id=block.block_id,
                 quote=quote,
                 source_cell_ids_raw=[cell],
+                source_table_row_index=1,
             )
         ],
     )
@@ -1145,6 +1185,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
         [requirement],
         [block],
         evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
     )
     SourceEvidenceEnricher().enrich([requirement], index, registry, [block])
     validated, report, failures = SourceLocatorValidator().validate(

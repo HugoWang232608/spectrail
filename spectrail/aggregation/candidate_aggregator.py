@@ -165,6 +165,7 @@ def _source_sort_key(source: SourceSpan, block_map: dict[str, DocumentBlock]) ->
             source.block_id,
             normalize_text(source.quote),
             tuple(source.canonical_source_cell_ids),
+            source.source_table_row_index or inf,
         )
     exact = block.text.find(source.quote)
     if exact >= 0:
@@ -180,6 +181,7 @@ def _source_sort_key(source: SourceSpan, block_map: dict[str, DocumentBlock]) ->
         source.block_id,
         normalize_text(source.quote),
         tuple(source.canonical_source_cell_ids),
+        source.source_table_row_index or inf,
     )
 
 
@@ -219,6 +221,7 @@ def _variant(item: RequirementIR) -> dict[str, Any]:
                 "canonical_source_cell_ids": list(
                     source.canonical_source_cell_ids
                 ),
+                "source_table_row_index": source.source_table_row_index,
             }
             for source in item.sources
         ],
@@ -231,4 +234,5 @@ def _source_identity(source: SourceSpan) -> tuple:
         source.block_id,
         normalize_text(source.quote),
         tuple(source.canonical_source_cell_ids),
+        source.source_table_row_index,
     )

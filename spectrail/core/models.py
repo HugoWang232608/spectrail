@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from spectrail.evidence.models import (
     CapabilityValidationResult,
@@ -76,11 +76,39 @@ class SourceSpan(BaseModel):
     table_locator: TableLocator | None = None
     source_cell_ids_raw: list[str] = Field(default_factory=list)
     canonical_source_cell_ids: list[str] = Field(default_factory=list)
+    source_table_row_index: int | None = None
     source_evidence_key: str | None = None
     provisional_text_locator: TextLocator | None = None
     locator_status: LocatorStatus = "UNVERIFIED"
     capability_results: list[CapabilityValidationResult] = Field(default_factory=list)
     locator_score: float | None = None
+
+    @field_validator("source_table_row_index", mode="before")
+    @classmethod
+    def validate_source_table_row_index(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("source_table_row_index must be 1-based")
+        return value
+
+    @model_validator(mode="after")
+    def validate_table_source_identity(self) -> "SourceSpan":
+        has_cell_ids = bool(
+            self.source_cell_ids_raw or self.canonical_source_cell_ids
+        )
+        if has_cell_ids and self.source_table_row_index is None:
+            raise ValueError("table source cell IDs require source_table_row_index")
+        if self.source_table_row_index is not None and not has_cell_ids:
+            raise ValueError("source_table_row_index requires table source cell IDs")
+        if (
+            self.table_locator is not None
+            and self.source_table_row_index is not None
+            and self.table_locator.selected_row_index
+            != self.source_table_row_index
+        ):
+            raise ValueError("table locator row does not match source table row identity")
+        return self
 
 
 class ReviewRecord(BaseModel):
@@ -117,7 +145,7 @@ class RequirementIR(BaseModel):
 
 
 class ReqIRPackage(BaseModel):
-    schema_version: Literal["reqir_v2"] = "reqir_v2"
+    schema_version: Literal["reqir_v3"] = "reqir_v3"
     metadata: dict[str, Any] = Field(default_factory=dict)
     items: list[RequirementIR] = Field(default_factory=list)
 

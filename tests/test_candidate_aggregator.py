@@ -74,6 +74,31 @@ def test_aggregator_preserves_same_quote_with_different_canonical_cells():
     second = _candidate("C2", "chk_00000002", "functional")
     first.sources[0].canonical_source_cell_ids = ["cell_a"]
     second.sources[0].canonical_source_cell_ids = ["cell_b"]
+    first.sources[0].source_table_row_index = 1
+    second.sources[0].source_table_row_index = 1
+
+    result = CandidateAggregator().aggregate([first, second], blocks)
+
+    assert len(result.requirements) == 2
+    assert result.collapsed_exact_candidates == 0
+
+
+def test_aggregator_preserves_same_table_source_on_different_physical_rows():
+    blocks = [
+        DocumentBlock(
+            block_id="blk_0001",
+            document_id="doc_001",
+            type="table",
+            text="Merged\nMerged",
+            order=1,
+        )
+    ]
+    first = _candidate("C1", "chk_00000001", "functional")
+    second = _candidate("C2", "chk_00000002", "functional")
+    for candidate, row_index in ((first, 1), (second, 2)):
+        candidate.sources[0].quote = "Merged"
+        candidate.sources[0].canonical_source_cell_ids = ["cell_a"]
+        candidate.sources[0].source_table_row_index = row_index
 
     result = CandidateAggregator().aggregate([first, second], blocks)
 

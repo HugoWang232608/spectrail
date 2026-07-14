@@ -361,6 +361,7 @@ def _validate_table_locator(
     )
     if (
         not quote_matches
+        or source.source_table_row_index != expected.locator.selected_row_index
         or locator.model_dump(mode="json")
         != expected.locator.model_dump(mode="json")
         or expected.page != block.page

@@ -45,7 +45,7 @@ def test_extract_batch_isolates_malformed_middle_item():
     assert result.rejected_items[0].item_index == 1
     assert result.rejected_items[0].error_code == "MODEL_ITEM_MISSING_FIELD"
     assert result.accepted_candidates[0].metadata["extractor_version"] == (
-        "reqir_extractor_v3_evidence"
+        "reqir_extractor_v4_table_row_evidence"
     )
 
 
@@ -116,6 +116,7 @@ def test_extract_batch_emits_specific_cell_error_codes():
                 "source_block_id": table.block_id,
                 "source_quote": "A",
                 "source_cell_ids": ["not-a-cell"],
+                "source_table_row_index": 1,
             },
             {
                 "statement": "Missing cells",
@@ -123,16 +124,37 @@ def test_extract_batch_emits_specific_cell_error_codes():
                 "source_quote": "A",
             },
             {
+                "statement": "Missing row",
+                "source_block_id": table.block_id,
+                "source_quote": "A",
+                "source_cell_ids": [cell],
+            },
+            {
+                "statement": "Row without cells",
+                "source_block_id": table.block_id,
+                "source_quote": "A",
+                "source_table_row_index": 1,
+            },
+            {
+                "statement": "Invalid row",
+                "source_block_id": table.block_id,
+                "source_quote": "A",
+                "source_cell_ids": [cell],
+                "source_table_row_index": 0,
+            },
+            {
                 "statement": "Wrong block type",
                 "source_block_id": paragraph.block_id,
                 "source_quote": "B",
                 "source_cell_ids": [cell],
+                "source_table_row_index": 1,
             },
             {
                 "statement": "Context cell",
                 "source_block_id": context_table.block_id,
                 "source_quote": "C",
                 "source_cell_ids": [cell],
+                "source_table_row_index": 1,
             },
         ]
     }
@@ -148,6 +170,9 @@ def test_extract_batch_emits_specific_cell_error_codes():
     assert [item.error_code for item in result.rejected_items] == [
         "MODEL_ITEM_INVALID_CELL_IDS",
         "MODEL_ITEM_TABLE_SOURCE_MISSING_CELL_IDS",
+        "MODEL_ITEM_TABLE_SOURCE_MISSING_ROW_INDEX",
+        "MODEL_ITEM_TABLE_ROW_WITHOUT_CELL_IDS",
+        "MODEL_ITEM_INVALID_TABLE_ROW_INDEX",
         "MODEL_ITEM_NON_TABLE_WITH_CELL_IDS",
         "MODEL_ITEM_CONTEXT_CELL_REFERENCE",
     ]

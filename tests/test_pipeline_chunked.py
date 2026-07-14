@@ -305,6 +305,135 @@ def test_pipeline_isolates_invalid_table_cell_reference(tmp_path: Path):
     )
 
 
+def test_pipeline_resolves_repeated_row_span_quote_with_source_row_hint(
+    tmp_path: Path,
+):
+    document = tmp_path / "row-span.docx"
+    document.write_text("Merged\nMerged", encoding="utf-8")
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text="Merged\nMerged",
+        order=1,
+    )
+    table = "tbl_00000001"
+    cell = "cell_00000001_r0001_c0001"
+    source_hash = sha256_file(document)
+    parser_identity = ParserIdentity(
+        parser_name="docx_parser_v2",
+        parser_version="2",
+        source_format="docx",
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name=document.name,
+            source_format="docx",
+            source_sha256=source_hash,
+            parser_identity=parser_identity,
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(block.text),
+                    text_sha256=sha256_text(block.text),
+                    table_id=table,
+                    table_row_start=1,
+                    table_row_end=2,
+                    cell_ids=[cell],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=2,
+                    column_count=1,
+                    cell_ids=[cell],
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=cell,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    row_span=2,
+                    text="Merged",
+                    text_sha256=sha256_text("Merged"),
+                )
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=cell,
+                    block_id=block.block_id,
+                    physical_row_index=1,
+                    canonical_start=0,
+                    canonical_end=6,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cell,
+                    block_id=block.block_id,
+                    physical_row_index=2,
+                    canonical_start=7,
+                    canonical_end=13,
+                    occurrence_role="row_span_projection",
+                ),
+            ],
+        )
+    )
+    parsed = ParsedDocument(
+        document_id="doc_001",
+        document_name=document.name,
+        source_format="docx",
+        parser_name=parser_identity.parser_name,
+        text=block.text,
+        blocks=[block],
+        source_sha256=source_hash,
+        parser_identity=parser_identity,
+        evidence_index=index,
+    )
+    fixture = tmp_path / "row-span-response.json"
+    fixture.write_text(
+        '{"items":[{"statement":"Merged applies on row two",'
+        '"source_block_id":"blk_0001","source_quote":"Merged",'
+        f'"source_cell_ids":["{cell}"],"source_table_row_index":2}}]}}',
+        encoding="utf-8",
+    )
+
+    result = PipelineRunner().extract(
+        document,
+        tmp_path / "row-span-output",
+        model_mode="recorded",
+        recorded_fixture=fixture,
+        parsed_document=parsed,
+    )
+
+    manifest = read_json(result.manifest_path)
+    source = read_json(result.exported_reqir_path)["items"][0]["sources"][0]
+    registry = read_json(
+        result.output_dir / "extracted" / "quote_matches.json"
+    )
+    match = next(iter(registry["entries"].values()))
+    assert manifest["status"] == "completed"
+    assert registry["schema_version"] == "quote_matches_v2"
+    assert source["source_table_row_index"] == 2
+    assert source["text_locator"]["start"] == 7
+    assert source["table_locator"]["selected_row_index"] == 2
+    assert match["status"] == "UNIQUE_MATCH"
+    assert match["selection_basis"] == "table_evidence"
+    assert len(match["original_ranges"]) == 2
+    assert len(match["eligible_ranges"]) == 1
+
+
 def test_quote_only_pipeline_does_not_require_table_cell_ids(tmp_path: Path):
     document, parsed = _table_document_with_evidence(tmp_path)
     fixture = tmp_path / "quote-only.json"

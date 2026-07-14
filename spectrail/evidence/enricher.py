@@ -96,6 +96,13 @@ class SourceEvidenceEnricher:
                                 canonical_cell_ids=source.canonical_source_cell_ids,
                                 block_text=document_block.text,
                             )
+                            if (
+                                table_evidence.locator.selected_row_index
+                                != source.source_table_row_index
+                            ):
+                                raise ValueError(
+                                    "derived table row does not match source identity"
+                                )
                             source.table_locator = table_evidence.locator
                         except ValueError:
                             table_evidence = None

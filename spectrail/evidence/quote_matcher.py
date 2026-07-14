@@ -7,9 +7,12 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from spectrail.evidence.models import EvidenceIndex
 
 
 PUNCT_MAP = str.maketrans(
@@ -50,6 +53,8 @@ class QuoteMatchResult(BaseModel):
     status: Literal["NO_MATCH", "UNIQUE_MATCH", "AMBIGUOUS_MATCH"]
     match_basis: Literal["exact", "normalized", "none"]
     original_ranges: list[QuoteMatchRange] = Field(default_factory=list)
+    eligible_ranges: list[QuoteMatchRange] = Field(default_factory=list)
+    selection_basis: Literal["none", "text", "table_evidence"] = "none"
     selected_range: QuoteMatchRange | None = None
     provisional_range: QuoteMatchRange | None = None
     score: float = 0.0
@@ -61,34 +66,61 @@ class QuoteMatchResult(BaseModel):
         stable_ranges = sorted(set((item.start, item.end) for item in self.original_ranges))
         if stable_ranges != [(item.start, item.end) for item in self.original_ranges]:
             raise ValueError("quote match ranges must be unique and stably sorted")
+        stable_eligible = sorted(
+            set((item.start, item.end) for item in self.eligible_ranges)
+        )
+        if stable_eligible != [
+            (item.start, item.end) for item in self.eligible_ranges
+        ]:
+            raise ValueError("eligible quote ranges must be unique and stably sorted")
+        if not set(stable_eligible).issubset(set(stable_ranges)):
+            raise ValueError("eligible quote ranges must be textual match ranges")
         if self.status == "NO_MATCH":
-            if self.match_basis != "none" or self.original_ranges:
-                raise ValueError("NO_MATCH cannot contain a match basis or ranges")
+            if self.eligible_ranges:
+                raise ValueError("NO_MATCH cannot contain eligible ranges")
             if self.selected_range is not None or self.provisional_range is not None:
                 raise ValueError("NO_MATCH cannot select a range")
+            if self.original_ranges:
+                if self.match_basis == "none" or self.selection_basis != "table_evidence":
+                    raise ValueError(
+                        "evidence-filtered NO_MATCH requires textual candidates"
+                    )
+            elif self.match_basis != "none" or self.selection_basis != "none":
+                raise ValueError("textual NO_MATCH cannot contain a match basis")
         elif self.status == "UNIQUE_MATCH":
-            if self.match_basis == "none" or len(self.original_ranges) != 1:
-                raise ValueError("UNIQUE_MATCH requires one range and a match basis")
-            if self.selected_range != self.original_ranges[0]:
-                raise ValueError("UNIQUE_MATCH must select its only range")
+            if self.match_basis == "none" or len(self.eligible_ranges) != 1:
+                raise ValueError("UNIQUE_MATCH requires one eligible range")
+            if self.selected_range != self.eligible_ranges[0]:
+                raise ValueError("UNIQUE_MATCH must select its eligible range")
             if self.provisional_range is not None:
                 raise ValueError("UNIQUE_MATCH cannot contain a provisional range")
         else:
-            if self.match_basis == "none" or len(self.original_ranges) < 2:
-                raise ValueError("AMBIGUOUS_MATCH requires multiple ranges and a match basis")
+            if self.match_basis == "none" or len(self.eligible_ranges) < 2:
+                raise ValueError("AMBIGUOUS_MATCH requires multiple eligible ranges")
             if self.selected_range is not None:
                 raise ValueError("AMBIGUOUS_MATCH cannot select a validated range")
             if (
                 self.provisional_range is not None
-                and self.provisional_range not in self.original_ranges
+                and self.provisional_range not in self.eligible_ranges
             ):
-                raise ValueError("provisional range must be one of the ambiguous ranges")
+                raise ValueError("provisional range must be an eligible ambiguous range")
+        if self.status != "NO_MATCH":
+            if self.selection_basis == "none":
+                raise ValueError("matched quote requires a selection_basis")
+            if (
+                self.eligible_ranges != self.original_ranges
+                and self.selection_basis != "table_evidence"
+            ):
+                raise ValueError(
+                    "filtered quote ranges require table_evidence selection"
+                )
         return self
 
 
 class QuoteMatchRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal["quote_matches_v2"]
     entries: dict[str, QuoteMatchResult] = Field(default_factory=dict)
 
     def add(self, key: str, result: QuoteMatchResult) -> None:
@@ -159,10 +191,11 @@ def build_quote_match_registry(
     blocks: Iterable[Any],
     *,
     evidence_fingerprint: str,
+    evidence_index: EvidenceIndex | None = None,
     provisional: bool = True,
 ) -> QuoteMatchRegistry:
     blocks_by_id = {block.block_id: block for block in blocks}
-    registry = QuoteMatchRegistry()
+    registry = QuoteMatchRegistry(schema_version="quote_matches_v2")
     matcher = QuoteMatcher()
     for requirement in requirements:
         for source in requirement.sources:
@@ -173,6 +206,7 @@ def build_quote_match_registry(
                 block_id=source.block_id,
                 quote=source.quote,
                 canonical_cell_ids=canonical_cell_ids,
+                source_table_row_index=source.source_table_row_index,
             )
             if source.source_evidence_key not in {None, key}:
                 raise ValueError(
@@ -181,14 +215,26 @@ def build_quote_match_registry(
             source.source_evidence_key = key
             if key not in registry.entries:
                 block = blocks_by_id.get(source.block_id)
-                registry.add(
-                    key,
-                    matcher.match(
-                        block.text if block is not None else "",
-                        source.quote,
-                        provisional=provisional,
-                    ),
+                result = matcher.match(
+                    block.text if block is not None else "",
+                    source.quote,
+                    provisional=provisional,
                 )
+                if source.source_table_row_index is not None:
+                    if evidence_index is None:
+                        raise ValueError(
+                            "table quote matching requires an EvidenceIndex"
+                        )
+                    result = _filter_table_match_result(
+                        result,
+                        evidence_index=evidence_index,
+                        block_id=source.block_id,
+                        block_text=block.text if block is not None else "",
+                        canonical_cell_ids=canonical_cell_ids,
+                        source_table_row_index=source.source_table_row_index,
+                        provisional=provisional,
+                    )
+                registry.add(key, result)
     return registry
 
 
@@ -207,6 +253,7 @@ def validate_source_evidence_keys(
                 block_id=source.block_id,
                 quote=source.quote,
                 canonical_cell_ids=canonical_cell_ids,
+                source_table_row_index=source.source_table_row_index,
             )
             if source.source_evidence_key is None and bind_missing:
                 source.source_evidence_key = expected
@@ -269,6 +316,7 @@ def source_evidence_key(
     block_id: str,
     quote: str,
     canonical_cell_ids: list[str] | tuple[str, ...] = (),
+    source_table_row_index: int | None = None,
 ) -> str:
     payload = {
         "evidence_fingerprint": evidence_fingerprint,
@@ -276,6 +324,7 @@ def source_evidence_key(
         "block_id": block_id,
         "quote": quote,
         "canonical_cell_ids": list(canonical_cell_ids),
+        "source_table_row_index": source_table_row_index,
     }
     encoded = json.dumps(
         payload,
@@ -300,6 +349,8 @@ def _matched_result(
             status="UNIQUE_MATCH",
             match_basis=basis,
             original_ranges=items,
+            eligible_ranges=items,
+            selection_basis="text",
             selected_range=items[0],
             score=score,
         )
@@ -307,8 +358,69 @@ def _matched_result(
         status="AMBIGUOUS_MATCH",
         match_basis=basis,
         original_ranges=items,
+        eligible_ranges=items,
+        selection_basis="text",
         provisional_range=items[0] if provisional else None,
         score=score,
+    )
+
+
+def _filter_table_match_result(
+    result: QuoteMatchResult,
+    *,
+    evidence_index: EvidenceIndex,
+    block_id: str,
+    block_text: str,
+    canonical_cell_ids: list[str],
+    source_table_row_index: int,
+    provisional: bool,
+) -> QuoteMatchResult:
+    if not result.original_ranges:
+        return result
+    from spectrail.evidence.locator_derivation import derive_table_evidence
+
+    eligible: list[QuoteMatchRange] = []
+    for candidate_range in result.original_ranges:
+        try:
+            derived = derive_table_evidence(
+                evidence_index,
+                block_id=block_id,
+                selected_range=candidate_range,
+                canonical_cell_ids=canonical_cell_ids,
+                block_text=block_text,
+            )
+        except ValueError:
+            continue
+        if derived.locator.selected_row_index == source_table_row_index:
+            eligible.append(candidate_range)
+
+    if not eligible:
+        return QuoteMatchResult(
+            status="NO_MATCH",
+            match_basis=result.match_basis,
+            original_ranges=result.original_ranges,
+            eligible_ranges=[],
+            selection_basis="table_evidence",
+            score=result.score,
+        )
+    if len(eligible) == 1:
+        return QuoteMatchResult(
+            status="UNIQUE_MATCH",
+            match_basis=result.match_basis,
+            original_ranges=result.original_ranges,
+            eligible_ranges=eligible,
+            selection_basis="table_evidence",
+            selected_range=eligible[0],
+            score=result.score,
+        )
+    return QuoteMatchResult(
+        status="AMBIGUOUS_MATCH",
+        match_basis=result.match_basis,
+        original_ranges=result.original_ranges,
+        eligible_ranges=eligible,
+        selection_basis="table_evidence",
+        provisional_range=eligible[0] if provisional else None,
+        score=result.score,
     )
 
 

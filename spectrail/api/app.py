@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from spectrail.api.routes import exports, review, sources, tasks
-from spectrail.tasks import LocalTaskStore
+from spectrail.tasks import LocalTaskStore, TaskTransactionInProgressError
 
 
 def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
@@ -16,6 +17,22 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(TaskTransactionInProgressError)
+    async def task_transaction_in_progress(
+        request: Request,
+        exc: TaskTransactionInProgressError,
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "TASK_MIGRATION_INCOMPLETE",
+                    "message": str(exc),
+                }
+            },
+        )
 
     app.include_router(tasks.router, prefix="/api")
     app.include_router(review.router, prefix="/api")

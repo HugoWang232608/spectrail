@@ -24,6 +24,7 @@ from spectrail.llm.errors import ModelError
 from spectrail.migrations import migrate_task
 from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineError, PipelineRunner
+from spectrail.task_transactions import task_operation, task_root_for_artifact
 from spectrail.evaluation.runner import EvaluationRunner
 from spectrail.review.service import (
     apply_review_to_package,
@@ -152,6 +153,14 @@ def run_evaluate(args: argparse.Namespace) -> int:
 
 
 def run_validate(args: argparse.Namespace) -> int:
+    task_root = task_root_for_artifact(args.reqir)
+    if task_root is None:
+        return _run_validate_locked(args)
+    with task_operation(task_root, "validate"):
+        return _run_validate_locked(args)
+
+
+def _run_validate_locked(args: argparse.Namespace) -> int:
     if args.quote_matches_output and not args.rebuild_quote_matches:
         raise ValueError(
             "--quote-matches-output requires --rebuild-quote-matches"
@@ -358,6 +367,14 @@ def _validation_artifact_paths(
 
 
 def run_export(args: argparse.Namespace) -> int:
+    task_root = task_root_for_artifact(args.reqir)
+    if task_root is None:
+        return _run_export_locked(args)
+    with task_operation(task_root, "export"):
+        return _run_export_locked(args)
+
+
+def _run_export_locked(args: argparse.Namespace) -> int:
     reqs = _load_requirements(args.reqir)
     export_requirements_xlsx(reqs, args.output)
     print(f"Exported {len(reqs)} requirements to {args.output}")
@@ -366,6 +383,11 @@ def run_export(args: argparse.Namespace) -> int:
 
 def run_review(args: argparse.Namespace) -> int:
     output = Path(args.output_dir)
+    with task_operation(output, "review"):
+        return _run_review_locked(args, output)
+
+
+def _run_review_locked(args: argparse.Namespace, output: Path) -> int:
     reqs_path = output / "exports" / "reqir.json"
     review_log_path = output / "review" / "review_log.json"
     xlsx_path = output / "exports" / "requirements.xlsx"

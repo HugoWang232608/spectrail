@@ -46,6 +46,7 @@ from spectrail.llm.request_profile import ModelRequestProfile, adapter_for_profi
 from spectrail.parsers import ParsedDocument, parse_document
 from spectrail.pipeline.config import PipelineConfig
 from spectrail.review.review_log import collect_review_log
+from spectrail.task_transactions import task_operation
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
@@ -79,6 +80,44 @@ class PipelineResult:
 
 class PipelineRunner:
     def extract(
+        self,
+        document_path: str | Path,
+        output_dir: str | Path,
+        model_mode: str = "mock",
+        model_name: str | None = None,
+        recorded_fixture: str | Path | None = None,
+        dump_prompt: bool = False,
+        insecure: bool = False,
+        *,
+        chunking_mode: str = "auto",
+        max_rendered_prompt_chars: int = 16000,
+        overlap_blocks: int = 1,
+        validation_policy: str = "strict",
+        evidence_policy: str = "structured_if_available",
+        fail_fast: bool = False,
+        config: PipelineConfig | None = None,
+        parsed_document: ParsedDocument | None = None,
+    ) -> PipelineResult:
+        with task_operation(output_dir, "pipeline"):
+            return self._extract_locked(
+                document_path=document_path,
+                output_dir=output_dir,
+                model_mode=model_mode,
+                model_name=model_name,
+                recorded_fixture=recorded_fixture,
+                dump_prompt=dump_prompt,
+                insecure=insecure,
+                chunking_mode=chunking_mode,
+                max_rendered_prompt_chars=max_rendered_prompt_chars,
+                overlap_blocks=overlap_blocks,
+                validation_policy=validation_policy,
+                evidence_policy=evidence_policy,
+                fail_fast=fail_fast,
+                config=config,
+                parsed_document=parsed_document,
+            )
+
+    def _extract_locked(
         self,
         document_path: str | Path,
         output_dir: str | Path,

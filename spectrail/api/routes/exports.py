@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from spectrail.api.deps import get_task_store
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
@@ -15,7 +15,7 @@ router = APIRouter(tags=["exports"])
 def download_reqir(
     task_id: str,
     store: LocalTaskStore = Depends(get_task_store),
-) -> FileResponse:
+) -> Response:
     return _download_export(task_id, "reqir.json", "application/json", store)
 
 
@@ -23,7 +23,7 @@ def download_reqir(
 def download_xlsx(
     task_id: str,
     store: LocalTaskStore = Depends(get_task_store),
-) -> FileResponse:
+) -> Response:
     return _download_export(
         task_id,
         "requirements.xlsx",
@@ -37,19 +37,20 @@ def _download_export(
     filename: str,
     media_type: str,
     store: LocalTaskStore,
-) -> FileResponse:
+) -> Response:
     try:
-        store.require_readable_task(task_id)
-        path = store.get_export_path(task_id, filename)
+        content = store.read_export(task_id, filename)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
-    if not path.exists():
-        raise _error(404, "EXPORT_NOT_FOUND", f"export not found: {filename}")
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def _error(status_code: int, code: str, message: str) -> HTTPException:

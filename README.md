@@ -315,7 +315,9 @@ Migration stages and revalidates every new artifact before replacing task files.
 Original files are retained under `outputs/demo/.migration_backup/`, and the
 source-key and locator status changes are recorded in
 `outputs/demo/migration/migration_report.json`. If a commit is interrupted, the
-next migration run restores the recorded backup before retrying.
+next migration run restores the recorded backup before retrying. While a task is
+locked or has an incomplete migration, validate, review, export, pipeline reruns,
+and API reads or writes reject the operation instead of exposing mixed artifacts.
 
 For a current `reqir_v4` task whose quote-match registry is missing or still uses
 `quote_matches_v2`, validation can rebuild the registry explicitly:

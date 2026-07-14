@@ -114,6 +114,29 @@ def test_api_task_requires_uploaded_document(api_client: TestClient):
     assert run.json()["detail"]["code"] == "DOCUMENT_NOT_UPLOADED"
 
 
+def test_api_reads_and_writes_reject_incomplete_migration(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    store = api_client.app.state.task_store
+    task_dir = store.get_task_dir(task_id)
+    (task_dir / ".migration_tmp").mkdir()
+
+    for response in (
+        api_client.get(f"/api/tasks/{task_id}"),
+        api_client.get(f"/api/tasks/{task_id}/reqir"),
+        api_client.get(f"/api/tasks/{task_id}/exports/reqir.json"),
+        api_client.post(
+            f"/api/tasks/{task_id}/review",
+            json={"requirement_id": "REQ-0001", "action": "approve"},
+        ),
+        api_client.post(f"/api/tasks/{task_id}/run"),
+    ):
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "TASK_MIGRATION_INCOMPLETE"
+
+
 def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]

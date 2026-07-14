@@ -15,6 +15,7 @@ from spectrail.core.models import ReqIRPackage, RequirementIR
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.review.review_log import collect_review_log
 from spectrail.review.review_state import apply_review_action
+from spectrail.task_transactions import task_operation, task_root_for_artifact
 
 
 ReqListAdapter = TypeAdapter(list[RequirementIR])
@@ -29,6 +30,33 @@ def load_requirement_package(path: str | Path) -> ReqIRPackage:
 
 
 def refresh_review_package(
+    reqir_path: str | Path,
+    review_log_path: str | Path,
+    xlsx_path: str | Path,
+    requirements: list[RequirementIR],
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    task_root = task_root_for_artifact(reqir_path)
+    if task_root is None:
+        return _refresh_review_package_locked(
+            reqir_path,
+            review_log_path,
+            xlsx_path,
+            requirements,
+            metadata=metadata,
+        )
+    with task_operation(task_root, "review_refresh"):
+        return _refresh_review_package_locked(
+            reqir_path,
+            review_log_path,
+            xlsx_path,
+            requirements,
+            metadata=metadata,
+        )
+
+
+def _refresh_review_package_locked(
     reqir_path: str | Path,
     review_log_path: str | Path,
     xlsx_path: str | Path,
@@ -51,6 +79,41 @@ def refresh_review_package(
 
 
 def apply_review_to_package(
+    reqir_path: str | Path,
+    review_log_path: str | Path,
+    xlsx_path: str | Path,
+    requirement_id: str,
+    action: str,
+    patch: dict[str, Any] | None = None,
+    reviewer: str | None = None,
+    reason: str | None = None,
+) -> RequirementIR:
+    task_root = task_root_for_artifact(reqir_path)
+    if task_root is None:
+        return _apply_review_to_package_locked(
+            reqir_path=reqir_path,
+            review_log_path=review_log_path,
+            xlsx_path=xlsx_path,
+            requirement_id=requirement_id,
+            action=action,
+            patch=patch,
+            reviewer=reviewer,
+            reason=reason,
+        )
+    with task_operation(task_root, "review_apply"):
+        return _apply_review_to_package_locked(
+            reqir_path=reqir_path,
+            review_log_path=review_log_path,
+            xlsx_path=xlsx_path,
+            requirement_id=requirement_id,
+            action=action,
+            patch=patch,
+            reviewer=reviewer,
+            reason=reason,
+        )
+
+
+def _apply_review_to_package_locked(
     reqir_path: str | Path,
     review_log_path: str | Path,
     xlsx_path: str | Path,

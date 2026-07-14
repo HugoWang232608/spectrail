@@ -19,8 +19,13 @@ from spectrail.llm.errors import (
 )
 from spectrail.parsers import DocumentParseError, UnsupportedDocumentTypeError
 from spectrail.pipeline import PipelineValidationError, PipelineRunner, UnsupportedModelModeError
-from spectrail.tasks import LocalTaskStore, TaskNotFoundError
+from spectrail.tasks import (
+    LocalTaskStore,
+    TaskNotFoundError,
+    TaskTransactionInProgressError,
+)
 from spectrail.tasks.store import InvalidDocumentError, TaskNotReadyError
+from spectrail.task_transactions import TaskTransactionError, task_operation
 
 
 router = APIRouter(tags=["tasks"])
@@ -75,6 +80,17 @@ def run_task(
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
+        task_dir = store.get_task_dir(task_id)
+        with task_operation(task_dir, "api_pipeline_run"):
+            return _run_task_locked(task_id, store)
+    except TaskNotFoundError as exc:
+        raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
+    except TaskTransactionError as exc:
+        raise _error(409, "TASK_MIGRATION_INCOMPLETE", str(exc)) from exc
+
+
+def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
+    try:
         task = store.get_task(task_id)
         document = store.get_input_document(task_id)
         task_dir = store.get_task_dir(task_id)
@@ -127,6 +143,8 @@ def run_task(
     except PipelineValidationError as exc:
         _mark_task_failed(store, task_id)
         raise _error(422, "PIPELINE_VALIDATION_FAILED", str(exc)) from exc
+    except TaskTransactionInProgressError as exc:
+        raise _error(409, "TASK_MIGRATION_INCOMPLETE", str(exc)) from exc
     except Exception as exc:
         try:
             store.update_task(task_id, status="failed")

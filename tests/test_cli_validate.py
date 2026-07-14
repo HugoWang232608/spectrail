@@ -2,12 +2,15 @@ from pathlib import Path
 import hashlib
 import json
 import shutil
+import socket
 
 import pytest
 
 import spectrail.migrations as migrations
 from spectrail.cli import main
 from spectrail.core.io import read_json, write_json
+from spectrail.pipeline import PipelineRunner
+from spectrail.task_transactions import task_lock
 
 
 def test_validate_cli_writes_report_and_validated_output(tmp_path: Path):
@@ -357,11 +360,222 @@ def test_migrate_recovers_interrupted_commit_before_retry(
     assert read_json(reqir_paths[0])["schema_version"] == "reqir_v4"
     assert read_json(reqir_paths[1])["schema_version"] == "reqir_v3"
 
+    export_before = reqir_paths[-1].read_bytes()
+    with pytest.raises(ValueError, match="TASK_MIGRATION_INCOMPLETE"):
+        main(["review", str(output)])
+    with pytest.raises(ValueError, match="TASK_MIGRATION_INCOMPLETE"):
+        main(
+            [
+                "validate",
+                str(reqir_paths[-1]),
+                "--blocks",
+                str(output / "parsed" / "blocks.json"),
+            ]
+        )
+    with pytest.raises(ValueError, match="TASK_MIGRATION_INCOMPLETE"):
+        main(
+            [
+                "export",
+                str(reqir_paths[-1]),
+                "--output",
+                str(tmp_path / "blocked.xlsx"),
+            ]
+        )
+    with pytest.raises(ValueError, match="TASK_MIGRATION_INCOMPLETE"):
+        PipelineRunner().extract("docs/sample_srs.md", output)
+    assert reqir_paths[-1].read_bytes() == export_before
+
     monkeypatch.setattr(migrations, "_replace_staged_file", original_replace)
     assert main(["migrate", str(output)]) == 0
     assert not (output / ".migration_tmp").exists()
     assert all(read_json(path)["schema_version"] == "reqir_v4" for path in reqir_paths)
     assert len(list((output / ".migration_backup").iterdir())) == 2
+
+
+@pytest.mark.parametrize(
+    "first_key,second_key",
+    [
+        ("evidence_index", "quote_matches"),
+        ("reqir_raw", "reqir_export"),
+    ],
+)
+def test_migrate_rejects_manifest_artifact_path_collisions(
+    tmp_path: Path,
+    first_key: str,
+    second_key: str,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    manifest_path = output / "run_manifest.json"
+    manifest = read_json(manifest_path)
+    manifest["outputs"][first_key] = manifest["outputs"][second_key]
+    write_json(manifest_path, manifest)
+    before = manifest_path.read_bytes()
+
+    with pytest.raises(SystemExit, match="MIGRATION_ARTIFACT_PATH_COLLISION"):
+        main(["migrate", str(output)])
+
+    assert manifest_path.read_bytes() == before
+    assert not (output / ".migration_tmp").exists()
+
+
+@pytest.mark.parametrize(
+    "target_path",
+    ["../../outside.json", "/tmp/spectrail-outside.json"],
+)
+def test_migration_recovery_rejects_untrusted_state_paths(
+    tmp_path: Path,
+    target_path: str,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    outside = tmp_path / "outside.json"
+    outside.write_text("sentinel", encoding="utf-8")
+    migration_id = "20260714T000000000000Z_deadbeef"
+    staging = output / ".migration_tmp"
+    staging.mkdir()
+    write_json(
+        staging / "state.json",
+        {
+            "schema_version": "migration_transaction_v1",
+            "migration_id": migration_id,
+            "status": "committing",
+            "backup_path": f".migration_backup/{migration_id}",
+            "targets": [
+                {
+                    "path": target_path,
+                    "artifact_type": "reqir",
+                    "existed": True,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(SystemExit, match="MIGRATION_RECOVERY_STATE_INVALID"):
+        main(["migrate", str(output)])
+    assert outside.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_migration_recovery_rejects_symlink_escape_and_duplicate_targets(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.json"
+    sentinel.write_text("sentinel", encoding="utf-8")
+    (output / "escape").symlink_to(outside, target_is_directory=True)
+    migration_id = "20260714T000000000000Z_deadbeef"
+    staging = output / ".migration_tmp"
+    staging.mkdir()
+    base_target = {
+        "path": "escape/sentinel.json",
+        "artifact_type": "reqir",
+        "existed": False,
+    }
+    write_json(
+        staging / "state.json",
+        {
+            "schema_version": "migration_transaction_v1",
+            "migration_id": migration_id,
+            "status": "committing",
+            "backup_path": f".migration_backup/{migration_id}",
+            "targets": [base_target],
+        },
+    )
+    with pytest.raises(SystemExit, match="MIGRATION_RECOVERY_PATH_OUTSIDE_TASK"):
+        main(["migrate", str(output)])
+    assert sentinel.read_text(encoding="utf-8") == "sentinel"
+
+    shutil.rmtree(staging)
+    staging.mkdir()
+    write_json(
+        staging / "state.json",
+        {
+            "schema_version": "migration_transaction_v1",
+            "migration_id": migration_id,
+            "status": "committing",
+            "backup_path": f".migration_backup/{migration_id}",
+            "targets": [
+                {**base_target, "path": "exports/reqir.json"},
+                {**base_target, "path": "exports/reqir.json"},
+            ],
+        },
+    )
+    with pytest.raises(SystemExit, match="MIGRATION_RECOVERY_STATE_INVALID"):
+        main(["migrate", str(output)])
+
+
+def test_migration_recovery_rejects_untrusted_backup_and_unknown_fields(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    migration_id = "20260714T000000000000Z_deadbeef"
+    staging = output / ".migration_tmp"
+    staging.mkdir()
+    state = {
+        "schema_version": "migration_transaction_v1",
+        "migration_id": migration_id,
+        "status": "committing",
+        "backup_path": "../../backup",
+        "targets": [
+            {
+                "path": "exports/reqir.json",
+                "artifact_type": "reqir",
+                "existed": False,
+            }
+        ],
+    }
+    write_json(staging / "state.json", state)
+    with pytest.raises(SystemExit, match="MIGRATION_RECOVERY_STATE_INVALID"):
+        main(["migrate", str(output)])
+
+    shutil.rmtree(staging)
+    staging.mkdir()
+    state["backup_path"] = f".migration_backup/{migration_id}"
+    state["targets"][0]["unexpected"] = "untrusted"
+    write_json(staging / "state.json", state)
+    with pytest.raises(SystemExit, match="MIGRATION_RECOVERY_STATE_INVALID"):
+        main(["migrate", str(output)])
+
+
+def test_active_task_lock_blocks_second_migrate_without_deleting_staging(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    with task_lock(output, operation="first_migration"):
+        staging = output / ".migration_tmp"
+        staging.mkdir()
+        marker = staging / "active"
+        marker.write_text("owned", encoding="utf-8")
+        with pytest.raises(SystemExit, match="TASK_TRANSACTION_LOCKED"):
+            main(["migrate", str(output)])
+        assert marker.read_text(encoding="utf-8") == "owned"
+    shutil.rmtree(output / ".migration_tmp")
+
+
+def test_migrate_reclaims_stale_same_host_lock(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    lock_dir = output / ".task.lock"
+    lock_dir.mkdir()
+    write_json(
+        lock_dir / "owner.json",
+        {
+            "schema_version": "task_lock_v1",
+            "token": "stale",
+            "operation": "migrate",
+            "pid": 99999999,
+            "host": socket.gethostname(),
+            "started_at": "2026-07-14T00:00:00Z",
+        },
+    )
+
+    assert main(["migrate", str(output)]) == 0
+    assert not lock_dir.exists()
 
 
 def test_migrate_cli_upgrades_valid_evidence_v4(tmp_path: Path):

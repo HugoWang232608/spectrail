@@ -4,10 +4,19 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from spectrail.core.io import read_json, reqir_package_dump, write_json
 from spectrail.core.models import DocumentBlock, ReqIRPackage, RequirementIR
@@ -25,6 +34,7 @@ from spectrail.evidence.index_builder import (
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
 from spectrail.exporters.source_map_exporter import build_source_map
 from spectrail.parsers import ParsedDocument
+from spectrail.task_transactions import task_lock
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
 
@@ -38,27 +48,72 @@ EVIDENCE_POLICIES = {
     "structured_required",
 }
 
+MigrationArtifactType = Literal[
+    "evidence",
+    "quote_matches",
+    "reqir",
+    "source_map",
+    "migration_report",
+    "manifest",
+]
+
+
+class MigrationTargetState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    artifact_type: MigrationArtifactType
+    existed: StrictBool
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _validate_state_relative_path(value)
+
+
+class MigrationTransactionState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["migration_transaction_v1"]
+    migration_id: str = Field(pattern=r"^[0-9]{8}T[0-9]{12}Z_[0-9a-f]{8}$")
+    status: Literal["prepared", "committing", "committed"]
+    backup_path: str
+    targets: list[MigrationTargetState]
+
+    @field_validator("backup_path")
+    @classmethod
+    def validate_backup_path(cls, value: str) -> str:
+        return _validate_state_relative_path(value)
+
+    @model_validator(mode="after")
+    def validate_transaction_identity(self) -> "MigrationTransactionState":
+        expected_backup = f".migration_backup/{self.migration_id}"
+        if self.backup_path != expected_backup:
+            raise ValueError("migration backup path does not match migration ID")
+        target_paths = [target.path for target in self.targets]
+        if len(set(target_paths)) != len(target_paths):
+            raise ValueError("migration transaction target paths must be unique")
+        return self
+
 
 def migrate_task(task_dir: str | Path) -> dict[str, Any]:
-    root = Path(task_dir)
-    _recover_interrupted_migration(root)
+    root = Path(task_dir).resolve(strict=False)
+    with task_lock(root, operation="migrate", reclaim_stale=True):
+        _recover_interrupted_migration(root)
+        return _migrate_task_locked(root)
+
+
+def _migrate_task_locked(root: Path) -> dict[str, Any]:
     manifest_path = root / "run_manifest.json"
     manifest = read_json(manifest_path) if manifest_path.exists() else {}
     outputs = manifest.get("outputs", {})
+    if not isinstance(outputs, dict):
+        raise ValueError("migration manifest outputs must be an object")
+    artifact_map = _migration_artifact_map(root, outputs)
 
-    blocks_path = _artifact_path(root, outputs, "blocks", "parsed/blocks.json")
-    evidence_path = _artifact_path(
-        root,
-        outputs,
-        "evidence_index",
-        "parsed/evidence_index.json",
-    )
-    quote_matches_path = _artifact_path(
-        root,
-        outputs,
-        "quote_matches",
-        "extracted/quote_matches.json",
-    )
+    blocks_path = artifact_map["blocks"]
+    evidence_path = artifact_map["evidence_index"]
+    quote_matches_path = artifact_map["quote_matches"]
     if not blocks_path.exists():
         raise ValueError(f"migration blocks artifact not found: {blocks_path}")
     if not evidence_path.exists():
@@ -75,7 +130,7 @@ def migrate_task(task_dir: str | Path) -> dict[str, Any]:
     if evidence_policy not in EVIDENCE_POLICIES:
         raise ValueError(f"unsupported migration EvidencePolicy: {evidence_policy}")
 
-    reqir_artifacts = _reqir_artifact_paths(root, outputs)
+    reqir_artifacts = _reqir_artifact_paths(artifact_map)
     if not reqir_artifacts:
         raise ValueError("migration found no ReqIR package artifacts")
 
@@ -193,7 +248,7 @@ def migrate_task(task_dir: str | Path) -> dict[str, Any]:
         "rebound_source_keys": len(rebound_source_pairs),
         "bound_missing_source_keys": len(bound_missing_source_keys),
     }
-    migration_report_path = root / "migration" / "migration_report.json"
+    migration_report_path = artifact_map["migration_report"]
     migration_report = {
         "schema_version": "migration_report_v1",
         "migration_id": migration_id,
@@ -247,12 +302,7 @@ def migrate_task(task_dir: str | Path) -> dict[str, Any]:
         if package_kind == "export":
             exported_requirements = requirements
 
-    source_map_path = _artifact_path(
-        root,
-        outputs,
-        "source_map",
-        "extracted/source_map.json",
-    )
+    source_map_path = artifact_map["source_map"]
     if exported_requirements is not None:
         payloads[source_map_path] = build_source_map(exported_requirements)
         artifact_types[source_map_path] = "source_map"
@@ -423,38 +473,50 @@ def _prepare_legacy_source(
 
 
 def _reqir_artifact_paths(
-    root: Path,
-    outputs: dict[str, Any],
+    artifact_map: dict[str, Path],
 ) -> list[tuple[str, Path]]:
     candidates = [
-        ("raw", _artifact_path(root, outputs, "reqir_raw", "extracted/reqir.raw.json")),
-        (
-            "validated",
-            _artifact_path(
-                root,
-                outputs,
-                "reqir_validated",
-                "extracted/reqir.validated.json",
-            ),
-        ),
-        (
-            "quarantined",
-            _artifact_path(
-                root,
-                outputs,
-                "reqir_quarantined",
-                "extracted/reqir.quarantined.json",
-            ),
-        ),
-        ("export", _artifact_path(root, outputs, "reqir_export", "exports/reqir.json")),
+        ("raw", artifact_map["reqir_raw"]),
+        ("validated", artifact_map["reqir_validated"]),
+        ("quarantined", artifact_map["reqir_quarantined"]),
+        ("export", artifact_map["reqir_export"]),
     ]
-    result: list[tuple[str, Path]] = []
-    seen: set[Path] = set()
-    for package_kind, path in candidates:
-        if path.exists() and path not in seen:
-            result.append((package_kind, path))
-            seen.add(path)
-    return result
+    return [(package_kind, path) for package_kind, path in candidates if path.exists()]
+
+
+def _migration_artifact_map(
+    root: Path,
+    outputs: dict[str, Any],
+) -> dict[str, Path]:
+    defaults = {
+        "blocks": "parsed/blocks.json",
+        "evidence_index": "parsed/evidence_index.json",
+        "quote_matches": "extracted/quote_matches.json",
+        "reqir_raw": "extracted/reqir.raw.json",
+        "reqir_validated": "extracted/reqir.validated.json",
+        "reqir_quarantined": "extracted/reqir.quarantined.json",
+        "reqir_export": "exports/reqir.json",
+        "source_map": "extracted/source_map.json",
+    }
+    artifact_map = {
+        key: _artifact_path(root, outputs, key, default)
+        for key, default in defaults.items()
+    }
+    artifact_map["manifest"] = _path_within_root(root, root / "run_manifest.json")
+    artifact_map["migration_report"] = _path_within_root(
+        root,
+        root / "migration" / "migration_report.json",
+    )
+    owners: dict[Path, str] = {}
+    for logical_name, path in artifact_map.items():
+        existing = owners.get(path)
+        if existing is not None:
+            raise ValueError(
+                "MIGRATION_ARTIFACT_PATH_COLLISION: "
+                f"{existing} and {logical_name} resolve to {path}"
+            )
+        owners[path] = logical_name
+    return artifact_map
 
 
 def _stage_and_commit(
@@ -466,11 +528,12 @@ def _stage_and_commit(
     artifact_types: dict[Path, str],
     manifest_path: Path | None,
 ) -> None:
-    staging_root = root / ".migration_tmp"
-    staged_files_root = staging_root / "files"
-    backup_root = root / backup_relative / "files"
+    staging_root = _path_within_root(root, root / ".migration_tmp")
+    staged_files_root = _path_within_root(staging_root, staging_root / "files")
+    backup_base = _path_within_root(root, root / backup_relative)
+    backup_root = _path_within_root(backup_base, backup_base / "files")
     if staging_root.exists():
-        shutil.rmtree(staging_root)
+        raise ValueError("MIGRATION_TRANSACTION_STATE_EXISTS")
     staging_root.mkdir(parents=True)
 
     target_records: list[dict[str, Any]] = []
@@ -522,36 +585,34 @@ def _stage_and_commit(
 
 
 def _recover_interrupted_migration(root: Path) -> None:
-    staging_root = root / ".migration_tmp"
+    staging_root = _path_within_root(root, root / ".migration_tmp")
     state_path = staging_root / "state.json"
     if not staging_root.exists():
         return
     if not state_path.exists():
-        shutil.rmtree(staging_root)
-        return
-    try:
-        state = read_json(state_path)
-        status = state["status"]
-        backup_relative = Path(state["backup_path"])
-        targets = state["targets"]
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("MIGRATION_RECOVERY_STATE_INVALID") from exc
-    if status == "committed":
-        shutil.rmtree(staging_root)
-        return
-    if status not in {"prepared", "committing"} or not isinstance(targets, list):
         raise ValueError("MIGRATION_RECOVERY_STATE_INVALID")
+    try:
+        state = MigrationTransactionState.model_validate(read_json(state_path))
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise ValueError("MIGRATION_RECOVERY_STATE_INVALID") from exc
+    if state.status == "committed":
+        shutil.rmtree(staging_root)
+        return
 
-    backup_files_root = root / backup_relative / "files"
-    restore_root = staging_root / "restore"
-    for record in targets:
-        relative = Path(record["path"])
-        target = root / relative
-        if record["existed"]:
-            backup = backup_files_root / relative
+    backup_root = _path_within_root(root, root / state.backup_path)
+    backup_files_root = _path_within_root(backup_root, backup_root / "files")
+    restore_root = _path_within_root(staging_root, staging_root / "restore")
+    for record in state.targets:
+        relative = Path(record.path)
+        target = _path_within_root(root, root / relative)
+        if record.existed:
+            backup = _path_within_root(
+                backup_files_root,
+                backup_files_root / relative,
+            )
             if not backup.exists():
                 raise ValueError("MIGRATION_RECOVERY_BACKUP_MISSING")
-            restore = restore_root / relative
+            restore = _path_within_root(restore_root, restore_root / relative)
             restore.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup, restore)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -583,10 +644,11 @@ def _verify_staged_artifact(path: Path, artifact_type: str) -> None:
 
 
 def _write_state_atomic(path: Path, payload: dict[str, Any]) -> None:
+    validated = MigrationTransactionState.model_validate(payload)
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.parent.mkdir(parents=True, exist_ok=True)
     with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        json.dump(validated.model_dump(mode="json"), handle, ensure_ascii=False, indent=2)
         handle.write("\n")
         handle.flush()
     temporary.replace(path)
@@ -601,6 +663,28 @@ def _relative_artifact_path(root: Path, path: Path) -> Path:
         return path.resolve(strict=False).relative_to(root.resolve(strict=False))
     except ValueError as exc:
         raise ValueError(f"migration artifact is outside task directory: {path}") from exc
+
+
+def _path_within_root(root: Path, path: Path) -> Path:
+    resolved_root = root.resolve(strict=False)
+    resolved_path = path.resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("MIGRATION_RECOVERY_PATH_OUTSIDE_TASK") from exc
+    return resolved_path
+
+
+def _validate_state_relative_path(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("migration transaction path must be a non-empty string")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts or value in {".", "./"}:
+        raise ValueError("migration transaction path must remain inside the task")
+    normalized = path.as_posix()
+    if normalized.startswith("../") or normalized.startswith("/"):
+        raise ValueError("migration transaction path must remain inside the task")
+    return normalized
 
 
 def _migration_id() -> str:
@@ -618,5 +702,4 @@ def _artifact_path(
     if not isinstance(value, str):
         raise ValueError(f"manifest output path must be a string: {key}")
     path = root / value
-    _relative_artifact_path(root, path)
-    return path
+    return _path_within_root(root, path)

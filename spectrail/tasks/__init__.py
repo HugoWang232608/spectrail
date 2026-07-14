@@ -4,6 +4,7 @@ from spectrail.tasks.store import (
     LocalTaskStore,
     TaskNotFoundError,
     TaskStoreError,
+    TaskTransactionInProgressError,
 )
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "READABLE_TASK_STATUSES",
     "TaskNotFoundError",
     "TaskStoreError",
+    "TaskTransactionInProgressError",
     "new_task_id",
 ]

@@ -1,5 +1,6 @@
-from pathlib import Path
+import os
 import socket
+from pathlib import Path
 
 import fitz
 from docx import Document
@@ -149,11 +150,19 @@ def test_api_distinguishes_active_task_lock_from_incomplete_migration(
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
 
     with task_lock(task_dir, operation="background_pipeline"):
-        response = api_client.get(f"/api/tasks/{task_id}")
+        responses = [
+            api_client.get(f"/api/tasks/{task_id}"),
+            api_client.post(f"/api/tasks/{task_id}/run"),
+            api_client.post(
+                f"/api/tasks/{task_id}/review",
+                json={"requirement_id": "REQ-0001", "action": "approve"},
+            ),
+        ]
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "TASK_TRANSACTION_LOCKED"
-    assert response.json()["detail"]["retryable"] is True
+    for response in responses:
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "TASK_TRANSACTION_LOCKED"
+        assert response.json()["detail"]["retryable"] is True
 
 
 def test_api_operation_reclaims_dead_same_host_process_lock(
@@ -173,6 +182,33 @@ def test_api_operation_reclaims_dead_same_host_process_lock(
             "pid": 99999999,
             "host": socket.gethostname(),
             "started_at": "2026-07-14T00:00:00Z",
+        },
+    )
+
+    response = api_client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 200
+    assert not lock_dir.exists()
+
+
+def test_advisory_lock_reclaims_metadata_after_pid_reuse(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    lock_dir = task_dir / ".task.lock"
+    lock_dir.mkdir()
+    write_json(
+        lock_dir / "owner.json",
+        {
+            "schema_version": "task_lock_v2",
+            "token": "old-process-reused-pid",
+            "operation": "api_pipeline_run",
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "started_at": "2026-07-14T00:00:00Z",
+            "lock_protocol": "advisory_v1",
         },
     )
 
@@ -208,6 +244,7 @@ def test_review_race_preserves_transaction_error_code(
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_MIGRATION_INCOMPLETE"
+    assert response.json()["detail"]["retryable"] is False
 
 
 def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):

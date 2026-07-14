@@ -556,13 +556,15 @@ def _stage_and_commit(
         for target in ordered_targets:
             relative = _relative_artifact_path(root, target)
             staged_path = prepared_files_root / relative
-            write_json(staged_path, payloads[target])
+            _write_json_durable(staged_path, payloads[target])
             _verify_staged_artifact(staged_path, artifact_types[target])
             existed = target.exists()
             if existed:
                 backup_path = prepared_backup_root / relative
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(target, backup_path)
+                _fsync_file(backup_path)
+                _fsync_directory(backup_path.parent)
             target_records.append(
                 {
                     "path": relative.as_posix(),
@@ -571,6 +573,7 @@ def _stage_and_commit(
                 }
             )
 
+        _fsync_directory_tree(preparation_root)
         state = {
             "schema_version": "migration_transaction_v1",
             "migration_id": migration_id,
@@ -707,6 +710,27 @@ def _write_state_atomic(path: Path, payload: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
     temporary.replace(path)
     _fsync_directory(path.parent)
+
+
+def _write_json_durable(path: Path, payload: Any) -> None:
+    write_json(path, payload)
+    _fsync_file(path)
+    _fsync_directory(path.parent)
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory_tree(root: Path) -> None:
+    directories = [root, *(path for path in root.rglob("*") if path.is_dir())]
+    for directory in sorted(
+        directories,
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        _fsync_directory(directory)
 
 
 def _fsync_directory(path: Path) -> None:

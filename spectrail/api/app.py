@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from spectrail.api.routes import exports, review, sources, tasks
+from spectrail.api.transaction_errors import task_transaction_error_detail
+from spectrail.task_transactions import TaskTransactionError
 from spectrail.tasks import LocalTaskStore, TaskTransactionInProgressError
 
 
@@ -18,21 +20,16 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.exception_handler(TaskTransactionError)
     @app.exception_handler(TaskTransactionInProgressError)
     async def task_transaction_in_progress(
         request: Request,
-        exc: TaskTransactionInProgressError,
+        exc: TaskTransactionError | TaskTransactionInProgressError,
     ) -> JSONResponse:
         del request
         return JSONResponse(
             status_code=409,
-            content={
-                "detail": {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retryable": exc.code == "TASK_TRANSACTION_LOCKED",
-                }
-            },
+            content={"detail": task_transaction_error_detail(exc)},
         )
 
     app.include_router(tasks.router, prefix="/api")

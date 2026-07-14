@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import ReviewRequest, ReviewResponse
+from spectrail.api.transaction_errors import task_transaction_http_error
 from spectrail.review.service import apply_review_to_package
 from spectrail.task_transactions import TaskTransactionError
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
@@ -39,7 +40,7 @@ def review_requirement(
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
     except TaskTransactionError as exc:
-        raise _error(409, exc.code, str(exc)) from exc
+        raise task_transaction_http_error(exc) from exc
     except ValueError as exc:
         message = str(exc)
         code = "REQUIREMENT_NOT_FOUND" if message.startswith("requirement not found") else "INVALID_REVIEW_ACTION"

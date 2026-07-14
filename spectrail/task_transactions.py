@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import socket
@@ -12,6 +13,16 @@ from typing import Iterator
 from uuid import uuid4
 
 from spectrail.core.io import read_json, write_json
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None  # type: ignore[assignment]
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX
+    msvcrt = None  # type: ignore[assignment]
 
 
 TASK_TRANSACTION_LOCKED = "TASK_TRANSACTION_LOCKED"
@@ -66,21 +77,32 @@ def task_lock(
     root.mkdir(parents=True, exist_ok=True)
     lock_dir = root / ".task.lock"
     token = uuid4().hex
-    acquired = _acquire_lock_dir(
-        lock_dir,
-        operation=operation,
-        token=token,
-        reclaim_stale=reclaim_stale,
-    )
-    if not acquired:
-        raise TaskTransactionError(
-            TASK_TRANSACTION_LOCKED,
-            f"{root}; retry after the active task operation finishes",
+    with _task_advisory_lock(root) as advisory_acquired:
+        if not advisory_acquired:
+            raise TaskTransactionError(
+                TASK_TRANSACTION_LOCKED,
+                f"{root}; retry after the active task operation finishes",
+            )
+        acquired = _acquire_lock_dir(
+            lock_dir,
+            operation=operation,
+            token=token,
+            reclaim_stale=reclaim_stale,
+            lock_protocol=(
+                "advisory_v1"
+                if fcntl is not None or msvcrt is not None
+                else "pid_v1"
+            ),
         )
-    try:
-        yield
-    finally:
-        _release_lock_dir(lock_dir, token)
+        if not acquired:
+            raise TaskTransactionError(
+                TASK_TRANSACTION_LOCKED,
+                f"{root}; retry after the active task operation finishes",
+            )
+        try:
+            yield
+        finally:
+            _release_lock_dir(lock_dir, token)
 
 
 def ensure_task_transaction_clean(task_dir: str | Path) -> None:
@@ -108,6 +130,7 @@ def task_root_for_artifact(path: str | Path) -> Path | None:
                 "task.json",
                 ".migration_tmp",
                 ".task.lock",
+                ".task.lock.guard",
             )
         ):
             return candidate
@@ -122,6 +145,7 @@ def _acquire_lock_dir(
     operation: str,
     token: str,
     reclaim_stale: bool,
+    lock_protocol: str,
 ) -> bool:
     for _ in range(2):
         if lock_dir.is_symlink():
@@ -134,12 +158,13 @@ def _acquire_lock_dir(
             write_json(
                 owner_path,
                 {
-                    "schema_version": "task_lock_v1",
+                    "schema_version": "task_lock_v2",
                     "token": token,
                     "operation": operation,
                     "pid": os.getpid(),
                     "host": socket.gethostname(),
                     "started_at": _now_iso(),
+                    "lock_protocol": lock_protocol,
                 },
             )
             _fsync_file(owner_path)
@@ -164,16 +189,28 @@ def _reclaim_stale_lock(lock_dir: Path) -> bool:
     owner_path = lock_dir / "owner.json"
     try:
         owner = read_json(owner_path)
+        schema_version = owner["schema_version"]
         host = owner["host"]
         pid = owner["pid"]
+        if schema_version == "task_lock_v1":
+            lock_protocol = "pid_v1"
+        elif schema_version == "task_lock_v2":
+            lock_protocol = owner["lock_protocol"]
+        else:
+            raise ValueError("task lock schema version is invalid")
         if not isinstance(host, str) or isinstance(pid, bool) or not isinstance(pid, int):
             raise ValueError("task lock owner is invalid")
+        if lock_protocol not in {"pid_v1", "advisory_v1"}:
+            raise ValueError("task lock protocol is invalid")
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         if not _malformed_lock_is_stale(lock_dir):
             return False
         host = socket.gethostname()
         pid = -1
-    if host != socket.gethostname() or _pid_is_alive(pid):
+        lock_protocol = "pid_v1"
+    if lock_protocol != "advisory_v1" and (
+        host != socket.gethostname() or _pid_is_alive(pid)
+    ):
         return False
     stale_dir = lock_dir.with_name(f".task.lock.stale.{uuid4().hex}")
     try:
@@ -213,6 +250,52 @@ def _malformed_lock_is_stale(lock_dir: Path) -> bool:
     except OSError:
         return False
     return age >= _MALFORMED_LOCK_STALE_AFTER_SECONDS
+
+
+@contextmanager
+def _task_advisory_lock(task_root: Path) -> Iterator[bool]:
+    guard_path = task_root / ".task.lock.guard"
+    if guard_path.is_symlink():
+        yield False
+        return
+    handle = guard_path.open("a+b")
+    acquired = True
+    if fcntl is not None:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                handle.close()
+                raise
+            acquired = False
+    elif msvcrt is not None:  # pragma: no cover - Windows
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                handle.close()
+                raise
+            acquired = False
+    try:
+        yield acquired
+    finally:
+        if acquired and fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        elif acquired and msvcrt is not None:  # pragma: no cover - Windows
+            try:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        handle.close()
 
 
 def _fsync_file(path: Path) -> None:

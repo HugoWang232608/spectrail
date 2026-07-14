@@ -681,7 +681,11 @@ def test_lock_owner_write_failure_never_publishes_official_lock(
             pass
 
     assert not (output / ".task.lock").exists()
-    assert not list(output.glob(".task.lock.*"))
+    assert not [
+        path
+        for path in output.glob(".task.lock.*")
+        if path.name != ".task.lock.guard"
+    ]
 
 
 def test_migrate_conservatively_reclaims_old_lock_without_owner(
@@ -768,6 +772,64 @@ def test_validate_rejects_non_object_manifest_outputs(tmp_path: Path):
                 str(output / "parsed" / "blocks.json"),
             ]
         )
+
+
+def test_validate_explicit_artifacts_bypass_invalid_manifest_paths(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    manifest_path = output / "run_manifest.json"
+    manifest = read_json(manifest_path)
+    manifest["outputs"]["quote_matches"] = "../../unsafe-quotes.json"
+    manifest["outputs"]["evidence_index"] = "../../unsafe-evidence.json"
+    write_json(manifest_path, manifest)
+
+    assert (
+        main(
+            [
+                "validate",
+                str(output / "exports" / "reqir.json"),
+                "--blocks",
+                str(output / "parsed" / "blocks.json"),
+                "--quote-matches",
+                str(output / "extracted" / "quote_matches.json"),
+                "--evidence-index",
+                str(output / "parsed" / "evidence_index.json"),
+            ]
+        )
+        == 0
+    )
+
+
+def test_migration_fsyncs_staged_and_backup_files_before_prepared_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    events: list[tuple[str, Path]] = []
+    original_fsync_file = migrations._fsync_file
+    original_write_state = migrations._write_state_atomic
+
+    def observe_fsync(path: Path) -> None:
+        events.append(("file", path))
+        original_fsync_file(path)
+
+    def observe_state(path: Path, payload: dict) -> None:
+        if payload["status"] == "prepared":
+            events.append(("prepared", path))
+        original_write_state(path, payload)
+
+    monkeypatch.setattr(migrations, "_fsync_file", observe_fsync)
+    monkeypatch.setattr(migrations, "_write_state_atomic", observe_state)
+
+    assert main(["migrate", str(output)]) == 0
+
+    prepared_index = next(
+        index for index, event in enumerate(events) if event[0] == "prepared"
+    )
+    durable_paths = [path for kind, path in events[:prepared_index] if kind == "file"]
+    assert any("/files/" in path.as_posix() for path in durable_paths)
+    assert any("/backup/files/" in path.as_posix() for path in durable_paths)
 
 
 def test_migration_state_is_fsynced_before_parent_directory(

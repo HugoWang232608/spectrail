@@ -34,6 +34,7 @@ class TaskTransactionInProgressError(TaskStoreError):
             if message.startswith("TASK_TRANSACTION_LOCKED:")
             else "TASK_MIGRATION_INCOMPLETE"
         )
+        self.retryable = self.code == "TASK_TRANSACTION_LOCKED"
         super().__init__(message)
 
 

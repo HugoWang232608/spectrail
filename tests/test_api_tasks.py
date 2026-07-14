@@ -10,6 +10,7 @@ import spectrail.api.routes.review as review_routes
 from spectrail.core.io import write_json
 from spectrail.parsers.markdown_parser import MarkdownParser
 from spectrail.task_transactions import TaskTransactionError, task_lock
+from spectrail.tasks import TaskTransactionInProgressError
 
 
 def test_api_task_flow(api_client: TestClient):
@@ -245,6 +246,20 @@ def test_review_race_preserves_transaction_error_code(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_MIGRATION_INCOMPLETE"
     assert response.json()["detail"]["retryable"] is False
+
+
+def test_task_store_transaction_wrapper_preserves_structured_error_fields():
+    cause = TaskTransactionError(
+        "TASK_TRANSACTION_CUSTOM",
+        "custom transaction context",
+    )
+
+    wrapped = TaskTransactionInProgressError(cause)
+
+    assert wrapped.cause is cause
+    assert wrapped.code == "TASK_TRANSACTION_CUSTOM"
+    assert wrapped.message == "custom transaction context"
+    assert wrapped.retryable is False
 
 
 def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):

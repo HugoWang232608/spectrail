@@ -755,6 +755,32 @@ def test_validate_rejects_manifest_artifact_outside_task_root(tmp_path: Path):
         )
 
 
+def test_validate_rejects_local_artifact_symlink_outside_task_root(
+    tmp_path: Path,
+):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(first)]) == 0
+    assert main(["extract", "docs/sample_srs.md", "--output", str(second)]) == 0
+    local_evidence = first / "exports" / "evidence_index.json"
+    local_evidence.symlink_to(
+        second / "parsed" / "evidence_index.json"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="VALIDATION_LOCAL_ARTIFACT_OUTSIDE_TASK",
+    ):
+        main(
+            [
+                "validate",
+                str(first / "exports" / "reqir.json"),
+                "--blocks",
+                str(first / "parsed" / "blocks.json"),
+            ]
+        )
+
+
 def test_validate_rejects_non_object_manifest_outputs(tmp_path: Path):
     output = tmp_path / "demo"
     assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
@@ -863,6 +889,37 @@ def test_migration_state_is_fsynced_before_parent_directory(
     assert events[0].startswith("file:")
     assert events[1] == "directory:transaction"
     assert read_json(state_path)["status"] == "prepared"
+
+
+def test_migrate_cleans_only_strict_abandoned_preparations_without_following_symlinks(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    abandoned = (
+        output
+        / ".migration_prepare_20260714T000000000000Z_deadbeef"
+    )
+    abandoned.mkdir()
+    (abandoned / "sensitive.json").write_text("staged", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.json"
+    sentinel.write_text("keep", encoding="utf-8")
+    abandoned_symlink = (
+        output
+        / ".migration_prepare_20260714T000000000001Z_feedface"
+    )
+    abandoned_symlink.symlink_to(outside, target_is_directory=True)
+    nonmatching = output / ".migration_prepare_keep"
+    nonmatching.mkdir()
+
+    assert main(["migrate", str(output)]) == 0
+
+    assert not abandoned.exists()
+    assert not abandoned_symlink.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert nonmatching.is_dir()
 
 
 def test_migrate_cli_upgrades_valid_evidence_v4(tmp_path: Path):

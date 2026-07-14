@@ -368,16 +368,22 @@ def _validation_artifact_paths(
     if explicit_evidence is not None and not explicit_evidence.exists():
         raise ValueError(f"evidence index artifact not found: {explicit_evidence}")
 
+    task_dir = task_root_for_artifact(reqir_path) or reqir_path.parent.parent
+    task_dir = task_dir.resolve(strict=False)
     local_quote = reqir_path.parent / "quote_matches.json"
     local_evidence = reqir_path.parent / "evidence_index.json"
-    resolved_quote = explicit_quote or (local_quote if local_quote.exists() else None)
-    resolved_evidence = explicit_evidence or (
-        local_evidence if local_evidence.exists() else None
+    resolved_quote = explicit_quote or _resolve_local_validation_artifact(
+        local_quote,
+        expected_task_root=task_dir,
+        artifact_name="quote_matches",
+    )
+    resolved_evidence = explicit_evidence or _resolve_local_validation_artifact(
+        local_evidence,
+        expected_task_root=task_dir,
+        artifact_name="evidence_index",
     )
 
     if resolved_quote is None or resolved_evidence is None:
-        task_dir = task_root_for_artifact(reqir_path) or reqir_path.parent.parent
-        task_dir = task_dir.resolve(strict=False)
         manifest_path = task_dir / "run_manifest.json"
         manifest = read_json(manifest_path) if manifest_path.exists() else {}
         if not isinstance(manifest, dict):
@@ -405,6 +411,34 @@ def _validation_artifact_paths(
                 manifest_evidence if manifest_evidence.exists() else None
             )
     return resolved_quote, resolved_evidence
+
+
+def _resolve_local_validation_artifact(
+    candidate: Path,
+    *,
+    expected_task_root: Path,
+    artifact_name: str,
+) -> Path | None:
+    if not candidate.exists() and not candidate.is_symlink():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (FileNotFoundError, RuntimeError, OSError) as exc:
+        raise ValueError(
+            f"VALIDATION_LOCAL_ARTIFACT_INVALID: {artifact_name}"
+        ) from exc
+    root = expected_task_root.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"VALIDATION_LOCAL_ARTIFACT_OUTSIDE_TASK: {artifact_name}"
+        ) from exc
+    if not resolved.is_file():
+        raise ValueError(
+            f"VALIDATION_LOCAL_ARTIFACT_INVALID: {artifact_name}"
+        )
+    return resolved
 
 
 def _validation_manifest_output_path(

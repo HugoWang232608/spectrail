@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,9 @@ EVIDENCE_POLICIES = {
     "structured_if_available",
     "structured_required",
 }
+_ABANDONED_PREPARATION_PATTERN = re.compile(
+    r"^\.migration_prepare_[0-9]{8}T[0-9]{12}Z_[0-9a-f]{8}$"
+)
 
 MigrationArtifactType = Literal[
     "evidence",
@@ -100,8 +104,29 @@ class MigrationTransactionState(BaseModel):
 def migrate_task(task_dir: str | Path) -> dict[str, Any]:
     root = Path(task_dir).resolve(strict=False)
     with task_lock(root, operation="migrate", reclaim_stale=True):
+        _cleanup_abandoned_preparations(root)
         _recover_interrupted_migration(root)
         return _migrate_task_locked(root)
+
+
+def _cleanup_abandoned_preparations(root: Path) -> None:
+    removed = False
+    for candidate in root.iterdir():
+        if _ABANDONED_PREPARATION_PATTERN.fullmatch(candidate.name) is None:
+            continue
+        try:
+            if candidate.is_symlink() or not candidate.is_dir():
+                candidate.unlink()
+            else:
+                shutil.rmtree(candidate)
+        except OSError as exc:
+            raise ValueError(
+                "MIGRATION_ABANDONED_PREPARATION_CLEANUP_FAILED: "
+                f"{candidate.name}"
+            ) from exc
+        removed = True
+    if removed:
+        _fsync_directory(root)
 
 
 def _migrate_task_locked(root: Path) -> dict[str, Any]:

@@ -28,14 +28,12 @@ class TaskNotReadyError(TaskStoreError):
 
 
 class TaskTransactionInProgressError(TaskStoreError):
-    def __init__(self, message: str) -> None:
-        self.code = (
-            "TASK_TRANSACTION_LOCKED"
-            if message.startswith("TASK_TRANSACTION_LOCKED:")
-            else "TASK_MIGRATION_INCOMPLETE"
-        )
-        self.retryable = self.code == "TASK_TRANSACTION_LOCKED"
-        super().__init__(message)
+    def __init__(self, cause: TaskTransactionError) -> None:
+        self.cause = cause
+        self.code = cause.code
+        self.message = cause.message
+        self.retryable = cause.retryable
+        super().__init__(str(cause))
 
 
 class BlocksNotFoundError(TaskStoreError):
@@ -91,7 +89,7 @@ class LocalTaskStore:
             with task_operation(task_dir, "task_read"):
                 return read_json(task_dir / "task.json")
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_status_snapshot(
         self,
@@ -105,7 +103,7 @@ class LocalTaskStore:
                 manifest = read_json(manifest_path) if manifest_path.exists() else None
                 return task, manifest
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def save_document(self, task_id: str, filename: str, content: bytes) -> Path:
         suffix = Path(filename).suffix.lower()
@@ -128,7 +126,7 @@ class LocalTaskStore:
                 )
                 return document_path
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def copy_document(self, task_id: str, source: str | Path) -> Path:
         source_path = Path(source)
@@ -148,7 +146,7 @@ class LocalTaskStore:
                     raise TaskNotReadyError(f"uploaded document missing: {task_id}")
                 return document_path
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def update_task(self, task_id: str, **patch: object) -> dict[str, Any]:
         task_dir = self.get_task_dir(task_id)
@@ -160,7 +158,7 @@ class LocalTaskStore:
                 write_json(task_dir / "task.json", task)
                 return task
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_manifest(self, task_id: str) -> dict[str, Any] | None:
         task_dir = self.get_task_dir(task_id)
@@ -171,7 +169,7 @@ class LocalTaskStore:
                     return None
                 return read_json(manifest_path)
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_reqir(self, task_id: str) -> dict[str, Any]:
         task_dir = self.get_task_dir(task_id)
@@ -183,7 +181,7 @@ class LocalTaskStore:
                     raise TaskNotReadyError(f"reqir export missing: {task_id}")
                 return read_json(reqir_path)
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_blocks(self, task_id: str) -> list[dict[str, Any]]:
         task_dir = self.get_task_dir(task_id)
@@ -195,7 +193,7 @@ class LocalTaskStore:
                     raise BlocksNotFoundError(f"blocks not found: {task_id}")
                 return [_normalize_block(block) for block in read_json(blocks_path)]
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_chunks(self, task_id: str) -> list[dict[str, Any]]:
         task_dir = self.get_task_dir(task_id)
@@ -207,7 +205,7 @@ class LocalTaskStore:
                     raise BlocksNotFoundError(f"chunks not found: {task_id}")
                 return read_json(chunks_path)
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_quarantined(self, task_id: str) -> dict[str, Any]:
         task_dir = self.get_task_dir(task_id)
@@ -219,7 +217,7 @@ class LocalTaskStore:
                     raise TaskNotReadyError(f"quarantined ReqIR artifact missing: {task_id}")
                 return read_json(path)
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def require_readable_task(self, task_id: str) -> dict[str, Any]:
         task_dir = self.get_task_dir(task_id)
@@ -230,7 +228,7 @@ class LocalTaskStore:
                     raise TaskNotReadyError(f"task is not completed: {task_id}")
                 return task
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def get_export_path(self, task_id: str, filename: str) -> Path:
         if filename not in {"reqir.json", "requirements.xlsx"}:
@@ -240,7 +238,7 @@ class LocalTaskStore:
             with task_operation(task_dir, "export_read"):
                 return task_dir / "exports" / filename
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def read_export(self, task_id: str, filename: str) -> bytes:
         task_dir = self.get_task_dir(task_id)
@@ -252,7 +250,7 @@ class LocalTaskStore:
                     raise FileNotFoundError(filename)
                 return path.read_bytes()
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
     def reset_output_from_pipeline(self, task_id: str) -> None:
         task_dir = self.get_task_dir(task_id)
@@ -263,7 +261,7 @@ class LocalTaskStore:
                     if target.exists():
                         shutil.rmtree(target)
         except TaskTransactionError as exc:
-            raise TaskTransactionInProgressError(str(exc)) from exc
+            raise TaskTransactionInProgressError(exc) from exc
 
 
 def _now_iso() -> str:

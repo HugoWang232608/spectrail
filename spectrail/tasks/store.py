@@ -92,6 +92,20 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(str(exc)) from exc
 
+    def read_status_snapshot(
+        self,
+        task_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "task_status_snapshot"):
+                task = read_json(task_dir / "task.json")
+                manifest_path = task_dir / "run_manifest.json"
+                manifest = read_json(manifest_path) if manifest_path.exists() else None
+                return task, manifest
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(str(exc)) from exc
+
     def save_document(self, task_id: str, filename: str, content: bytes) -> Path:
         suffix = Path(filename).suffix.lower()
         if suffix not in SUPPORTED_DOCUMENT_SUFFIXES:

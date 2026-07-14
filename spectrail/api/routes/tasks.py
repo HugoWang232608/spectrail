@@ -163,8 +163,7 @@ def get_task(
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        task = store.get_task(task_id)
-        manifest = store.read_manifest(task_id)
+        task, manifest = store.read_status_snapshot(task_id)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     return {"task_id": task_id, "status": task["status"], "task": task, "manifest": manifest}

@@ -1,10 +1,12 @@
 from pathlib import Path
+import socket
 
 import fitz
 from docx import Document
 from fastapi.testclient import TestClient
 
 import spectrail.api.routes.review as review_routes
+from spectrail.core.io import write_json
 from spectrail.parsers.markdown_parser import MarkdownParser
 from spectrail.task_transactions import TaskTransactionError, task_lock
 
@@ -152,6 +154,32 @@ def test_api_distinguishes_active_task_lock_from_incomplete_migration(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_TRANSACTION_LOCKED"
     assert response.json()["detail"]["retryable"] is True
+
+
+def test_api_operation_reclaims_dead_same_host_process_lock(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    lock_dir = task_dir / ".task.lock"
+    lock_dir.mkdir()
+    write_json(
+        lock_dir / "owner.json",
+        {
+            "schema_version": "task_lock_v1",
+            "token": "crashed-process",
+            "operation": "api_pipeline_run",
+            "pid": 99999999,
+            "host": socket.gethostname(),
+            "started_at": "2026-07-14T00:00:00Z",
+        },
+    )
+
+    response = api_client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 200
+    assert not lock_dir.exists()
 
 
 def test_review_race_preserves_transaction_error_code(

@@ -725,6 +725,84 @@ def test_validate_rejects_artifacts_from_different_task_roots(tmp_path: Path):
         )
 
 
+def test_validate_rejects_manifest_artifact_outside_task_root(tmp_path: Path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(first)]) == 0
+    assert main(["extract", "docs/sample_srs.md", "--output", str(second)]) == 0
+    manifest_path = first / "run_manifest.json"
+    manifest = read_json(manifest_path)
+    manifest["outputs"]["evidence_index"] = (
+        "../second/parsed/evidence_index.json"
+    )
+    write_json(manifest_path, manifest)
+
+    with pytest.raises(
+        ValueError,
+        match="VALIDATION_MANIFEST_OUTPUT_PATH_OUTSIDE_TASK",
+    ):
+        main(
+            [
+                "validate",
+                str(first / "exports" / "reqir.json"),
+                "--blocks",
+                str(first / "parsed" / "blocks.json"),
+            ]
+        )
+
+
+def test_validate_rejects_non_object_manifest_outputs(tmp_path: Path):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    manifest_path = output / "run_manifest.json"
+    manifest = read_json(manifest_path)
+    manifest["outputs"] = []
+    write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="VALIDATION_MANIFEST_OUTPUTS_INVALID"):
+        main(
+            [
+                "validate",
+                str(output / "exports" / "reqir.json"),
+                "--blocks",
+                str(output / "parsed" / "blocks.json"),
+            ]
+        )
+
+
+def test_migration_state_is_fsynced_before_parent_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events: list[str] = []
+    state_path = tmp_path / "transaction" / "state.json"
+    state = {
+        "schema_version": "migration_transaction_v1",
+        "migration_id": "20260714T000000000000Z_deadbeef",
+        "status": "prepared",
+        "backup_path": (
+            ".migration_backup/20260714T000000000000Z_deadbeef"
+        ),
+        "targets": [],
+    }
+
+    monkeypatch.setattr(
+        migrations.os,
+        "fsync",
+        lambda descriptor: events.append(f"file:{descriptor}"),
+    )
+    monkeypatch.setattr(
+        migrations,
+        "_fsync_directory",
+        lambda path: events.append(f"directory:{path.name}"),
+    )
+    migrations._write_state_atomic(state_path, state)
+
+    assert events[0].startswith("file:")
+    assert events[1] == "directory:transaction"
+    assert read_json(state_path)["status"] == "prepared"
+
+
 def test_migrate_cli_upgrades_valid_evidence_v4(tmp_path: Path):
     output = tmp_path / "demo"
     assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0

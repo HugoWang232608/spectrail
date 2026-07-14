@@ -46,7 +46,7 @@ def task_operation(
             held[root] -= 1
         return
 
-    with task_lock(root, operation=operation):
+    with task_lock(root, operation=operation, reclaim_stale=True):
         held[root] = 1
         try:
             ensure_task_transaction_clean(root)
@@ -167,7 +167,7 @@ def _reclaim_stale_lock(lock_dir: Path) -> bool:
         host = owner["host"]
         pid = owner["pid"]
         if not isinstance(host, str) or isinstance(pid, bool) or not isinstance(pid, int):
-            return False
+            raise ValueError("task lock owner is invalid")
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         if not _malformed_lock_is_stale(lock_dir):
             return False

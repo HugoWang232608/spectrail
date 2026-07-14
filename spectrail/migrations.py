@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -579,6 +580,7 @@ def _stage_and_commit(
         }
         _write_state_atomic(preparation_root / "state.json", state)
         preparation_root.replace(staging_root)
+        _fsync_directory(root)
     except Exception:
         shutil.rmtree(preparation_root, ignore_errors=True)
         raise
@@ -594,17 +596,20 @@ def _stage_and_commit(
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             _replace_staged_file(source, target)
+            _fsync_directory(target.parent)
         prepared_backup_base = staging_root / "backup"
         backup_base.parent.mkdir(parents=True, exist_ok=True)
         if backup_base.exists():
             raise ValueError("MIGRATION_BACKUP_ALREADY_EXISTS")
         prepared_backup_base.replace(backup_base)
+        _fsync_directory(backup_base.parent)
     except Exception as exc:
         raise ValueError("MIGRATION_COMMIT_INTERRUPTED") from exc
 
     state["status"] = "committed"
     _write_state_atomic(state_path, state)
     shutil.rmtree(staging_root)
+    _fsync_directory(root)
 
 
 def _recover_interrupted_migration(root: Path) -> None:
@@ -614,6 +619,7 @@ def _recover_interrupted_migration(root: Path) -> None:
         return
     if not state_path.exists():
         shutil.rmtree(staging_root)
+        _fsync_directory(root)
         return
     try:
         state = MigrationTransactionState.model_validate(read_json(state_path))
@@ -621,6 +627,7 @@ def _recover_interrupted_migration(root: Path) -> None:
         raise ValueError("MIGRATION_RECOVERY_STATE_INVALID") from exc
     if state.status == "committed":
         shutil.rmtree(staging_root)
+        _fsync_directory(root)
         return
 
     backup_root = _path_within_root(root, root / state.backup_path)
@@ -654,14 +661,18 @@ def _recover_interrupted_migration(root: Path) -> None:
             shutil.copy2(backup, restore)
             target.parent.mkdir(parents=True, exist_ok=True)
             restore.replace(target)
+            _fsync_directory(target.parent)
         elif target.exists():
             target.unlink()
+            _fsync_directory(target.parent)
     if uses_internal_backup:
         backup_root.parent.mkdir(parents=True, exist_ok=True)
         if backup_root.exists():
             raise ValueError("MIGRATION_RECOVERY_BACKUP_COLLISION")
         (staging_root / "backup").replace(backup_root)
+        _fsync_directory(backup_root.parent)
     shutil.rmtree(staging_root)
+    _fsync_directory(root)
 
 
 def _verify_staged_artifact(path: Path, artifact_type: str) -> None:
@@ -693,7 +704,22 @@ def _write_state_atomic(path: Path, payload: dict[str, Any]) -> None:
         json.dump(validated.model_dump(mode="json"), handle, ensure_ascii=False, indent=2)
         handle.write("\n")
         handle.flush()
+        os.fsync(handle.fileno())
     temporary.replace(path)
+    _fsync_directory(path.parent)
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
 
 
 def _replace_staged_file(source: Path, target: Path) -> None:

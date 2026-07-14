@@ -368,18 +368,36 @@ def _validation_artifact_paths(
     if explicit_evidence is not None and not explicit_evidence.exists():
         raise ValueError(f"evidence index artifact not found: {explicit_evidence}")
 
-    task_dir = reqir_path.parent.parent
+    task_dir = task_root_for_artifact(reqir_path) or reqir_path.parent.parent
+    task_dir = task_dir.resolve(strict=False)
     manifest_path = task_dir / "run_manifest.json"
     manifest = read_json(manifest_path) if manifest_path.exists() else {}
+    if not isinstance(manifest, dict):
+        raise ValueError("VALIDATION_MANIFEST_INVALID")
     outputs = manifest.get("outputs", {})
+    if not isinstance(outputs, dict):
+        raise ValueError("VALIDATION_MANIFEST_OUTPUTS_INVALID")
+
+    manifest_quote = _validation_manifest_output_path(
+        task_dir,
+        outputs,
+        "quote_matches",
+        "extracted/quote_matches.json",
+    )
+    manifest_evidence = _validation_manifest_output_path(
+        task_dir,
+        outputs,
+        "evidence_index",
+        "parsed/evidence_index.json",
+    )
 
     quote_candidates = [
         reqir_path.parent / "quote_matches.json",
-        task_dir / outputs.get("quote_matches", "extracted/quote_matches.json"),
+        manifest_quote,
     ]
     evidence_candidates = [
         reqir_path.parent / "evidence_index.json",
-        task_dir / outputs.get("evidence_index", "parsed/evidence_index.json"),
+        manifest_evidence,
     ]
     resolved_quote = explicit_quote or next(
         (path for path in quote_candidates if path.exists()), None
@@ -388,6 +406,37 @@ def _validation_artifact_paths(
         (path for path in evidence_candidates if path.exists()), None
     )
     return resolved_quote, resolved_evidence
+
+
+def _validation_manifest_output_path(
+    task_dir: Path,
+    outputs: dict[str, object],
+    key: str,
+    default: str,
+) -> Path:
+    value = outputs.get(key, default)
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or value in {".", "./"}
+    ):
+        raise ValueError(
+            f"VALIDATION_MANIFEST_OUTPUT_PATH_INVALID: {key}"
+        )
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(
+            f"VALIDATION_MANIFEST_OUTPUT_PATH_OUTSIDE_TASK: {key}"
+        )
+    root = task_dir.resolve(strict=False)
+    resolved = (root / relative).resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"VALIDATION_MANIFEST_OUTPUT_PATH_OUTSIDE_TASK: {key}"
+        ) from exc
+    return resolved
 
 
 def run_export(args: argparse.Namespace) -> int:

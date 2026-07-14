@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +14,17 @@ from uuid import uuid4
 from spectrail.core.io import read_json, write_json
 
 
+TASK_TRANSACTION_LOCKED = "TASK_TRANSACTION_LOCKED"
+TASK_MIGRATION_INCOMPLETE = "TASK_MIGRATION_INCOMPLETE"
+_MALFORMED_LOCK_STALE_AFTER_SECONDS = 300
+
+
 class TaskTransactionError(ValueError):
-    pass
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        self.retryable = code == TASK_TRANSACTION_LOCKED
+        super().__init__(f"{code}: {message}")
 
 
 _local = threading.local()
@@ -64,7 +74,8 @@ def task_lock(
     )
     if not acquired:
         raise TaskTransactionError(
-            f"TASK_TRANSACTION_LOCKED: {root}; retry after the active task operation finishes"
+            TASK_TRANSACTION_LOCKED,
+            f"{root}; retry after the active task operation finishes",
         )
     try:
         yield
@@ -76,13 +87,14 @@ def ensure_task_transaction_clean(task_dir: str | Path) -> None:
     root = Path(task_dir).resolve(strict=False)
     if (root / ".task.lock").exists() and root not in _held_roots():
         raise TaskTransactionError(
-            f"TASK_TRANSACTION_LOCKED: {root}; retry after the active task operation finishes"
+            TASK_TRANSACTION_LOCKED,
+            f"{root}; retry after the active task operation finishes",
         )
     staging_root = root / ".migration_tmp"
     if staging_root.exists():
         raise TaskTransactionError(
-            "TASK_MIGRATION_INCOMPLETE: run: "
-            f"spectrail migrate {root}"
+            TASK_MIGRATION_INCOMPLETE,
+            f"run: spectrail migrate {root}",
         )
 
 
@@ -114,24 +126,37 @@ def _acquire_lock_dir(
     for _ in range(2):
         if lock_dir.is_symlink():
             return False
+        temporary_lock_dir = lock_dir.with_name(f"{lock_dir.name}.{token}")
+        shutil.rmtree(temporary_lock_dir, ignore_errors=True)
         try:
-            lock_dir.mkdir()
-        except FileExistsError:
+            temporary_lock_dir.mkdir()
+            owner_path = temporary_lock_dir / "owner.json"
+            write_json(
+                owner_path,
+                {
+                    "schema_version": "task_lock_v1",
+                    "token": token,
+                    "operation": operation,
+                    "pid": os.getpid(),
+                    "host": socket.gethostname(),
+                    "started_at": _now_iso(),
+                },
+            )
+            _fsync_file(owner_path)
+            _fsync_directory(temporary_lock_dir)
+            os.rename(temporary_lock_dir, lock_dir)
+            _fsync_directory(lock_dir.parent)
+            return True
+        except OSError:
+            shutil.rmtree(temporary_lock_dir, ignore_errors=True)
+            if not lock_dir.exists():
+                raise
             if not reclaim_stale or not _reclaim_stale_lock(lock_dir):
                 return False
             continue
-        write_json(
-            lock_dir / "owner.json",
-            {
-                "schema_version": "task_lock_v1",
-                "token": token,
-                "operation": operation,
-                "pid": os.getpid(),
-                "host": socket.gethostname(),
-                "started_at": _now_iso(),
-            },
-        )
-        return True
+        except Exception:
+            shutil.rmtree(temporary_lock_dir, ignore_errors=True)
+            raise
     return False
 
 
@@ -144,7 +169,10 @@ def _reclaim_stale_lock(lock_dir: Path) -> bool:
         if not isinstance(host, str) or isinstance(pid, bool) or not isinstance(pid, int):
             return False
     except (FileNotFoundError, KeyError, TypeError, ValueError):
-        return False
+        if not _malformed_lock_is_stale(lock_dir):
+            return False
+        host = socket.gethostname()
+        pid = -1
     if host != socket.gethostname() or _pid_is_alive(pid):
         return False
     stale_dir = lock_dir.with_name(f".task.lock.stale.{uuid4().hex}")
@@ -177,6 +205,32 @@ def _pid_is_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _malformed_lock_is_stale(lock_dir: Path) -> bool:
+    try:
+        age = time.time() - lock_dir.stat().st_mtime
+    except OSError:
+        return False
+    return age >= _MALFORMED_LOCK_STALE_AFTER_SECONDS
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
 
 
 def _held_roots() -> dict[Path, int]:

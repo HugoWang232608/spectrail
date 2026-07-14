@@ -28,8 +28,9 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
             status_code=409,
             content={
                 "detail": {
-                    "code": "TASK_MIGRATION_INCOMPLETE",
+                    "code": exc.code,
                     "message": str(exc),
+                    "retryable": exc.code == "TASK_TRANSACTION_LOCKED",
                 }
             },
         )

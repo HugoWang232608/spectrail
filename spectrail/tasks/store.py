@@ -28,7 +28,13 @@ class TaskNotReadyError(TaskStoreError):
 
 
 class TaskTransactionInProgressError(TaskStoreError):
-    pass
+    def __init__(self, message: str) -> None:
+        self.code = (
+            "TASK_TRANSACTION_LOCKED"
+            if message.startswith("TASK_TRANSACTION_LOCKED:")
+            else "TASK_MIGRATION_INCOMPLETE"
+        )
+        super().__init__(message)
 
 
 class BlocksNotFoundError(TaskStoreError):

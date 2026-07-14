@@ -7,6 +7,7 @@ import socket
 import pytest
 
 import spectrail.migrations as migrations
+import spectrail.task_transactions as task_transactions
 from spectrail.cli import main
 from spectrail.core.io import read_json, write_json
 from spectrail.pipeline import PipelineRunner
@@ -301,6 +302,76 @@ def test_migrate_rejects_invalid_cell_reference_without_writing(tmp_path: Path):
     assert not (output / ".migration_tmp").exists()
 
 
+def test_migrate_cleans_preparation_when_staged_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    export_path = output / "exports" / "reqir.json"
+    before = export_path.read_bytes()
+    original_write_json = migrations.write_json
+
+    def fail_preparation_write(path: Path, payload: object) -> None:
+        if ".migration_prepare_" in str(path):
+            raise OSError("simulated staged write failure")
+        original_write_json(path, payload)
+
+    monkeypatch.setattr(migrations, "write_json", fail_preparation_write)
+    with pytest.raises(OSError, match="simulated staged write failure"):
+        main(["migrate", str(output)])
+
+    assert export_path.read_bytes() == before
+    assert not (output / ".migration_tmp").exists()
+    assert not list(output.glob(".migration_prepare_*"))
+
+
+def test_migrate_cleans_preparation_when_staged_verification_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    export_path = output / "exports" / "reqir.json"
+    before = export_path.read_bytes()
+
+    def fail_verification(path: Path, artifact_type: str) -> None:
+        del path, artifact_type
+        raise ValueError("simulated staged verification failure")
+
+    monkeypatch.setattr(migrations, "_verify_staged_artifact", fail_verification)
+    with pytest.raises(SystemExit, match="simulated staged verification failure"):
+        main(["migrate", str(output)])
+
+    assert export_path.read_bytes() == before
+    assert not (output / ".migration_tmp").exists()
+    assert not list(output.glob(".migration_prepare_*"))
+
+
+def test_migrate_cleans_preparation_when_backup_copy_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    export_path = output / "exports" / "reqir.json"
+    before = export_path.read_bytes()
+    original_copy2 = migrations.shutil.copy2
+
+    def fail_backup_copy(source: Path, target: Path) -> None:
+        if ".migration_prepare_" in str(target):
+            raise OSError("simulated backup copy failure")
+        original_copy2(source, target)
+
+    monkeypatch.setattr(migrations.shutil, "copy2", fail_backup_copy)
+    with pytest.raises(OSError, match="simulated backup copy failure"):
+        main(["migrate", str(output)])
+
+    assert export_path.read_bytes() == before
+    assert not (output / ".migration_tmp").exists()
+    assert not list(output.glob(".migration_prepare_*"))
+
+
 def test_migrate_allows_invalid_raw_package_and_records_validation_report(
     tmp_path: Path,
 ):
@@ -390,6 +461,19 @@ def test_migrate_recovers_interrupted_commit_before_retry(
     assert not (output / ".migration_tmp").exists()
     assert all(read_json(path)["schema_version"] == "reqir_v4" for path in reqir_paths)
     assert len(list((output / ".migration_backup").iterdir())) == 2
+
+
+def test_migrate_discards_legacy_preparation_without_transaction_state(
+    tmp_path: Path,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    abandoned = output / ".migration_tmp"
+    abandoned.mkdir()
+    (abandoned / "partial.json").write_text("partial", encoding="utf-8")
+
+    assert main(["migrate", str(output)]) == 0
+    assert not abandoned.exists()
 
 
 @pytest.mark.parametrize(
@@ -576,6 +660,69 @@ def test_migrate_reclaims_stale_same_host_lock(tmp_path: Path):
 
     assert main(["migrate", str(output)]) == 0
     assert not lock_dir.exists()
+
+
+def test_lock_owner_write_failure_never_publishes_official_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    output.mkdir()
+    original_write_json = task_transactions.write_json
+
+    def fail_owner_write(path: Path, payload: object) -> None:
+        if path.name == "owner.json":
+            raise OSError("simulated owner write failure")
+        original_write_json(path, payload)
+
+    monkeypatch.setattr(task_transactions, "write_json", fail_owner_write)
+    with pytest.raises(OSError, match="simulated owner write failure"):
+        with task_lock(output, operation="test"):
+            pass
+
+    assert not (output / ".task.lock").exists()
+    assert not list(output.glob(".task.lock.*"))
+
+
+def test_migrate_conservatively_reclaims_old_lock_without_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output = tmp_path / "demo"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(output)]) == 0
+    lock_dir = output / ".task.lock"
+    lock_dir.mkdir()
+    lock_mtime = lock_dir.stat().st_mtime
+    monkeypatch.setattr(
+        task_transactions.time,
+        "time",
+        lambda: lock_mtime + 301,
+    )
+
+    assert main(["migrate", str(output)]) == 0
+    assert not lock_dir.exists()
+
+
+def test_validate_rejects_artifacts_from_different_task_roots(tmp_path: Path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    assert main(["extract", "docs/sample_srs.md", "--output", str(first)]) == 0
+    assert main(["extract", "docs/sample_srs.md", "--output", str(second)]) == 0
+
+    with pytest.raises(
+        ValueError,
+        match="VALIDATION_CROSS_TASK_ARTIFACTS_NOT_ALLOWED",
+    ):
+        main(
+            [
+                "validate",
+                str(first / "exports" / "reqir.json"),
+                "--blocks",
+                str(first / "parsed" / "blocks.json"),
+                "--evidence-index",
+                str(second / "parsed" / "evidence_index.json"),
+            ]
+        )
 
 
 def test_migrate_cli_upgrades_valid_evidence_v4(tmp_path: Path):

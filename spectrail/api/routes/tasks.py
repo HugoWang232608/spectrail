@@ -86,7 +86,7 @@ def run_task(
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskTransactionError as exc:
-        raise _error(409, "TASK_MIGRATION_INCOMPLETE", str(exc)) from exc
+        raise _error(409, exc.code, str(exc)) from exc
 
 
 def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
@@ -144,7 +144,7 @@ def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
         _mark_task_failed(store, task_id)
         raise _error(422, "PIPELINE_VALIDATION_FAILED", str(exc)) from exc
     except TaskTransactionInProgressError as exc:
-        raise _error(409, "TASK_MIGRATION_INCOMPLETE", str(exc)) from exc
+        raise _error(409, exc.code, str(exc)) from exc
     except Exception as exc:
         try:
             store.update_task(task_id, status="failed")

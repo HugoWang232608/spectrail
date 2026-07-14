@@ -529,44 +529,62 @@ def _stage_and_commit(
     manifest_path: Path | None,
 ) -> None:
     staging_root = _path_within_root(root, root / ".migration_tmp")
-    staged_files_root = _path_within_root(staging_root, staging_root / "files")
+    preparation_root = _path_within_root(
+        root,
+        root / f".migration_prepare_{migration_id}",
+    )
+    prepared_files_root = _path_within_root(
+        preparation_root,
+        preparation_root / "files",
+    )
+    prepared_backup_root = _path_within_root(
+        preparation_root,
+        preparation_root / "backup" / "files",
+    )
     backup_base = _path_within_root(root, root / backup_relative)
-    backup_root = _path_within_root(backup_base, backup_base / "files")
-    if staging_root.exists():
+    if staging_root.exists() or preparation_root.exists():
         raise ValueError("MIGRATION_TRANSACTION_STATE_EXISTS")
-    staging_root.mkdir(parents=True)
+    preparation_root.mkdir(parents=True)
+    (preparation_root / "backup").mkdir()
 
     target_records: list[dict[str, Any]] = []
     ordered_targets = [path for path in payloads if path != manifest_path]
     if manifest_path is not None and manifest_path in payloads:
         ordered_targets.append(manifest_path)
-    for target in ordered_targets:
-        relative = _relative_artifact_path(root, target)
-        staged_path = staged_files_root / relative
-        write_json(staged_path, payloads[target])
-        _verify_staged_artifact(staged_path, artifact_types[target])
-        existed = target.exists()
-        if existed:
-            backup_path = backup_root / relative
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup_path)
-        target_records.append(
-            {
-                "path": relative.as_posix(),
-                "artifact_type": artifact_types[target],
-                "existed": existed,
-            }
-        )
+    try:
+        for target in ordered_targets:
+            relative = _relative_artifact_path(root, target)
+            staged_path = prepared_files_root / relative
+            write_json(staged_path, payloads[target])
+            _verify_staged_artifact(staged_path, artifact_types[target])
+            existed = target.exists()
+            if existed:
+                backup_path = prepared_backup_root / relative
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup_path)
+            target_records.append(
+                {
+                    "path": relative.as_posix(),
+                    "artifact_type": artifact_types[target],
+                    "existed": existed,
+                }
+            )
 
-    state = {
-        "schema_version": "migration_transaction_v1",
-        "migration_id": migration_id,
-        "status": "prepared",
-        "backup_path": backup_relative.as_posix(),
-        "targets": target_records,
-    }
+        state = {
+            "schema_version": "migration_transaction_v1",
+            "migration_id": migration_id,
+            "status": "prepared",
+            "backup_path": backup_relative.as_posix(),
+            "targets": target_records,
+        }
+        _write_state_atomic(preparation_root / "state.json", state)
+        preparation_root.replace(staging_root)
+    except Exception:
+        shutil.rmtree(preparation_root, ignore_errors=True)
+        raise
+
+    staged_files_root = _path_within_root(staging_root, staging_root / "files")
     state_path = staging_root / "state.json"
-    _write_state_atomic(state_path, state)
     state["status"] = "committing"
     _write_state_atomic(state_path, state)
     try:
@@ -576,6 +594,11 @@ def _stage_and_commit(
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             _replace_staged_file(source, target)
+        prepared_backup_base = staging_root / "backup"
+        backup_base.parent.mkdir(parents=True, exist_ok=True)
+        if backup_base.exists():
+            raise ValueError("MIGRATION_BACKUP_ALREADY_EXISTS")
+        prepared_backup_base.replace(backup_base)
     except Exception as exc:
         raise ValueError("MIGRATION_COMMIT_INTERRUPTED") from exc
 
@@ -590,7 +613,8 @@ def _recover_interrupted_migration(root: Path) -> None:
     if not staging_root.exists():
         return
     if not state_path.exists():
-        raise ValueError("MIGRATION_RECOVERY_STATE_INVALID")
+        shutil.rmtree(staging_root)
+        return
     try:
         state = MigrationTransactionState.model_validate(read_json(state_path))
     except (ValidationError, TypeError, ValueError) as exc:
@@ -600,7 +624,20 @@ def _recover_interrupted_migration(root: Path) -> None:
         return
 
     backup_root = _path_within_root(root, root / state.backup_path)
-    backup_files_root = _path_within_root(backup_root, backup_root / "files")
+    internal_backup_files_root = _path_within_root(
+        staging_root,
+        staging_root / "backup" / "files",
+    )
+    external_backup_files_root = _path_within_root(
+        backup_root,
+        backup_root / "files",
+    )
+    backup_files_root = (
+        internal_backup_files_root
+        if internal_backup_files_root.exists()
+        else external_backup_files_root
+    )
+    uses_internal_backup = backup_files_root == internal_backup_files_root
     restore_root = _path_within_root(staging_root, staging_root / "restore")
     for record in state.targets:
         relative = Path(record.path)
@@ -619,6 +656,11 @@ def _recover_interrupted_migration(root: Path) -> None:
             restore.replace(target)
         elif target.exists():
             target.unlink()
+    if uses_internal_backup:
+        backup_root.parent.mkdir(parents=True, exist_ok=True)
+        if backup_root.exists():
+            raise ValueError("MIGRATION_RECOVERY_BACKUP_COLLISION")
+        (staging_root / "backup").replace(backup_root)
     shutil.rmtree(staging_root)
 
 

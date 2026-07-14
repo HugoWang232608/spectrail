@@ -153,11 +153,35 @@ def run_evaluate(args: argparse.Namespace) -> int:
 
 
 def run_validate(args: argparse.Namespace) -> int:
-    task_root = task_root_for_artifact(args.reqir)
-    if task_root is None:
+    task_roots = _validation_task_roots(args)
+    if not task_roots:
         return _run_validate_locked(args)
-    with task_operation(task_root, "validate"):
+    if len(task_roots) > 1:
+        rendered = ", ".join(path.as_posix() for path in task_roots)
+        raise ValueError(
+            "VALIDATION_CROSS_TASK_ARTIFACTS_NOT_ALLOWED: " + rendered
+        )
+    with task_operation(task_roots[0], "validate"):
         return _run_validate_locked(args)
+
+
+def _validation_task_roots(args: argparse.Namespace) -> list[Path]:
+    paths = [
+        args.reqir,
+        args.blocks,
+        args.quote_matches,
+        args.evidence_index,
+        args.quote_matches_output,
+        args.output,
+        args.validated_output,
+    ]
+    roots = {
+        root
+        for value in paths
+        if value
+        if (root := task_root_for_artifact(value)) is not None
+    }
+    return sorted(roots, key=lambda path: path.as_posix())
 
 
 def _run_validate_locked(args: argparse.Namespace) -> int:

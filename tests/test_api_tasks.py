@@ -4,7 +4,9 @@ import fitz
 from docx import Document
 from fastapi.testclient import TestClient
 
+import spectrail.api.routes.review as review_routes
 from spectrail.parsers.markdown_parser import MarkdownParser
+from spectrail.task_transactions import TaskTransactionError, task_lock
 
 
 def test_api_task_flow(api_client: TestClient):
@@ -135,6 +137,49 @@ def test_api_reads_and_writes_reject_incomplete_migration(
     ):
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "TASK_MIGRATION_INCOMPLETE"
+
+
+def test_api_distinguishes_active_task_lock_from_incomplete_migration(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+
+    with task_lock(task_dir, operation="background_pipeline"):
+        response = api_client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TASK_TRANSACTION_LOCKED"
+    assert response.json()["detail"]["retryable"] is True
+
+
+def test_review_race_preserves_transaction_error_code(
+    api_client: TestClient,
+    completed_api_task: dict,
+    monkeypatch,
+):
+    task_id = completed_api_task["task_id"]
+
+    def migration_won_race(**kwargs):
+        del kwargs
+        raise TaskTransactionError(
+            "TASK_MIGRATION_INCOMPLETE",
+            "migration started after readability check",
+        )
+
+    monkeypatch.setattr(
+        review_routes,
+        "apply_review_to_package",
+        migration_won_race,
+    )
+    response = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={"requirement_id": "REQ-0001", "action": "approve"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TASK_MIGRATION_INCOMPLETE"
 
 
 def test_api_upload_accepts_docx_and_pdf(api_client: TestClient):

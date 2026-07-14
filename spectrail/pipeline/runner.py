@@ -8,7 +8,13 @@ from typing import Any
 
 from spectrail.aggregation import CandidateAggregator
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig, SectionAwareChunker
-from spectrail.core.io import ensure_dir, model_list_dump, read_json, write_json
+from spectrail.core.io import (
+    ensure_dir,
+    model_list_dump,
+    read_json,
+    reqir_package_dump,
+    write_json,
+)
 from spectrail.core.manifest import complete_manifest, fail_manifest, init_manifest
 from spectrail.core.models import RequirementIR, ValidationIssue, ValidationReport
 from spectrail.core.workflow import build_fixed_plan
@@ -405,8 +411,9 @@ class PipelineRunner:
             primary_response = successful_responses[0]
             write_json(
                 extracted_dir / "reqir.raw.json",
-                {
-                    "metadata": {
+                reqir_package_dump(
+                    requirements,
+                    metadata={
                         "model_mode": model_mode,
                         "model_name": primary_response.model_name,
                         "prompt_version": (
@@ -418,8 +425,7 @@ class PipelineRunner:
                         "parser_warnings": parsed_document.warnings,
                         "chunk_count": len(chunks),
                     },
-                    "items": model_list_dump(requirements),
-                },
+                ),
             )
             write_json(extracted_dir / "duplicate_groups.json", aggregation.duplicate_groups)
             write_json(
@@ -505,7 +511,10 @@ class PipelineRunner:
             )
             write_json(
                 extracted_dir / "reqir.quarantined.json",
-                {"metadata": {"validation_state": "quarantined"}, "items": model_list_dump(quarantined)},
+                reqir_package_dump(
+                    quarantined,
+                    metadata={"validation_state": "quarantined"},
+                ),
             )
             if not source_report.valid and pipeline_config.validation_policy == "strict":
                 raise PipelineValidationError("source quote validation failed")
@@ -544,29 +553,29 @@ class PipelineRunner:
 
             write_json(
                 validated_reqir_path,
-                {
-                    "metadata": {
+                reqir_package_dump(
+                    validated_requirements,
+                    metadata={
                         "validation_state": "validated",
                         "document": document.name,
                         "source_format": parsed_document.source_format,
                         "parser": parsed_document.parser_name,
                     },
-                    "items": model_list_dump(validated_requirements),
-                },
+                ),
             )
             write_json(extracted_dir / "source_map.json", build_source_map(validated_requirements))
             write_json(review_dir / "review_log.json", collect_review_log(validated_requirements))
             write_json(
                 exported_reqir_path,
-                {
-                    "metadata": {
+                reqir_package_dump(
+                    validated_requirements,
+                    metadata={
                         "export_state": "unreviewed_snapshot",
                         "document": document.name,
                         "source_format": parsed_document.source_format,
                         "parser": parsed_document.parser_name,
                     },
-                    "items": model_list_dump(validated_requirements),
-                },
+                ),
             )
             export_requirements_xlsx(validated_requirements, xlsx_path)
 

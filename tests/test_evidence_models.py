@@ -229,7 +229,7 @@ def test_sparse_table_row_with_unknown_gaps_cannot_expose_table_cell():
         )
 
 
-def test_parser_identity_source_format_and_registered_name_must_agree():
+def test_parser_identity_source_format_must_agree_but_custom_names_are_allowed():
     cell = TableCellRecord(
         cell_id="cell_00000001_r0001_c0001",
         table_id="tbl_00000001",
@@ -252,9 +252,11 @@ def test_parser_identity_source_format_and_registered_name_must_agree():
         topology_status="sparse",
         parser_method="pymupdf_find_tables",
     ).model_dump(mode="json")
-    payload["parser_identity"]["parser_name"] = "docx_parser_v2"
-    with pytest.raises(ValidationError, match="parser_name does not match"):
-        EvidenceIndex.model_validate(payload)
+    payload["parser_identity"]["parser_name"] = "custom_pdf_parser_v1"
+    assert (
+        EvidenceIndex.model_validate(payload).parser_identity.parser_name
+        == "custom_pdf_parser_v1"
+    )
 
 
 @pytest.mark.parametrize(
@@ -324,10 +326,10 @@ def test_complete_topology_requires_full_grid_but_sparse_topology_allows_holes()
         )
 
 
-def test_evidence_v1_artifact_is_rejected_explicitly():
-    with pytest.raises(ValidationError, match="evidence_v2"):
+def test_evidence_v2_artifact_is_rejected_explicitly():
+    with pytest.raises(ValidationError, match="evidence_v3"):
         EvidenceIndex(
-            schema_version="evidence_v1",  # type: ignore[arg-type]
+            schema_version="evidence_v2",  # type: ignore[arg-type]
             document_id="doc_001",
             document_name="sample.docx",
             source_format="docx",
@@ -577,6 +579,58 @@ def test_evidence_index_supports_repeated_header_occurrences():
     )
     assert len(index.cell_occurrences) == 2
     assert index.cell_occurrences[1].occurrence_role == "repeated_header"
+
+    duplicate_original = index.model_dump(mode="json")
+    duplicate_original["cell_occurrences"][1]["occurrence_role"] = "original"
+    with pytest.raises(ValidationError, match="exactly one original occurrence"):
+        EvidenceIndex.model_validate(duplicate_original)
+
+    missing_original = index.model_dump(mode="json")
+    missing_original["cell_occurrences"][0]["occurrence_role"] = "repeated_header"
+    with pytest.raises(ValidationError, match="exactly one original occurrence"):
+        EvidenceIndex.model_validate(missing_original)
+
+
+def test_occurrence_roles_must_match_cell_and_physical_row():
+    table_identifier = "tbl_00000001"
+    cell = TableCellRecord(
+        cell_id="cell_00000001_r0001_c0001",
+        table_id=table_identifier,
+        row_index=1,
+        column_index=1,
+        row_span=2,
+        text="A",
+        text_sha256=sha256_text("A"),
+    )
+    payload = _topology_index(
+        table_identifier=table_identifier,
+        row_count=2,
+        column_count=1,
+        cells=[cell],
+    ).model_dump(mode="json")
+    payload["blocks"][0]["table_row_index"] = 2
+    with pytest.raises(ValidationError, match="original.*anchor row"):
+        EvidenceIndex.model_validate(payload)
+
+    payload = _topology_index(
+        table_identifier=table_identifier,
+        row_count=2,
+        column_count=1,
+        cells=[cell],
+    ).model_dump(mode="json")
+    payload["cell_occurrences"][0]["occurrence_role"] = "row_span_projection"
+    with pytest.raises(ValidationError, match="covered row after the anchor"):
+        EvidenceIndex.model_validate(payload)
+
+    payload = _topology_index(
+        table_identifier=table_identifier,
+        row_count=2,
+        column_count=1,
+        cells=[cell],
+    ).model_dump(mode="json")
+    payload["cell_occurrences"][0]["occurrence_role"] = "repeated_header"
+    with pytest.raises(ValidationError, match="requires a header cell"):
+        EvidenceIndex.model_validate(payload)
 
 
 def test_evidence_index_rejects_dangling_occurrence():

@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from spectrail.parsers import UnsupportedDocumentTypeError
-from spectrail.parsers.registry import SUPPORTED_DOCUMENT_SUFFIXES, parse_document
+from spectrail.parsers.registry import (
+    PARSER_SOURCE_FORMATS,
+    SUPPORTED_DOCUMENT_SUFFIXES,
+    parse_document,
+)
 
 
 def test_parse_document_returns_markdown_parsed_document():
@@ -27,3 +31,11 @@ def test_parse_document_rejects_unknown_suffix(tmp_path: Path):
     assert SUPPORTED_DOCUMENT_SUFFIXES == {".md", ".markdown", ".docx", ".pdf"}
     with pytest.raises(UnsupportedDocumentTypeError):
         parse_document(document)
+
+
+def test_parser_name_format_registration_is_owned_by_parser_registry():
+    assert PARSER_SOURCE_FORMATS == {
+        "markdown_parser_v1": "markdown",
+        "docx_parser_v1": "docx",
+        "text_pdf_parser_v1": "pdf",
+    }

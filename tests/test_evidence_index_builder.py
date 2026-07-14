@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from spectrail.core.models import DocumentBlock
+from spectrail.core.io import read_json
 from spectrail.evidence import (
     BlockEvidenceRecord,
     CellBlockOccurrence,
@@ -13,12 +14,16 @@ from spectrail.evidence import (
     TableRecord,
     sha256_text,
 )
-from spectrail.evidence.fingerprint import finalize_evidence_fingerprint
+from spectrail.evidence.fingerprint import (
+    finalize_evidence_fingerprint,
+    sha256_file,
+)
 from spectrail.evidence.index_builder import (
     ensure_evidence_index,
     validate_evidence_index_against_parsed_document,
 )
 from spectrail.parsers.base import ParsedDocument
+from spectrail.pipeline import PipelineRunner
 
 
 def _parsed(path: Path) -> ParsedDocument:
@@ -184,6 +189,7 @@ def _parsed_table_with_repeated_and_empty_occurrences() -> tuple[ParsedDocument,
                 column_index=1,
                 text="Header",
                 text_sha256=sha256_text("Header"),
+                is_header=True,
             ),
             TableCellRecord(
                 cell_id=empty,
@@ -247,3 +253,56 @@ def test_cell_occurrence_rejects_range_mapped_to_different_text():
 
     with pytest.raises(ValueError, match="occurrence text does not match"):
         validate_evidence_index_against_parsed_document(stale, parsed)
+
+
+def test_table_evidence_requires_table_document_block():
+    parsed, index = _parsed_table_with_repeated_and_empty_occurrences()
+    inconsistent = replace(
+        parsed,
+        blocks=[parsed.blocks[0].model_copy(update={"type": "paragraph"})],
+    )
+
+    with pytest.raises(ValueError, match="table evidence requires a table document block"):
+        validate_evidence_index_against_parsed_document(index, inconsistent)
+
+
+def test_pipeline_rejects_table_evidence_type_mismatch_before_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    document = tmp_path / "sample.docx"
+    document.write_bytes(b"preparsed table fixture")
+    parsed, index = _parsed_table_with_repeated_and_empty_occurrences()
+    source_hash = sha256_file(document)
+    index = finalize_evidence_fingerprint(
+        index.model_copy(update={"source_sha256": source_hash})
+    )
+    inconsistent = replace(
+        parsed,
+        blocks=[parsed.blocks[0].model_copy(update={"type": "paragraph"})],
+        source_sha256=source_hash,
+        parser_identity=index.parser_identity,
+        evidence_index=index,
+    )
+
+    def unexpected_model_client(**_: object):
+        raise AssertionError("model client must not be created")
+
+    monkeypatch.setattr(
+        "spectrail.pipeline.runner.create_model_client",
+        unexpected_model_client,
+    )
+    output = tmp_path / "output"
+    with pytest.raises(
+        ValueError,
+        match="table evidence requires a table document block",
+    ):
+        PipelineRunner().extract(
+            document,
+            output,
+            model_mode="mock",
+            parsed_document=inconsistent,
+        )
+
+    manifest = read_json(output / "run_manifest.json")
+    assert manifest["counts"]["model_call_count"] == 0

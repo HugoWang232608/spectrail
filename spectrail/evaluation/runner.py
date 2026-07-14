@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.core.io import ensure_dir, read_json, read_reqir_items, write_json
 from spectrail.core.models import RequirementIR
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig
 from spectrail.evaluation.matcher import match_requirements
@@ -93,8 +93,7 @@ class EvaluationRunner:
         )
         export_path = pipeline_output / "exports" / "reqir.json"
         if manifest.get("status") in {"completed", "completed_with_warnings"} and export_path.exists():
-            actual_package = read_json(export_path)
-            candidates = RequirementList.validate_python(actual_package.get("items", []))
+            candidates = RequirementList.validate_python(read_reqir_items(export_path))
         else:
             candidates = []
         matches = match_requirements(candidates, gold.items, scope_block_ids=case.scope_block_ids)

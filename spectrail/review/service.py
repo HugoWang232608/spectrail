@@ -5,7 +5,11 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from spectrail.core.io import model_list_dump, read_json, write_json
+from spectrail.core.io import (
+    read_reqir_items,
+    reqir_package_dump,
+    write_json,
+)
 from spectrail.core.models import RequirementIR
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.review.review_log import collect_review_log
@@ -16,10 +20,7 @@ ReqListAdapter = TypeAdapter(list[RequirementIR])
 
 
 def load_requirements(path: str | Path) -> list[RequirementIR]:
-    payload = read_json(path)
-    if isinstance(payload, dict) and "items" in payload:
-        payload = payload["items"]
-    return ReqListAdapter.validate_python(payload)
+    return ReqListAdapter.validate_python(read_reqir_items(path))
 
 
 def refresh_review_package(
@@ -31,7 +32,10 @@ def refresh_review_package(
     write_json(review_log_path, collect_review_log(requirements))
     write_json(
         reqir_path,
-        {"metadata": {"export_state": "review_snapshot"}, "items": model_list_dump(requirements)},
+        reqir_package_dump(
+            requirements,
+            metadata={"export_state": "review_snapshot"},
+        ),
     )
     export_requirements_xlsx(requirements, xlsx_path)
 

@@ -37,6 +37,17 @@ def validate_evidence_index_against_parsed_document(
                 f"parsed block document_id does not match parsed document: {block.block_id}"
             )
         evidence = evidence_blocks[block.block_id]
+        has_table_evidence = (
+            evidence.table_id is not None
+            or evidence.table_row_index is not None
+            or bool(evidence.cell_ids)
+            or "table_cell" in evidence.expected_capabilities
+            or "table_cell" in evidence.available_capabilities
+        )
+        if has_table_evidence and block.type != "table":
+            raise ValueError(
+                f"table evidence requires a table document block: {block.block_id}"
+            )
         if evidence.text_length != len(block.text):
             raise ValueError(
                 f"evidence block text_length does not match parsed block: {block.block_id}"

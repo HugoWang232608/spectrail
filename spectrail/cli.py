@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from spectrail.core.io import model_list_dump, read_json, write_json
+from spectrail.core.io import read_json, reqir_package_dump, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
 from spectrail.evidence import (
     EvidenceIndex,
@@ -232,10 +232,10 @@ def run_validate(args: argparse.Namespace) -> int:
     if args.validated_output:
         write_json(
             args.validated_output,
-            {
-                "metadata": {"validation_state": "validated"},
-                "items": model_list_dump(validated),
-            },
+            reqir_package_dump(
+                validated,
+                metadata={"validation_state": "validated"},
+            ),
         )
     print(report.model_dump_json(indent=2))
     return 0 if report.valid else 1

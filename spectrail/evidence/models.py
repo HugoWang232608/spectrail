@@ -40,14 +40,6 @@ STRUCTURED_CAPABILITIES = frozenset({"page_region", "table_cell"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TABLE_ID_RE = re.compile(r"^tbl_(\d{8})$")
 CELL_ID_RE = re.compile(r"^cell_(\d{8})_r(\d{4})_c(\d{4})$")
-PARSER_SOURCE_FORMATS = {
-    "markdown_parser_v1": "markdown",
-    "docx_parser_v1": "docx",
-    "docx_parser_v2": "docx",
-    "text_pdf_parser_v1": "pdf",
-    "pdf_parser_v1": "pdf",
-    "pdf_parser_v2": "pdf",
-}
 
 
 class EvidenceModel(BaseModel):
@@ -386,7 +378,7 @@ class TableRecord(EvidenceModel):
 
 
 class EvidenceIndex(EvidenceModel):
-    schema_version: Literal["evidence_v2"] = "evidence_v2"
+    schema_version: Literal["evidence_v3"] = "evidence_v3"
     document_id: str
     document_name: str
     source_format: str
@@ -429,17 +421,6 @@ class EvidenceIndex(EvidenceModel):
         if self.parser_identity.source_format != self.source_format:
             raise ValueError(
                 "parser identity source_format does not match evidence source_format"
-            )
-        registered_source_format = PARSER_SOURCE_FORMATS.get(
-            self.parser_identity.parser_name
-        )
-        if registered_source_format is None:
-            raise ValueError(
-                f"unregistered evidence parser: {self.parser_identity.parser_name}"
-            )
-        if registered_source_format != self.source_format:
-            raise ValueError(
-                "parser identity parser_name does not match evidence source_format"
             )
 
         parser_method_by_format = {
@@ -609,6 +590,11 @@ class EvidenceIndex(EvidenceModel):
                         "sparse table row with unknown column gaps cannot expose "
                         f"table_cell capability: {block.block_id}"
                     )
+        _validate_occurrence_roles(
+            cells_by_id,
+            self.cell_occurrences,
+            blocks_by_id,
+        )
         for table in self.tables:
             _validate_table_topology(
                 table,
@@ -617,6 +603,46 @@ class EvidenceIndex(EvidenceModel):
                 occurrences_by_id,
             )
         return self
+
+
+def _validate_occurrence_roles(
+    cells_by_id: dict[str, TableCellRecord],
+    occurrences: list[CellBlockOccurrence],
+    blocks_by_id: dict[str, BlockEvidenceRecord],
+) -> None:
+    original_counts = {cell_id: 0 for cell_id in cells_by_id}
+    for occurrence in occurrences:
+        cell = cells_by_id[occurrence.cell_id]
+        block = blocks_by_id[occurrence.block_id]
+        physical_row = block.table_row_index
+        if physical_row is None:
+            continue
+        if occurrence.occurrence_role == "original":
+            if physical_row != cell.row_index:
+                raise ValueError(
+                    "original cell occurrence must use the cell anchor row: "
+                    f"{occurrence.occurrence_id}"
+                )
+            original_counts[cell.cell_id] += 1
+        elif occurrence.occurrence_role == "row_span_projection":
+            if physical_row <= cell.row_index or not cell.occupies_row(physical_row):
+                raise ValueError(
+                    "row-span projection must use a covered row after the anchor: "
+                    f"{occurrence.occurrence_id}"
+                )
+        elif occurrence.occurrence_role == "repeated_header":
+            if not cell.is_header or physical_row != cell.row_index:
+                raise ValueError(
+                    "repeated header occurrence requires a header cell on its anchor row: "
+                    f"{occurrence.occurrence_id}"
+                )
+
+    for cell_id, count in original_counts.items():
+        if count != 1:
+            raise ValueError(
+                "each logical cell must have exactly one original occurrence: "
+                f"{cell_id}"
+            )
 
 
 def _validate_table_topology(

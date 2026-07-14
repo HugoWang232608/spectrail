@@ -7,7 +7,7 @@ from spectrail.evidence.models import EvidenceIndex, TableCellRecord
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v5_row_evidence_v2"
+PROMPT_VERSION = "reqir_extraction_v6_row_evidence_v3"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 

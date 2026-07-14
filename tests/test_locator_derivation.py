@@ -791,6 +791,7 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     column_index=1,
                     text="A",
                     text_sha256=sha256_text("A"),
+                    is_header=True,
                 )
             ],
             cell_occurrences=[

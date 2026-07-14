@@ -33,10 +33,16 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     assert manifest["counts"]["validated_requirements"] >= 14
     assert manifest["outputs"]["reqir_export"] == "exports/reqir.json"
     assert manifest["model"]["mode"] == "mock"
-    assert manifest["model"]["prompt_version"] == "reqir_extraction_v5_row_evidence_v2"
+    assert manifest["model"]["prompt_version"] == "reqir_extraction_v6_row_evidence_v3"
     assert manifest["parser"]["parser_name"] == "markdown_parser_v1"
+    assert manifest["evidence"]["schema_version"] == "evidence_v3"
 
     raw = read_json(output / "extracted" / "reqir.raw.json")
+    validated = read_json(output / "extracted" / "reqir.validated.json")
+    exported = read_json(output / "exports" / "reqir.json")
+    assert raw["schema_version"] == "reqir_v2"
+    assert validated["schema_version"] == "reqir_v2"
+    assert exported["schema_version"] == "reqir_v2"
     assert raw["items"][0]["metadata"]["extractor_version"] == (
         "reqir_extractor_v3_evidence"
     )

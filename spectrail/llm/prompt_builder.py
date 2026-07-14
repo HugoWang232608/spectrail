@@ -7,7 +7,7 @@ from spectrail.evidence.models import EvidenceIndex, TableCellRecord
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v6_row_evidence_v3"
+PROMPT_VERSION = "reqir_extraction_v7_row_group_evidence_v3"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
@@ -61,7 +61,7 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
         "- source_quote must be an exact substring from the chosen block text.\n"
         f"{table_cell_contract}"
         f"{table_overlap_contract}"
-        "- Table cells must occupy the displayed physical_row. Omit empty cells from "
+        "- Table cells must occupy one physical row displayed in the cell_map. Omit empty cells from "
         "source_cell_ids; "
         "within the selected column span, include every non-empty cell. Output order "
         "is identity-insignificant.\n"
@@ -87,22 +87,26 @@ def _render_block(
     section_path = " > ".join(block.section_path) if block.section_path else ""
     table_projection = _table_projection(block.block_id, evidence_index)
     if block.type == "table" and table_projection is not None:
-        table_id, physical_row, cells = table_projection
-        cell_map = ", ".join(
-            f"c{cell.column_index}={cell.cell_id} "
-            f"(anchor_row={cell.row_index}, column_span={cell.column_span}, "
-            f"row_span={cell.row_span}, "
-            f"text={json.dumps(cell.text, ensure_ascii=False)})"
-            for cell in cells
+        table_id, row_start, row_end, projected_rows = table_projection
+        cell_map = "\n".join(
+            f"{label} {row_index}: "
+            + ", ".join(
+                f"c{cell.column_index}={cell.cell_id} "
+                f"(anchor_row={cell.row_index}, column_span={cell.column_span}, "
+                f"row_span={cell.row_span}, "
+                f"text={json.dumps(cell.text, ensure_ascii=False)})"
+                for cell in cells
+            )
+            for label, row_index, cells in projected_rows
         )
         return (
             f"[{block.block_id}]\n"
             f"type: {block.type}\n"
             f"section_path: {section_path}\n"
             f"table_id: {table_id}\n"
-            f"physical_row: {physical_row}\n"
+            f"primary_rows: {row_start}-{row_end}\n"
             f"canonical_text: {block.text}\n"
-            f"cell_map: {cell_map}"
+            f"cell_map:\n{cell_map}"
         )
     return (
         f"[{block.block_id}]\n"
@@ -115,7 +119,7 @@ def _render_block(
 def _table_projection(
     block_id: str,
     evidence_index: EvidenceIndex | None,
-) -> tuple[str, int, list[TableCellRecord]] | None:
+) -> tuple[str, int, int, list[tuple[str, int, list[TableCellRecord]]]] | None:
     if evidence_index is None:
         return None
     block = next(
@@ -125,14 +129,54 @@ def _table_projection(
     if (
         block is None
         or block.table_id is None
-        or block.table_row_index is None
+        or block.table_row_start is None
+        or block.table_row_end is None
         or "table_cell" not in block.available_capabilities
         or not block.cell_ids
     ):
         return None
     cells_by_id = {cell.cell_id: cell for cell in evidence_index.cells}
-    cells = sorted(
-        (cells_by_id[cell_id] for cell_id in block.cell_ids),
+    table = next(item for item in evidence_index.tables if item.table_id == block.table_id)
+    projected_rows = [
+        (
+            "row",
+            row_index,
+            _sort_cells(
+                cells_by_id[cell_id]
+                for cell_id in table.cell_ids
+                if cells_by_id[cell_id].occupies_row(row_index)
+            ),
+        )
+        for row_index in range(block.table_row_start, block.table_row_end + 1)
+    ]
+    repeated_by_row: dict[int, set[str]] = {}
+    for occurrence in evidence_index.cell_occurrences:
+        if (
+            occurrence.block_id == block_id
+            and occurrence.occurrence_role == "repeated_header"
+        ):
+            repeated_by_row.setdefault(occurrence.physical_row_index, set()).add(
+                occurrence.cell_id
+            )
+    projected_rows.extend(
+        (
+            "repeated_header_row",
+            row_index,
+            _sort_cells(cells_by_id[cell_id] for cell_id in cell_ids),
+        )
+        for row_index, cell_ids in sorted(repeated_by_row.items())
+    )
+    return (
+        block.table_id,
+        block.table_row_start,
+        block.table_row_end,
+        projected_rows,
+    )
+
+
+def _sort_cells(cells) -> list[TableCellRecord]:
+    return sorted(
+        cells,
         key=lambda cell: (
             cell.table_id,
             cell.column_index,
@@ -140,4 +184,3 @@ def _table_projection(
             cell.cell_id,
         ),
     )
-    return block.table_id, block.table_row_index, cells

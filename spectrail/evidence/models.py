@@ -234,7 +234,8 @@ class BlockEvidenceRecord(EvidenceModel):
     bbox: BoundingBox | None = None
     fragment_ids: list[str] = Field(default_factory=list)
     table_id: str | None = None
-    table_row_index: int | None = None
+    table_row_start: int | None = None
+    table_row_end: int | None = None
     cell_ids: list[str] = Field(default_factory=list)
     expected_capabilities: list[EvidenceCapability] = Field(
         default_factory=lambda: ["text_range"]
@@ -260,18 +261,21 @@ class BlockEvidenceRecord(EvidenceModel):
             raise ValueError("all evidence blocks must expect text_range")
         if "table_cell" in self.available_capabilities and (
             self.table_id is None
-            or self.table_row_index is None
+            or self.table_row_start is None
+            or self.table_row_end is None
             or not self.cell_ids
         ):
             raise ValueError(
-                "available table_cell capability requires table_id, table_row_index, "
-                "and cell_ids"
+                "available table_cell capability requires table_id, a primary row "
+                "range, and cell_ids"
             )
-        if self.table_row_index is not None:
+        if (self.table_row_start is None) != (self.table_row_end is None):
+            raise ValueError("table primary row range requires both endpoints")
+        if self.table_row_start is not None and self.table_row_end is not None:
             if self.table_id is None:
-                raise ValueError("table_row_index requires table_id")
-            if self.table_row_index < 1:
-                raise ValueError("table_row_index must be 1-based")
+                raise ValueError("table primary row range requires table_id")
+            if self.table_row_start < 1 or self.table_row_end < self.table_row_start:
+                raise ValueError("table primary row range is invalid")
         unexpected = set(self.available_capabilities) - set(self.expected_capabilities)
         if unexpected:
             raise ValueError(f"available capabilities are not expected: {sorted(unexpected)}")
@@ -316,6 +320,7 @@ class CellBlockOccurrence(EvidenceModel):
     occurrence_id: str
     cell_id: str
     block_id: str
+    physical_row_index: int
     canonical_start: int
     canonical_end: int
     offset_encoding: OffsetEncoding = "unicode_code_point"
@@ -323,12 +328,15 @@ class CellBlockOccurrence(EvidenceModel):
         "original",
         "repeated_header",
         "row_span_projection",
+        "duplicate_text_occurrence",
     ] = "original"
     prompt_start: int | None = None
     prompt_end: int | None = None
 
     @model_validator(mode="after")
     def validate_occurrence(self) -> "CellBlockOccurrence":
+        if self.physical_row_index < 1:
+            raise ValueError("occurrence physical row must be 1-based")
         if self.canonical_start < 0 or self.canonical_end < self.canonical_start:
             raise ValueError("cell occurrence canonical range is invalid")
         if (self.prompt_start is None) != (self.prompt_end is None):
@@ -560,41 +568,32 @@ class EvidenceIndex(EvidenceModel):
                     )
             if block.table_id is not None:
                 table = tables_by_id[block.table_id]
-                if block.table_row_index is None:
+                if block.table_row_start is None or block.table_row_end is None:
                     raise ValueError(
-                        f"table block requires table_row_index: {block.block_id}"
+                        f"table block requires a primary row range: {block.block_id}"
                     )
-                if block.table_row_index > table.row_count:
+                if block.table_row_end > table.row_count:
                     raise ValueError(
-                        f"table block row exceeds table bounds: {block.block_id}"
-                    )
-                expected_block_cells = {
-                    cell_id
-                    for cell_id in table.cell_ids
-                    if cells_by_id[cell_id].occupies_row(block.table_row_index)
-                }
-                if set(block.cell_ids) != expected_block_cells:
-                    raise ValueError(
-                        "table block cell map does not match its physical row: "
-                        f"{block.block_id}"
+                        f"table block row range exceeds table bounds: {block.block_id}"
                     )
                 if (
                     table.topology_status == "sparse"
                     and "table_cell" in block.available_capabilities
-                    and _cell_spans_have_gaps(
-                        [cells_by_id[cell_id] for cell_id in block.cell_ids],
-                        block.table_row_index,
+                    and any(
+                        _cell_spans_have_gaps(
+                            [cells_by_id[cell_id] for cell_id in table.cell_ids],
+                            row_index,
+                        )
+                        for row_index in range(
+                            block.table_row_start,
+                            block.table_row_end + 1,
+                        )
                     )
                 ):
                     raise ValueError(
-                        "sparse table row with unknown column gaps cannot expose "
+                        "sparse table row-group with unknown column gaps cannot expose "
                         f"table_cell capability: {block.block_id}"
                     )
-        _validate_occurrence_roles(
-            cells_by_id,
-            self.cell_occurrences,
-            blocks_by_id,
-        )
         for table in self.tables:
             _validate_table_topology(
                 table,
@@ -602,46 +601,194 @@ class EvidenceIndex(EvidenceModel):
                 blocks_by_id,
                 occurrences_by_id,
             )
+        _validate_table_row_groups(
+            self.tables,
+            cells_by_id,
+            self.cell_occurrences,
+            blocks_by_id,
+        )
+        _validate_occurrence_roles(
+            cells_by_id,
+            self.cell_occurrences,
+            blocks_by_id,
+            tables_by_id,
+        )
         return self
+
+
+def _validate_table_row_groups(
+    tables: list[TableRecord],
+    cells_by_id: dict[str, TableCellRecord],
+    occurrences: list[CellBlockOccurrence],
+    blocks_by_id: dict[str, BlockEvidenceRecord],
+) -> None:
+    structural_roles = {"original", "row_span_projection"}
+    structural_counts: dict[tuple[str, str, int, str], int] = {}
+    repeated_cells_by_block: dict[str, set[str]] = {}
+    for occurrence in occurrences:
+        if occurrence.occurrence_role in structural_roles:
+            key = (
+                occurrence.block_id,
+                occurrence.cell_id,
+                occurrence.physical_row_index,
+                occurrence.occurrence_role,
+            )
+            structural_counts[key] = structural_counts.get(key, 0) + 1
+        elif occurrence.occurrence_role == "repeated_header":
+            repeated_cells_by_block.setdefault(occurrence.block_id, set()).add(
+                occurrence.cell_id
+            )
+
+    for table in tables:
+        primary_owners: dict[int, str] = {}
+        expected_row_start = 1
+        for block_id in table.block_ids:
+            block = blocks_by_id[block_id]
+            assert block.table_row_start is not None
+            assert block.table_row_end is not None
+            if block.table_row_start != expected_row_start:
+                raise ValueError(
+                    "table primary row ranges must be ordered, contiguous, and "
+                    f"complete: {table.table_id}/{block_id}"
+                )
+            expected_row_start = block.table_row_end + 1
+            for row_index in range(block.table_row_start, block.table_row_end + 1):
+                owner = primary_owners.get(row_index)
+                if owner is not None:
+                    raise ValueError(
+                        "table primary row ranges overlap: "
+                        f"{table.table_id}/row {row_index}/{owner}/{block_id}"
+                    )
+                primary_owners[row_index] = block_id
+
+            primary_cells = {
+                cell_id
+                for cell_id in table.cell_ids
+                if any(
+                    cells_by_id[cell_id].occupies_row(row_index)
+                    for row_index in range(
+                        block.table_row_start,
+                        block.table_row_end + 1,
+                    )
+                )
+            }
+            expected_cells = primary_cells | repeated_cells_by_block.get(block_id, set())
+            if set(block.cell_ids) != expected_cells:
+                raise ValueError(
+                    "table block cell map does not match its primary rows and projections: "
+                    f"{block_id}"
+                )
+
+            for row_index in range(block.table_row_start, block.table_row_end + 1):
+                for cell_id in table.cell_ids:
+                    cell = cells_by_id[cell_id]
+                    if not cell.occupies_row(row_index):
+                        continue
+                    expected_role = (
+                        "original" if row_index == cell.row_index else "row_span_projection"
+                    )
+                    key = (block_id, cell_id, row_index, expected_role)
+                    if structural_counts.get(key) != 1:
+                        raise ValueError(
+                            "table primary row cell must have exactly one structural "
+                            f"occurrence: {block_id}/{cell_id}/row {row_index}"
+                        )
+
+        if (
+            expected_row_start != table.row_count + 1
+            or set(primary_owners) != set(range(1, table.row_count + 1))
+        ):
+            raise ValueError(
+                f"table primary row ranges must cover every physical row: {table.table_id}"
+            )
 
 
 def _validate_occurrence_roles(
     cells_by_id: dict[str, TableCellRecord],
     occurrences: list[CellBlockOccurrence],
     blocks_by_id: dict[str, BlockEvidenceRecord],
+    tables_by_id: dict[str, TableRecord],
 ) -> None:
-    original_counts = {cell_id: 0 for cell_id in cells_by_id}
+    originals: dict[str, list[CellBlockOccurrence]] = {
+        cell_id: [] for cell_id in cells_by_id
+    }
+    support_keys = {
+        (
+            occurrence.block_id,
+            occurrence.cell_id,
+            occurrence.physical_row_index,
+        )
+        for occurrence in occurrences
+        if occurrence.occurrence_role
+        in {"original", "row_span_projection", "repeated_header"}
+    }
     for occurrence in occurrences:
         cell = cells_by_id[occurrence.cell_id]
         block = blocks_by_id[occurrence.block_id]
-        physical_row = block.table_row_index
-        if physical_row is None:
-            continue
+        table = tables_by_id[cell.table_id]
+        physical_row = occurrence.physical_row_index
+        assert block.table_row_start is not None
+        assert block.table_row_end is not None
+        if physical_row > table.row_count:
+            raise ValueError(
+                f"occurrence physical row exceeds table bounds: {occurrence.occurrence_id}"
+            )
+        in_primary_range = block.table_row_start <= physical_row <= block.table_row_end
         if occurrence.occurrence_role == "original":
-            if physical_row != cell.row_index:
+            if physical_row != cell.row_index or not in_primary_range:
                 raise ValueError(
-                    "original cell occurrence must use the cell anchor row: "
+                    "original cell occurrence must use its primary anchor row: "
                     f"{occurrence.occurrence_id}"
                 )
-            original_counts[cell.cell_id] += 1
+            originals[cell.cell_id].append(occurrence)
         elif occurrence.occurrence_role == "row_span_projection":
-            if physical_row <= cell.row_index or not cell.occupies_row(physical_row):
+            if (
+                physical_row <= cell.row_index
+                or not cell.occupies_row(physical_row)
+                or not in_primary_range
+            ):
                 raise ValueError(
-                    "row-span projection must use a covered row after the anchor: "
+                    "row-span projection must use a primary covered row after the anchor: "
                     f"{occurrence.occurrence_id}"
                 )
         elif occurrence.occurrence_role == "repeated_header":
-            if not cell.is_header or physical_row != cell.row_index:
+            if not cell.is_header or physical_row != cell.row_index or in_primary_range:
                 raise ValueError(
-                    "repeated header occurrence requires a header cell on its anchor row: "
+                    "repeated header occurrence requires a projected header anchor row: "
                     f"{occurrence.occurrence_id}"
                 )
+        elif occurrence.occurrence_role == "duplicate_text_occurrence":
+            if (
+                occurrence.block_id,
+                occurrence.cell_id,
+                physical_row,
+            ) not in support_keys:
+                raise ValueError(
+                    "duplicate text occurrence requires a structural occurrence in "
+                    f"the same block and physical row: {occurrence.occurrence_id}"
+                )
 
-    for cell_id, count in original_counts.items():
-        if count != 1:
+    for cell_id, original_items in originals.items():
+        if len(original_items) != 1:
             raise ValueError(
                 "each logical cell must have exactly one original occurrence: "
                 f"{cell_id}"
+            )
+    for occurrence in occurrences:
+        if occurrence.occurrence_role != "repeated_header":
+            continue
+        original = originals[occurrence.cell_id][0]
+        table = tables_by_id[cells_by_id[occurrence.cell_id].table_id]
+        block_positions = {
+            block_id: index for index, block_id in enumerate(table.block_ids)
+        }
+        if (
+            occurrence.block_id == original.block_id
+            or block_positions[occurrence.block_id] <= block_positions[original.block_id]
+        ):
+            raise ValueError(
+                "repeated header occurrence must be in a later table block than "
+                f"its original: {occurrence.occurrence_id}"
             )
 
 

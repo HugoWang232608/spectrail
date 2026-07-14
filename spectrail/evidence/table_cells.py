@@ -9,19 +9,12 @@ def canonicalize_nonempty_cell_selection(
     available_cells: Sequence[TableCellRecord],
     *,
     table: TableRecord,
-    selected_row_index: int,
+    selected_row_index: int | None = None,
 ) -> list[TableCellRecord]:
     if len({cell.cell_id for cell in selected_cells}) != len(selected_cells):
         raise EvidenceReferenceError("source cell IDs must be unique")
     if selected_cells and len({cell.table_id for cell in selected_cells}) != 1:
         raise EvidenceReferenceError("source cells must belong to one table")
-    if selected_row_index < 1 or selected_row_index > table.row_count:
-        raise EvidenceReferenceError("selected physical table row is out of bounds")
-    if any(not cell.occupies_row(selected_row_index) for cell in selected_cells):
-        raise EvidenceReferenceError(
-            "source cells must occupy the selected physical table row"
-        )
-
     canonical = sorted(
         (cell for cell in selected_cells if cell.text.strip()),
         key=lambda cell: (
@@ -34,6 +27,50 @@ def canonicalize_nonempty_cell_selection(
     if not canonical:
         raise EvidenceReferenceError(
             "source cells must include at least one non-empty logical cell"
+        )
+
+    if selected_row_index is None:
+        candidate_rows = [
+            row_index
+            for row_index in range(1, table.row_count + 1)
+            if all(cell.occupies_row(row_index) for cell in selected_cells)
+        ]
+        for row_index in candidate_rows:
+            try:
+                return _validate_selection_on_row(
+                    selected_cells,
+                    available_cells,
+                    canonical,
+                    table=table,
+                    selected_row_index=row_index,
+                )
+            except EvidenceReferenceError:
+                continue
+        raise EvidenceReferenceError(
+            "source cells do not form a valid selection on any shared physical row"
+        )
+    return _validate_selection_on_row(
+        selected_cells,
+        available_cells,
+        canonical,
+        table=table,
+        selected_row_index=selected_row_index,
+    )
+
+
+def _validate_selection_on_row(
+    selected_cells: Sequence[TableCellRecord],
+    available_cells: Sequence[TableCellRecord],
+    canonical: list[TableCellRecord],
+    *,
+    table: TableRecord,
+    selected_row_index: int,
+) -> list[TableCellRecord]:
+    if selected_row_index < 1 or selected_row_index > table.row_count:
+        raise EvidenceReferenceError("selected physical table row is out of bounds")
+    if any(not cell.occupies_row(selected_row_index) for cell in selected_cells):
+        raise EvidenceReferenceError(
+            "source cells must occupy the selected physical table row"
         )
 
     table_id = canonical[0].table_id

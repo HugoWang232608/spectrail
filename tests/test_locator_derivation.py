@@ -66,7 +66,8 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     text_sha256=sha256_text(block.text),
                     page=1,
                     table_id=table_id,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                     cell_ids=[cell_1, cell_2],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -108,6 +109,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     occurrence_id="occ_00000001",
                     cell_id=cell_1,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 ),
@@ -115,6 +117,7 @@ def test_table_identity_is_canonicalized_before_registry_and_rederived_for_valid
                     occurrence_id="occ_00000002",
                     cell_id=cell_2,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=4,
                     canonical_end=5,
                 ),
@@ -256,7 +259,8 @@ def test_table_selection_can_cross_empty_logical_cells():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                     cell_ids=[cell_a, cell_empty, cell_b],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -284,6 +288,7 @@ def test_table_selection_can_cross_empty_logical_cells():
                     occurrence_id="occ_00000001",
                     cell_id=cell_a,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 ),
@@ -291,6 +296,7 @@ def test_table_selection_can_cross_empty_logical_cells():
                     occurrence_id="occ_00000002",
                     cell_id=cell_empty,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=4,
                     canonical_end=4,
                 ),
@@ -298,6 +304,7 @@ def test_table_selection_can_cross_empty_logical_cells():
                     occurrence_id="occ_00000003",
                     cell_id=cell_b,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=7,
                     canonical_end=8,
                 ),
@@ -450,7 +457,8 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     text_length=len(row_1.text),
                     text_sha256=sha256_text(row_1.text),
                     table_id=table,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                     cell_ids=[cell_a, cell_c],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -460,7 +468,8 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     text_length=len(row_2.text),
                     text_sha256=sha256_text(row_2.text),
                     table_id=table,
-                    table_row_index=2,
+                    table_row_start=2,
+                    table_row_end=2,
                     cell_ids=[cell_a, cell_b],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -515,6 +524,7 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     occurrence_id="occ_00000001",
                     cell_id=cell_a,
                     block_id=row_1.block_id,
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 ),
@@ -522,6 +532,7 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     occurrence_id="occ_00000002",
                     cell_id=cell_c,
                     block_id=row_1.block_id,
+                    physical_row_index=1,
                     canonical_start=4,
                     canonical_end=5,
                 ),
@@ -529,6 +540,7 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     occurrence_id="occ_00000003",
                     cell_id=cell_a,
                     block_id=row_2.block_id,
+                    physical_row_index=2,
                     canonical_start=0,
                     canonical_end=1,
                     occurrence_role="row_span_projection",
@@ -537,6 +549,7 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
                     occurrence_id="occ_00000004",
                     cell_id=cell_b,
                     block_id=row_2.block_id,
+                    physical_row_index=2,
                     canonical_start=4,
                     canonical_end=5,
                 ),
@@ -568,6 +581,119 @@ def test_vertical_merge_cells_are_selected_by_physical_row():
     )
     assert derived.locator.selected_row_index == 2
     assert derived.locator.row_indices == [1, 2]
+
+
+def test_row_group_block_derives_source_physical_row_from_occurrences():
+    table = "tbl_00000001"
+    header = "cell_00000001_r0001_c0001"
+    data = "cell_00000001_r0002_c0001"
+    block = DocumentBlock(
+        block_id="blk_0001",
+        document_id="doc_001",
+        type="table",
+        text="Header\nData",
+        order=1,
+    )
+    index = finalize_evidence_fingerprint(
+        EvidenceIndex(
+            document_id="doc_001",
+            document_name="row-group.docx",
+            source_format="docx",
+            source_sha256="a" * 64,
+            parser_identity=ParserIdentity(
+                parser_name="docx_parser_v2",
+                parser_version="2",
+                source_format="docx",
+            ),
+            evidence_fingerprint="0" * 64,
+            blocks=[
+                BlockEvidenceRecord(
+                    block_id=block.block_id,
+                    text_length=len(block.text),
+                    text_sha256=sha256_text(block.text),
+                    table_id=table,
+                    table_row_start=1,
+                    table_row_end=2,
+                    cell_ids=[header, data],
+                    expected_capabilities=["text_range", "table_cell"],
+                    available_capabilities=["text_range", "table_cell"],
+                )
+            ],
+            tables=[
+                TableRecord(
+                    table_id=table,
+                    block_ids=[block.block_id],
+                    row_count=2,
+                    column_count=1,
+                    cell_ids=[header, data],
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
+                    parser_method="docx_xml",
+                    topology_status="complete",
+                )
+            ],
+            cells=[
+                TableCellRecord(
+                    cell_id=header,
+                    table_id=table,
+                    row_index=1,
+                    column_index=1,
+                    text="Header",
+                    text_sha256=sha256_text("Header"),
+                    is_header=True,
+                ),
+                TableCellRecord(
+                    cell_id=data,
+                    table_id=table,
+                    row_index=2,
+                    column_index=1,
+                    text="Data",
+                    text_sha256=sha256_text("Data"),
+                ),
+            ],
+            cell_occurrences=[
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000001",
+                    cell_id=header,
+                    block_id=block.block_id,
+                    physical_row_index=1,
+                    canonical_start=0,
+                    canonical_end=6,
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=data,
+                    block_id=block.block_id,
+                    physical_row_index=2,
+                    canonical_start=7,
+                    canonical_end=11,
+                ),
+            ],
+        )
+    )
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement="Data is required.",
+        sources=[
+            SourceSpan(
+                document_id="doc_001",
+                block_id=block.block_id,
+                quote="Data",
+                source_cell_ids_raw=[data],
+            )
+        ],
+    )
+
+    canonicalize_source_cell_ids([requirement], index)
+    derived = derive_table_evidence(
+        index,
+        block_id=block.block_id,
+        selected_range=QuoteMatchRange(start=7, end=11),
+        canonical_cell_ids=requirement.sources[0].canonical_source_cell_ids,
+        block_text=block.text,
+    )
+
+    assert derived.locator.selected_row_index == 2
+    assert derived.locator.cell_ids == [data]
 
 
 def test_page_locator_validates_rotation_derivation_and_source_page():
@@ -743,7 +869,7 @@ def test_ambiguous_quote_uses_separate_provisional_text_locator():
     assert report.valid is False
 
 
-def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
+def test_table_derivation_selects_only_the_overlapping_duplicate_occurrence():
     cell = "cell_00000001_r0001_c0001"
     table = "tbl_00000001"
     text = "A / A"
@@ -765,7 +891,8 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -791,7 +918,6 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     column_index=1,
                     text="A",
                     text_sha256=sha256_text("A"),
-                    is_header=True,
                 )
             ],
             cell_occurrences=[
@@ -799,6 +925,7 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     occurrence_id="occ_00000001",
                     cell_id=cell,
                     block_id="blk_0001",
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 ),
@@ -806,9 +933,10 @@ def test_table_derivation_selects_only_the_overlapping_repeated_occurrence():
                     occurrence_id="occ_00000002",
                     cell_id=cell,
                     block_id="blk_0001",
+                    physical_row_index=1,
                     canonical_start=4,
                     canonical_end=5,
-                    occurrence_role="repeated_header",
+                    occurrence_role="duplicate_text_occurrence",
                 ),
             ],
         )
@@ -855,7 +983,8 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
                     text_length=len(text),
                     text_sha256=sha256_text(text),
                     table_id=table,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -888,6 +1017,7 @@ def test_partial_cell_quote_derives_and_validates_the_selected_text_range():
                     occurrence_id="occ_00000001",
                     cell_id=cell,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=len(text),
                 )

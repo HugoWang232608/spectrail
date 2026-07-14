@@ -65,7 +65,8 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     text_length=len(block.text),
                     text_sha256=sha256_text(block.text),
                     table_id=table,
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=2,
                     cell_ids=[cell],
                     expected_capabilities=["text_range", "table_cell"],
                     available_capabilities=["text_range", "table_cell"],
@@ -78,7 +79,7 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     row_count=2,
                     column_count=2,
                     cell_ids=[cell],
-                    occurrence_ids=["occ_00000001"],
+                    occurrence_ids=["occ_00000001", "occ_00000002"],
                     parser_method="docx_xml",
                     topology_status="complete",
                 )
@@ -100,9 +101,19 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
                     occurrence_id="occ_00000001",
                     cell_id=cell,
                     block_id=block.block_id,
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=len(block.text),
-                )
+                ),
+                CellBlockOccurrence(
+                    occurrence_id="occ_00000002",
+                    cell_id=cell,
+                    block_id=block.block_id,
+                    physical_row_index=2,
+                    canonical_start=0,
+                    canonical_end=len(block.text),
+                    occurrence_role="row_span_projection",
+                ),
             ],
         )
     )
@@ -121,7 +132,9 @@ def test_reqir_v3_prompt_renders_table_cell_map_without_changing_canonical_text(
 
     assert "source_cell_ids" in prompt
     assert f"table_id: {table}" in prompt
-    assert "physical_row: 1" in prompt
+    assert "primary_rows: 1-2" in prompt
+    assert "row 1:" in prompt
+    assert "row 2:" in prompt
     assert f"canonical_text: {block.text}" in prompt
     assert f"c1={cell}" in prompt
     assert "anchor_row=1" in prompt

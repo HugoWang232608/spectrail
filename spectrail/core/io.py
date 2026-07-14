@@ -44,6 +44,12 @@ def reqir_package_dump(
 
 
 def read_reqir_items(path: str | Path) -> list[Any]:
+    return read_reqir_package(path).items
+
+
+def read_reqir_package(path: str | Path):
+    from spectrail.core.models import ReqIRPackage
+
     payload = read_json(path)
     if isinstance(payload, dict):
         if "items" not in payload:
@@ -61,7 +67,13 @@ def read_reqir_items(path: str | Path) -> list[Any]:
         raise ValueError("ReqIR payload must be a package object or item list")
     if not isinstance(items, list):
         raise ValueError("ReqIR package items must be a list")
-    return items
+    return ReqIRPackage.model_validate(
+        {
+            "schema_version": REQIR_SCHEMA_VERSION,
+            "metadata": payload.get("metadata", {}) if isinstance(payload, dict) else {},
+            "items": items,
+        }
+    )
 
 
 def _validate_legacy_reqir_items(items: object) -> None:

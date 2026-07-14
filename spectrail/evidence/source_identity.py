@@ -69,12 +69,10 @@ def _canonical_cell_ids(
         raise EvidenceReferenceError(
             "source cell has no occurrence in the source block"
         )
-    if block.table_row_index is None:
-        raise EvidenceReferenceError("table source block has no physical row index")
+    table = tables_by_id[block.table_id]
     canonical = canonicalize_nonempty_cell_selection(
         cells,
-        [cells_by_id[cell_id] for cell_id in block.cell_ids],
-        table=tables_by_id[block.table_id],
-        selected_row_index=block.table_row_index,
+        [cells_by_id[cell_id] for cell_id in table.cell_ids],
+        table=table,
     )
     return [cell.cell_id for cell in canonical]

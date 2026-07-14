@@ -36,7 +36,7 @@ def test_all_evidence_blocks_must_expect_text_range():
 
 
 def test_available_table_cell_capability_requires_cell_map():
-    with pytest.raises(ValidationError, match="requires table_id, table_row_index"):
+    with pytest.raises(ValidationError, match="requires table_id, a primary row range"):
         BlockEvidenceRecord(
             block_id="blk_0001",
             text_length=1,
@@ -98,17 +98,29 @@ def _topology_index(
     block_text = "".join(cell.text for cell in cells)
     occurrences = []
     offset = 0
-    for index, cell in enumerate(cells, start=1):
+    occurrence_index = 0
+    for cell in cells:
         end = offset + len(cell.text)
-        occurrences.append(
-            CellBlockOccurrence(
-                occurrence_id=occurrence_id(index),
-                cell_id=cell.cell_id,
-                block_id=block_id,
-                canonical_start=offset,
-                canonical_end=end,
+        for physical_row_index in range(
+            cell.row_index,
+            cell.row_index + cell.row_span,
+        ):
+            occurrence_index += 1
+            occurrences.append(
+                CellBlockOccurrence(
+                    occurrence_id=occurrence_id(occurrence_index),
+                    cell_id=cell.cell_id,
+                    block_id=block_id,
+                    physical_row_index=physical_row_index,
+                    canonical_start=offset,
+                    canonical_end=end,
+                    occurrence_role=(
+                        "original"
+                        if physical_row_index == cell.row_index
+                        else "row_span_projection"
+                    ),
+                )
             )
-        )
         offset = end
     return EvidenceIndex(
         document_id="doc_001",
@@ -127,7 +139,8 @@ def _topology_index(
                 text_length=len(block_text),
                 text_sha256=sha256_text(block_text),
                 table_id=table_identifier,
-                table_row_index=1,
+                table_row_start=1,
+                table_row_end=row_count,
                 cell_ids=[cell.cell_id for cell in cells],
                 expected_capabilities=["text_range", "table_cell"],
                 available_capabilities=["text_range", "table_cell"],
@@ -396,7 +409,7 @@ def test_table_cell_must_be_referenced_by_a_table_block():
     payload["tables"][0]["occurrence_ids"] = [occurrence_id(1)]
     payload["cell_occurrences"] = [payload["cell_occurrences"][0]]
 
-    with pytest.raises(ValidationError, match="cell map does not match its physical row"):
+    with pytest.raises(ValidationError, match="not referenced by a table block"):
         EvidenceIndex.model_validate(payload)
 
 
@@ -459,7 +472,8 @@ def test_evidence_index_rejects_table_without_cells():
                     text_length=0,
                     text_sha256=sha256_text(""),
                     table_id="tbl_00000001",
-                    table_row_index=1,
+                    table_row_start=1,
+                    table_row_end=1,
                 )
             ],
             tables=[
@@ -505,24 +519,27 @@ def test_locator_status_rejects_unexpected_results_and_empty_expected_set():
 def test_evidence_index_supports_repeated_header_occurrences():
     table_identifier = table_id(1)
     header_cell = cell_id(1, 1, 1)
+    data_cell = cell_id(1, 2, 1)
     blocks = [
         BlockEvidenceRecord(
             block_id="blk_0001",
             text_length=6,
             text_sha256=sha256_text("Header"),
             table_id=table_identifier,
-            table_row_index=1,
+            table_row_start=1,
+            table_row_end=1,
             cell_ids=[header_cell],
             expected_capabilities=["text_range", "table_cell"],
             available_capabilities=["text_range", "table_cell"],
         ),
         BlockEvidenceRecord(
             block_id="blk_0002",
-            text_length=6,
-            text_sha256=sha256_text("Header"),
+            text_length=10,
+            text_sha256=sha256_text("HeaderData"),
             table_id=table_identifier,
-            table_row_index=1,
-            cell_ids=[header_cell],
+            table_row_start=2,
+            table_row_end=2,
+            cell_ids=[header_cell, data_cell],
             expected_capabilities=["text_range", "table_cell"],
             available_capabilities=["text_range", "table_cell"],
         ),
@@ -532,6 +549,7 @@ def test_evidence_index_supports_repeated_header_occurrences():
             occurrence_id=occurrence_id(1),
             cell_id=header_cell,
             block_id="blk_0001",
+            physical_row_index=1,
             canonical_start=0,
             canonical_end=6,
         ),
@@ -539,9 +557,18 @@ def test_evidence_index_supports_repeated_header_occurrences():
             occurrence_id=occurrence_id(2),
             cell_id=header_cell,
             block_id="blk_0002",
+            physical_row_index=1,
             canonical_start=0,
             canonical_end=6,
             occurrence_role="repeated_header",
+        ),
+        CellBlockOccurrence(
+            occurrence_id=occurrence_id(3),
+            cell_id=data_cell,
+            block_id="blk_0002",
+            physical_row_index=2,
+            canonical_start=6,
+            canonical_end=10,
         ),
     ]
     index = EvidenceIndex(
@@ -556,9 +583,9 @@ def test_evidence_index_supports_repeated_header_occurrences():
             TableRecord(
                 table_id=table_identifier,
                 block_ids=["blk_0001", "blk_0002"],
-                row_count=1,
+                row_count=2,
                 column_count=1,
-                cell_ids=[header_cell],
+                cell_ids=[header_cell, data_cell],
                 occurrence_ids=[item.occurrence_id for item in occurrences],
                 parser_method="docx_xml",
                 topology_status="complete",
@@ -573,22 +600,36 @@ def test_evidence_index_supports_repeated_header_occurrences():
                 text="Header",
                 text_sha256=sha256_text("Header"),
                 is_header=True,
-            )
+            ),
+            TableCellRecord(
+                cell_id=data_cell,
+                table_id=table_identifier,
+                row_index=2,
+                column_index=1,
+                text="Data",
+                text_sha256=sha256_text("Data"),
+            ),
         ],
         cell_occurrences=occurrences,
     )
-    assert len(index.cell_occurrences) == 2
+    assert len(index.cell_occurrences) == 3
     assert index.cell_occurrences[1].occurrence_role == "repeated_header"
 
-    duplicate_original = index.model_dump(mode="json")
-    duplicate_original["cell_occurrences"][1]["occurrence_role"] = "original"
-    with pytest.raises(ValidationError, match="exactly one original occurrence"):
-        EvidenceIndex.model_validate(duplicate_original)
+    same_block = index.model_dump(mode="json")
+    same_block_occurrence = {
+        **same_block["cell_occurrences"][1],
+        "occurrence_id": occurrence_id(4),
+        "block_id": "blk_0001",
+    }
+    same_block["cell_occurrences"].append(same_block_occurrence)
+    same_block["tables"][0]["occurrence_ids"].append(occurrence_id(4))
+    with pytest.raises(ValidationError, match="projected header anchor row"):
+        EvidenceIndex.model_validate(same_block)
 
-    missing_original = index.model_dump(mode="json")
-    missing_original["cell_occurrences"][0]["occurrence_role"] = "repeated_header"
-    with pytest.raises(ValidationError, match="exactly one original occurrence"):
-        EvidenceIndex.model_validate(missing_original)
+    out_of_order = index.model_dump(mode="json")
+    out_of_order["tables"][0]["block_ids"] = ["blk_0002", "blk_0001"]
+    with pytest.raises(ValidationError, match="ordered, contiguous, and complete"):
+        EvidenceIndex.model_validate(out_of_order)
 
 
 def test_occurrence_roles_must_match_cell_and_physical_row():
@@ -608,8 +649,8 @@ def test_occurrence_roles_must_match_cell_and_physical_row():
         column_count=1,
         cells=[cell],
     ).model_dump(mode="json")
-    payload["blocks"][0]["table_row_index"] = 2
-    with pytest.raises(ValidationError, match="original.*anchor row"):
+    payload["cell_occurrences"][0]["physical_row_index"] = 2
+    with pytest.raises(ValidationError, match="structural occurrence"):
         EvidenceIndex.model_validate(payload)
 
     payload = _topology_index(
@@ -619,7 +660,7 @@ def test_occurrence_roles_must_match_cell_and_physical_row():
         cells=[cell],
     ).model_dump(mode="json")
     payload["cell_occurrences"][0]["occurrence_role"] = "row_span_projection"
-    with pytest.raises(ValidationError, match="covered row after the anchor"):
+    with pytest.raises(ValidationError, match="structural occurrence"):
         EvidenceIndex.model_validate(payload)
 
     payload = _topology_index(
@@ -629,7 +670,7 @@ def test_occurrence_roles_must_match_cell_and_physical_row():
         cells=[cell],
     ).model_dump(mode="json")
     payload["cell_occurrences"][0]["occurrence_role"] = "repeated_header"
-    with pytest.raises(ValidationError, match="requires a header cell"):
+    with pytest.raises(ValidationError, match="structural occurrence"):
         EvidenceIndex.model_validate(payload)
 
 
@@ -654,6 +695,7 @@ def test_evidence_index_rejects_dangling_occurrence():
                     occurrence_id=occurrence_id(1),
                     cell_id="missing",
                     block_id="blk_0001",
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 )
@@ -824,6 +866,7 @@ def test_evidence_index_rejects_occurrence_cell_not_registered_by_block():
                     occurrence_id="occ_1",
                     cell_id="cell_2",
                     block_id="blk_0001",
+                    physical_row_index=1,
                     canonical_start=0,
                     canonical_end=1,
                 )

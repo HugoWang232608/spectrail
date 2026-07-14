@@ -37,9 +37,9 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             "table locator requires a table evidence block"
         )
-    if block.table_row_index is None:
+    if block.table_row_start is None or block.table_row_end is None:
         raise EvidenceReferenceError(
-            "table locator requires a physical table row"
+            "table locator requires a primary table row range"
         )
     if not canonical_cell_ids:
         raise EvidenceReferenceError(
@@ -51,17 +51,7 @@ def derive_table_evidence(
         raise EvidenceReferenceError(
             f"table locator references an unknown cell: {exc.args[0]}"
         ) from exc
-    canonical = canonicalize_nonempty_cell_selection(
-        cells,
-        [cells_by_id[cell_id] for cell_id in block.cell_ids],
-        table=tables_by_id[block.table_id],
-        selected_row_index=block.table_row_index,
-    )
-    if [cell.cell_id for cell in canonical] != canonical_cell_ids:
-        raise EvidenceReferenceError(
-            "source cell IDs are not in canonical order"
-        )
-    if any(cell.table_id != block.table_id for cell in canonical):
+    if any(cell.table_id != block.table_id for cell in cells):
         raise EvidenceReferenceError(
             "source cells do not belong to the source block table"
         )
@@ -79,13 +69,33 @@ def derive_table_evidence(
             occurrence.cell_id,
         ),
     )
-    covered_ids = {
-        occurrence.cell_id
+    covered_occurrences = [
+        occurrence
         for occurrence in occurrences
         if occurrence.canonical_start < selected_range.end
         and occurrence.canonical_end > selected_range.start
         and cells_by_id[occurrence.cell_id].text.strip()
+    ]
+    covered_ids = {occurrence.cell_id for occurrence in covered_occurrences}
+    selected_rows = {
+        occurrence.physical_row_index for occurrence in covered_occurrences
     }
+    if len(selected_rows) != 1:
+        raise LocatorDerivationError(
+            "quote range must resolve to exactly one physical table row"
+        )
+    selected_row_index = next(iter(selected_rows))
+    table = tables_by_id[block.table_id]
+    canonical = canonicalize_nonempty_cell_selection(
+        cells,
+        [cells_by_id[cell_id] for cell_id in table.cell_ids],
+        table=table,
+        selected_row_index=selected_row_index,
+    )
+    if [cell.cell_id for cell in canonical] != canonical_cell_ids:
+        raise EvidenceReferenceError(
+            "source cell IDs are not in canonical order"
+        )
     expected_ids = [
         cell.cell_id for cell in canonical if cell.cell_id in covered_ids
     ]
@@ -124,7 +134,6 @@ def derive_table_evidence(
     cell_pages = {cell.page for cell in canonical if cell.page is not None}
     if len(cell_pages) > 1:
         raise EvidenceReferenceError("selected table cells span multiple pages")
-    table = tables_by_id[block.table_id]
     page = next(iter(cell_pages), table.page if table.page is not None else block.page)
     if any(
         value is not None and page is not None and value != page
@@ -138,7 +147,7 @@ def derive_table_evidence(
             table_id=block.table_id,
             cell_ids=list(canonical_cell_ids),
             row_indices=[cell.row_index for cell in canonical],
-            selected_row_index=block.table_row_index,
+            selected_row_index=selected_row_index,
             column_indices=[cell.column_index for cell in canonical],
             bbox=bbox,
         ),

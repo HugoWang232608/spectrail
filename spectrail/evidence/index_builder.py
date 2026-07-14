@@ -39,7 +39,8 @@ def validate_evidence_index_against_parsed_document(
         evidence = evidence_blocks[block.block_id]
         has_table_evidence = (
             evidence.table_id is not None
-            or evidence.table_row_index is not None
+            or evidence.table_row_start is not None
+            or evidence.table_row_end is not None
             or bool(evidence.cell_ids)
             or "table_cell" in evidence.expected_capabilities
             or "table_cell" in evidence.available_capabilities
@@ -91,6 +92,14 @@ def ensure_evidence_index(
         parser_version="1",
         source_format=parsed_document.source_format,  # type: ignore[arg-type]
     )
+    if parser_identity.parser_name != parsed_document.parser_name:
+        raise ValueError(
+            "parser identity parser_name does not match parsed document parser_name"
+        )
+    if parser_identity.source_format != parsed_document.source_format:
+        raise ValueError(
+            "parser identity source_format does not match parsed document source_format"
+        )
     if parsed_document.evidence_index is not None:
         index = parsed_document.evidence_index
         if index.source_sha256 != source_hash:

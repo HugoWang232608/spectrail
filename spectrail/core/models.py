@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -114,6 +114,12 @@ class RequirementIR(BaseModel):
     tags: list[str] = Field(default_factory=list)
     review_log: list[ReviewRecord] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+
+
+class ReqIRPackage(BaseModel):
+    schema_version: Literal["reqir_v2"] = "reqir_v2"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    items: list[RequirementIR] = Field(default_factory=list)
 
 
 class PlanStep(BaseModel):

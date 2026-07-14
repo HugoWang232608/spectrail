@@ -27,6 +27,12 @@ def test_review_cli_applies_actions_and_refreshes_outputs(tmp_path: Path):
     )
     reqir = read_json(output / "exports" / "reqir.json")
     assert reqir["schema_version"] == "reqir_v2"
+    assert reqir["metadata"] == {
+        "export_state": "review_snapshot",
+        "document": "sample_srs.md",
+        "source_format": "markdown",
+        "parser": "markdown_parser_v1",
+    }
     req_0001 = next(item for item in reqir["items"] if item["id"] == "REQ-0001")
     assert req_0001["review_status"] == "approved"
 

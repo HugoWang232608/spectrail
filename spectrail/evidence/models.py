@@ -637,6 +637,8 @@ def _validate_table_row_groups(
     structural_roles = {"original", "row_span_projection"}
     structural_counts: dict[tuple[str, str, int, str], int] = {}
     repeated_counts: dict[tuple[str, str, int], int] = {}
+    repeated_keys: set[tuple[str, str, int]] = set()
+    duplicate_text_keys: set[tuple[str, str, int]] = set()
     repeated_cells_by_block: dict[str, set[str]] = {}
     for occurrence in occurrences:
         if occurrence.occurrence_role in structural_roles:
@@ -654,6 +656,7 @@ def _validate_table_row_groups(
                 occurrence.physical_row_index,
             )
             repeated_counts[repeated_key] = repeated_counts.get(repeated_key, 0) + 1
+            repeated_keys.add(repeated_key)
             if repeated_counts[repeated_key] > 1:
                 raise ValueError(
                     "a table block may contain at most one repeated header occurrence "
@@ -664,6 +667,26 @@ def _validate_table_row_groups(
             repeated_cells_by_block.setdefault(occurrence.block_id, set()).add(
                 occurrence.cell_id
             )
+        elif (
+            occurrence.occurrence_role == "duplicate_text_occurrence"
+            and cells_by_id[occurrence.cell_id].text.strip()
+        ):
+            duplicate_text_keys.add(
+                (
+                    occurrence.block_id,
+                    occurrence.cell_id,
+                    occurrence.physical_row_index,
+                )
+            )
+
+    ambiguous_repeated_keys = repeated_keys & duplicate_text_keys
+    if ambiguous_repeated_keys:
+        block_id, cell_id, physical_row = sorted(ambiguous_repeated_keys)[0]
+        raise ValueError(
+            "a repeated header cell and physical row may have only one non-empty "
+            "text occurrence per block: "
+            f"{block_id}/{cell_id}/row {physical_row}"
+        )
 
     for table in tables:
         primary_owners: dict[int, str] = {}

@@ -120,8 +120,18 @@ class QuoteMatchResult(BaseModel):
 class QuoteMatchRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["quote_matches_v2"]
+    schema_version: Literal["quote_matches_v3"]
     entries: dict[str, QuoteMatchResult] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_quote_matches_v2(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version") == "quote_matches_v2"
+        ):
+            raise ValueError("QUOTE_MATCHES_V2_REBUILD_REQUIRED")
+        return value
 
     def add(self, key: str, result: QuoteMatchResult) -> None:
         existing = self.entries.get(key)
@@ -195,7 +205,7 @@ def build_quote_match_registry(
     provisional: bool = True,
 ) -> QuoteMatchRegistry:
     blocks_by_id = {block.block_id: block for block in blocks}
-    registry = QuoteMatchRegistry(schema_version="quote_matches_v2")
+    registry = QuoteMatchRegistry(schema_version="quote_matches_v3")
     matcher = QuoteMatcher()
     for requirement in requirements:
         for source in requirement.sources:

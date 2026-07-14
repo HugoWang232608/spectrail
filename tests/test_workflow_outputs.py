@@ -40,9 +40,9 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     raw = read_json(output / "extracted" / "reqir.raw.json")
     validated = read_json(output / "extracted" / "reqir.validated.json")
     exported = read_json(output / "exports" / "reqir.json")
-    assert raw["schema_version"] == "reqir_v3"
-    assert validated["schema_version"] == "reqir_v3"
-    assert exported["schema_version"] == "reqir_v3"
+    assert raw["schema_version"] == "reqir_v4"
+    assert validated["schema_version"] == "reqir_v4"
+    assert exported["schema_version"] == "reqir_v4"
     assert raw["items"][0]["metadata"]["extractor_version"] == (
         "reqir_extractor_v4_table_row_evidence"
     )

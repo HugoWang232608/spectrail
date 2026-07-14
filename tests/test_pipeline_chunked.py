@@ -424,7 +424,7 @@ def test_pipeline_resolves_repeated_row_span_quote_with_source_row_hint(
     )
     match = next(iter(registry["entries"].values()))
     assert manifest["status"] == "completed"
-    assert registry["schema_version"] == "quote_matches_v2"
+    assert registry["schema_version"] == "quote_matches_v3"
     assert source["source_table_row_index"] == 2
     assert source["text_locator"]["start"] == 7
     assert source["table_locator"]["selected_row_index"] == 2

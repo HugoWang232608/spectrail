@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from spectrail.core.models import ReqIRPackage
 
 
-REQIR_SCHEMA_VERSION = "reqir_v3"
+REQIR_SCHEMA_VERSION = "reqir_v4"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -58,10 +58,16 @@ def read_reqir_package(path: str | Path) -> ReqIRPackage:
         if "items" not in payload:
             raise ValueError("ReqIR package must contain items")
         schema_version = payload.get("schema_version")
-        if schema_version not in {None, "reqir_v1", "reqir_v2", REQIR_SCHEMA_VERSION}:
+        if schema_version not in {
+            None,
+            "reqir_v1",
+            "reqir_v2",
+            "reqir_v3",
+            REQIR_SCHEMA_VERSION,
+        }:
             raise ValueError(f"unsupported ReqIR schema version: {schema_version}")
         items = payload["items"]
-        if schema_version in {None, "reqir_v1", "reqir_v2"}:
+        if schema_version in {None, "reqir_v1", "reqir_v2", "reqir_v3"}:
             _validate_legacy_reqir_items(items, schema_version=schema_version)
     elif isinstance(payload, list):
         items = payload
@@ -93,6 +99,22 @@ def _validate_legacy_reqir_items(
             if not isinstance(source, dict):
                 continue
             table_locator = source.get("table_locator")
+            if schema_version == "reqir_v3" and source.get("source_evidence_key"):
+                raise ValueError(
+                    "REQIR_V3_SOURCE_KEYS_REQUIRE_QUOTE_MATCH_REBUILD"
+                )
+            if schema_version == "reqir_v3" and isinstance(table_locator, dict):
+                canonical_cell_ids = source.get("canonical_source_cell_ids")
+                source_row = source.get("source_table_row_index")
+                if (
+                    not isinstance(canonical_cell_ids, list)
+                    or not canonical_cell_ids
+                    or table_locator.get("cell_ids") != canonical_cell_ids
+                    or table_locator.get("selected_row_index") != source_row
+                ):
+                    raise ValueError(
+                        "REQIR_V3_TABLE_SOURCE_REQUIRES_REENRICHMENT"
+                    )
             if (
                 isinstance(table_locator, dict)
                 and "selected_row_index" not in table_locator

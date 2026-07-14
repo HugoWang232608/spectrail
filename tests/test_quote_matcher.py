@@ -69,15 +69,22 @@ def test_registry_rejects_conflicting_results_for_same_source_key():
         block_id="blk_0001",
         quote="quote",
     )
-    registry = QuoteMatchRegistry(schema_version="quote_matches_v2")
+    registry = QuoteMatchRegistry(schema_version="quote_matches_v3")
     registry.add(key, QuoteMatcher().match("quote", "quote"))
     with pytest.raises(ValueError, match="collision"):
         registry.add(key, QuoteMatcher().match("quote / quote", "quote"))
 
 
-def test_quote_match_registry_requires_v2_schema_marker():
+def test_quote_match_registry_requires_v3_schema_marker():
     with pytest.raises(ValueError, match="schema_version"):
         QuoteMatchRegistry.model_validate({"entries": {}})
+
+
+def test_quote_match_registry_v2_requires_explicit_rebuild():
+    with pytest.raises(ValueError, match="QUOTE_MATCHES_V2_REBUILD_REQUIRED"):
+        QuoteMatchRegistry.model_validate(
+            {"schema_version": "quote_matches_v2", "entries": {}}
+        )
 
 
 def test_source_evidence_key_includes_physical_table_row_identity():

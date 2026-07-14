@@ -156,7 +156,7 @@ class RequirementIR(BaseModel):
 
 
 class ReqIRPackage(BaseModel):
-    schema_version: Literal["reqir_v3"] = "reqir_v3"
+    schema_version: Literal["reqir_v4"] = "reqir_v4"
     metadata: dict[str, Any] = Field(default_factory=dict)
     items: list[RequirementIR] = Field(default_factory=list)
 

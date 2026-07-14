@@ -726,6 +726,26 @@ def test_evidence_index_supports_repeated_header_occurrences():
     with pytest.raises(ValidationError, match="at most one repeated header"):
         EvidenceIndex.model_validate(duplicate_header)
 
+    duplicate_projection = index.model_dump(mode="json")
+    duplicate_projection["blocks"][1]["text_length"] = 16
+    duplicate_projection["blocks"][1]["text_sha256"] = sha256_text(
+        "HeaderDataHeader"
+    )
+    duplicate_text_occurrence = {
+        **duplicate_projection["cell_occurrences"][1],
+        "occurrence_id": occurrence_id(4),
+        "canonical_start": 10,
+        "canonical_end": 16,
+        "occurrence_role": "duplicate_text_occurrence",
+    }
+    duplicate_projection["cell_occurrences"].append(duplicate_text_occurrence)
+    duplicate_projection["tables"][0]["occurrence_ids"].append(occurrence_id(4))
+    with pytest.raises(
+        ValidationError,
+        match="repeated header cell and physical row may have only one",
+    ):
+        EvidenceIndex.model_validate(duplicate_projection)
+
     overlapping_projection = index.model_dump(mode="json")
     overlapping_projection["cell_occurrences"][2]["canonical_start"] = 0
     overlapping_projection["cell_occurrences"][2]["canonical_end"] = 4

@@ -41,6 +41,8 @@ def test_locator_metrics_use_source_alignment_pair_and_expected_capabilities():
         block_id="blk_0001",
         quote="source quote",
         match_status="PASS_EXACT",
+        canonical_source_cell_ids=["c1", "c2"],
+        source_table_row_index=1,
         text_locator=TextLocator(
             block_id="blk_0001", start=0, end=12, match_basis="exact"
         ),
@@ -155,6 +157,8 @@ def test_bbox_metric_prefers_table_bbox_for_cell_gold():
         document_id="doc_001",
         block_id="blk_0001",
         quote="quote",
+        canonical_source_cell_ids=["cell_1"],
+        source_table_row_index=1,
         page_locator=PageLocator(
             page=2,
             bbox=page_bbox,

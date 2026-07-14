@@ -324,8 +324,9 @@ def source_evidence_key(
         "block_id": block_id,
         "quote": quote,
         "canonical_cell_ids": list(canonical_cell_ids),
-        "source_table_row_index": source_table_row_index,
     }
+    if source_table_row_index is not None:
+        payload["source_table_row_index"] = source_table_row_index
     encoded = json.dumps(
         payload,
         ensure_ascii=False,

@@ -343,9 +343,9 @@ def test_complete_topology_requires_full_grid_but_sparse_topology_allows_holes()
 
 
 def test_previous_evidence_artifacts_are_rejected_explicitly():
-    with pytest.raises(ValidationError, match="evidence_v4"):
+    with pytest.raises(ValidationError, match="EVIDENCE_V4_REBUILD_REQUIRED"):
         EvidenceIndex(
-            schema_version="evidence_v3",  # type: ignore[arg-type]
+            schema_version="evidence_v4",  # type: ignore[arg-type]
             document_id="doc_001",
             document_name="sample.docx",
             source_format="docx",
@@ -715,6 +715,16 @@ def test_evidence_index_supports_repeated_header_occurrences():
     )
     assert len(index.cell_occurrences) == 3
     assert index.cell_occurrences[1].occurrence_role == "repeated_header"
+
+    duplicate_header = index.model_dump(mode="json")
+    duplicate_occurrence = {
+        **duplicate_header["cell_occurrences"][1],
+        "occurrence_id": occurrence_id(4),
+    }
+    duplicate_header["cell_occurrences"].append(duplicate_occurrence)
+    duplicate_header["tables"][0]["occurrence_ids"].append(occurrence_id(4))
+    with pytest.raises(ValidationError, match="at most one repeated header"):
+        EvidenceIndex.model_validate(duplicate_header)
 
     overlapping_projection = index.model_dump(mode="json")
     overlapping_projection["cell_occurrences"][2]["canonical_start"] = 0

@@ -1,9 +1,12 @@
 from pathlib import Path
+import hashlib
+import json
 
 import pytest
 
 from spectrail.core.io import read_reqir_package, write_json
 from spectrail.core.models import SourceSpan
+from spectrail.evidence import TableLocator, validate_source_evidence_keys
 from spectrail.review.service import load_requirements
 
 
@@ -119,6 +122,52 @@ def test_reqir_v2_text_source_is_upgraded_to_v3(tmp_path: Path):
     assert package.metadata == {"document": "sample.md"}
 
 
+def test_reqir_v2_text_source_preserves_legacy_source_evidence_key(tmp_path: Path):
+    path = tmp_path / "reqir-v2-keyed-text.json"
+    fingerprint = "a" * 64
+    legacy_payload = {
+        "evidence_fingerprint": fingerprint,
+        "document_id": "doc_001",
+        "block_id": "blk_0001",
+        "quote": "The system shall log events.",
+        "canonical_cell_ids": [],
+    }
+    encoded = json.dumps(
+        legacy_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    legacy_key = f"src_{hashlib.sha256(encoded).hexdigest()[:24]}"
+    write_json(
+        path,
+        {
+            "schema_version": "reqir_v2",
+            "items": [
+                {
+                    "id": "REQ-1",
+                    "statement": "The system shall log events.",
+                    "sources": [
+                        {
+                            "document_id": "doc_001",
+                            "block_id": "blk_0001",
+                            "quote": "The system shall log events.",
+                            "source_evidence_key": legacy_key,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    package = read_reqir_package(path)
+    validate_source_evidence_keys(
+        package.items,
+        evidence_fingerprint=fingerprint,
+    )
+    assert package.items[0].sources[0].source_evidence_key == legacy_key
+
+
 def test_table_source_identity_requires_cell_ids_and_physical_row_together():
     with pytest.raises(ValueError, match="require source_table_row_index"):
         SourceSpan(
@@ -133,4 +182,30 @@ def test_table_source_identity_requires_cell_ids_and_physical_row_together():
             block_id="blk_0001",
             quote="Merged",
             source_table_row_index=1,
+        )
+
+
+def test_table_locator_requires_complete_canonical_source_identity():
+    locator = TableLocator(
+        table_id="tbl_00000001",
+        cell_ids=["cell_00000001_r0001_c0001"],
+        row_indices=[1],
+        selected_row_index=1,
+        column_indices=[1],
+    )
+    with pytest.raises(ValueError, match="canonical_source_cell_ids"):
+        SourceSpan(
+            document_id="doc_001",
+            block_id="blk_0001",
+            quote="A",
+            table_locator=locator,
+        )
+    with pytest.raises(ValueError, match="cell IDs do not match"):
+        SourceSpan(
+            document_id="doc_001",
+            block_id="blk_0001",
+            quote="A",
+            canonical_source_cell_ids=["cell_00000001_r0001_c0002"],
+            source_table_row_index=1,
+            table_locator=locator,
         )

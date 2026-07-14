@@ -12,7 +12,7 @@ from spectrail.evidence.models import (
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v9_table_row_evidence_v4"
+PROMPT_VERSION = "reqir_extraction_v10_table_row_evidence_v5"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 

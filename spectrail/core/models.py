@@ -101,13 +101,24 @@ class SourceSpan(BaseModel):
             raise ValueError("table source cell IDs require source_table_row_index")
         if self.source_table_row_index is not None and not has_cell_ids:
             raise ValueError("source_table_row_index requires table source cell IDs")
-        if (
-            self.table_locator is not None
-            and self.source_table_row_index is not None
-            and self.table_locator.selected_row_index
-            != self.source_table_row_index
-        ):
-            raise ValueError("table locator row does not match source table row identity")
+        if self.table_locator is not None:
+            if not self.canonical_source_cell_ids:
+                raise ValueError(
+                    "table_locator requires canonical_source_cell_ids"
+                )
+            if self.source_table_row_index is None:
+                raise ValueError("table_locator requires source_table_row_index")
+            if self.table_locator.cell_ids != self.canonical_source_cell_ids:
+                raise ValueError(
+                    "table locator cell IDs do not match canonical source cell IDs"
+                )
+            if (
+                self.table_locator.selected_row_index
+                != self.source_table_row_index
+            ):
+                raise ValueError(
+                    "table locator row does not match source table row identity"
+                )
         return self
 
 

@@ -386,7 +386,7 @@ class TableRecord(EvidenceModel):
 
 
 class EvidenceIndex(EvidenceModel):
-    schema_version: Literal["evidence_v4"] = "evidence_v4"
+    schema_version: Literal["evidence_v5"] = "evidence_v5"
     document_id: str
     document_name: str
     source_format: str
@@ -400,6 +400,13 @@ class EvidenceIndex(EvidenceModel):
     cells: list[TableCellRecord] = Field(default_factory=list)
     cell_occurrences: list[CellBlockOccurrence] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_evidence_v4(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("schema_version") == "evidence_v4":
+            raise ValueError("EVIDENCE_V4_REBUILD_REQUIRED")
+        return value
 
     @field_validator("source_sha256", "evidence_fingerprint")
     @classmethod
@@ -629,6 +636,7 @@ def _validate_table_row_groups(
 ) -> None:
     structural_roles = {"original", "row_span_projection"}
     structural_counts: dict[tuple[str, str, int, str], int] = {}
+    repeated_counts: dict[tuple[str, str, int], int] = {}
     repeated_cells_by_block: dict[str, set[str]] = {}
     for occurrence in occurrences:
         if occurrence.occurrence_role in structural_roles:
@@ -640,6 +648,19 @@ def _validate_table_row_groups(
             )
             structural_counts[key] = structural_counts.get(key, 0) + 1
         elif occurrence.occurrence_role == "repeated_header":
+            repeated_key = (
+                occurrence.block_id,
+                occurrence.cell_id,
+                occurrence.physical_row_index,
+            )
+            repeated_counts[repeated_key] = repeated_counts.get(repeated_key, 0) + 1
+            if repeated_counts[repeated_key] > 1:
+                raise ValueError(
+                    "a table block may contain at most one repeated header occurrence "
+                    "for each cell and physical row: "
+                    f"{occurrence.block_id}/{occurrence.cell_id}/"
+                    f"row {occurrence.physical_row_index}"
+                )
             repeated_cells_by_block.setdefault(occurrence.block_id, set()).add(
                 occurrence.cell_id
             )

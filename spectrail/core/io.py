@@ -99,7 +99,11 @@ def _validate_legacy_reqir_items(
             if not isinstance(source, dict):
                 continue
             table_locator = source.get("table_locator")
-            if schema_version == "reqir_v3" and source.get("source_evidence_key"):
+            if (
+                schema_version == "reqir_v3"
+                and "source_evidence_key" in source
+                and source["source_evidence_key"] is not None
+            ):
                 raise ValueError(
                     "REQIR_V3_SOURCE_KEYS_REQUIRE_QUOTE_MATCH_REBUILD"
                 )

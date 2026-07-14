@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -82,6 +83,17 @@ class SourceSpan(BaseModel):
     locator_status: LocatorStatus = "UNVERIFIED"
     capability_results: list[CapabilityValidationResult] = Field(default_factory=list)
     locator_score: float | None = None
+
+    @field_validator("source_evidence_key", mode="before")
+    @classmethod
+    def validate_source_evidence_key(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or re.fullmatch(r"src_[0-9a-f]{24}", value) is None:
+            raise ValueError(
+                "source_evidence_key must match ^src_[0-9a-f]{24}$"
+            )
+        return value
 
     @field_validator("source_table_row_index", mode="before")
     @classmethod

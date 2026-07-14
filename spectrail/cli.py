@@ -21,6 +21,7 @@ from spectrail.evidence.index_builder import (
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
+from spectrail.migrations import migrate_task
 from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.evaluation.runner import EvaluationRunner
@@ -71,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("reqir")
     validate_parser.add_argument("--blocks", required=True)
     validate_parser.add_argument("--quote-matches", default=None)
+    validate_parser.add_argument("--rebuild-quote-matches", action="store_true")
+    validate_parser.add_argument("--quote-matches-output", default=None)
     validate_parser.add_argument("--evidence-index", default=None)
     validate_parser.add_argument("--output", default=None)
     validate_parser.add_argument("--validated-output", default=None)
@@ -99,6 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     review_parser.add_argument("--reviewer", default=None)
     review_parser.add_argument("--reason", default=None)
     review_parser.set_defaults(func=run_review)
+
+    migrate_parser = subparsers.add_parser(
+        "migrate",
+        help="migrate persisted task artifacts to current schemas",
+    )
+    migrate_parser.add_argument("task_dir")
+    migrate_parser.set_defaults(func=run_migrate)
 
     evaluate_parser = subparsers.add_parser("evaluate", help="run deterministic extraction evaluation")
     evaluate_parser.add_argument("case", help="case.json or directory containing evaluation cases")
@@ -142,7 +152,21 @@ def run_evaluate(args: argparse.Namespace) -> int:
 
 
 def run_validate(args: argparse.Namespace) -> int:
-    reqs = _load_requirements(args.reqir)
+    if args.quote_matches_output and not args.rebuild_quote_matches:
+        raise ValueError(
+            "--quote-matches-output requires --rebuild-quote-matches"
+        )
+    try:
+        reqs = _load_requirements(args.reqir)
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith("REQIR_V3_") or "REQIR_LEGACY_" in message:
+            task_dir = Path(args.reqir).parent.parent
+            raise ValueError(
+                "legacy ReqIR requires migration; run: "
+                f"spectrail migrate {task_dir}"
+            ) from exc
+        raise
     blocks = BlockListAdapter.validate_python(read_json(args.blocks))
     schema_report = SchemaValidator().validate(reqs)
     quote_matches_path, evidence_index_path = _validation_artifact_paths(
@@ -171,13 +195,48 @@ def run_validate(args: argparse.Namespace) -> int:
             parsed_document,
         )
         canonicalize_source_cell_ids(reqs, evidence_index)
-    if quote_matches_path is not None:
-        quote_matches = QuoteMatchRegistry.model_validate(read_json(quote_matches_path))
-    else:
-        if any(source.source_evidence_key for item in reqs for source in item.sources):
-            raise ValueError(
-                "quote match registry is required for ReqIR sources with source_evidence_key"
+    if args.rebuild_quote_matches:
+        validation_fingerprint = (
+            evidence_index.evidence_fingerprint
+            if evidence_index is not None
+            else sha256_text(
+                "\n".join(
+                    f"{block.document_id}:{block.block_id}:{block.text}"
+                    for block in blocks
+                )
             )
+        )
+        try:
+            quote_matches = build_quote_match_registry(
+                reqs,
+                blocks,
+                evidence_fingerprint=validation_fingerprint,
+                evidence_index=evidence_index,
+            )
+        except ValueError as exc:
+            if "source_evidence_key does not match" in str(exc):
+                raise ValueError(
+                    "source keys require migration; run spectrail migrate <task_dir>"
+                ) from exc
+            raise
+        rebuild_output = Path(args.quote_matches_output) if args.quote_matches_output else (
+            quote_matches_path
+            or Path(args.reqir).parent.parent / "extracted" / "quote_matches.json"
+        )
+        write_json(rebuild_output, quote_matches.model_dump(mode="json"))
+    elif quote_matches_path is not None:
+        try:
+            quote_matches = QuoteMatchRegistry.model_validate(
+                read_json(quote_matches_path)
+            )
+        except ValueError as exc:
+            if "QUOTE_MATCHES_V2_REBUILD_REQUIRED" in str(exc):
+                raise ValueError(
+                    "quote_matches_v2 requires rebuilding; rerun validate with "
+                    "--rebuild-quote-matches"
+                ) from exc
+            raise
+    else:
         validation_fingerprint = (
             evidence_index.evidence_fingerprint
             if evidence_index is not None
@@ -247,6 +306,20 @@ def run_validate(args: argparse.Namespace) -> int:
     return 0 if report.valid else 1
 
 
+def run_migrate(args: argparse.Namespace) -> int:
+    try:
+        report = migrate_task(args.task_dir)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(
+        "Migrated "
+        f"{report['reqir_packages']} ReqIR package(s), "
+        f"rebound {report['rebound_sources']} source(s), and wrote "
+        f"{report['quote_matches_schema_version']}"
+    )
+    return 0
+
+
 def _validation_artifact_paths(
     reqir_path: Path,
     *,
@@ -311,11 +384,14 @@ def run_review(args: argparse.Namespace) -> int:
                 reason=args.reason,
             )
         except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
+            raise SystemExit(_review_error_message(exc, output)) from exc
         print(f"Applied {args.action} to {args.requirement_id}")
         return 0
 
-    package = load_requirement_package(reqs_path)
+    try:
+        package = load_requirement_package(reqs_path)
+    except ValueError as exc:
+        raise SystemExit(_review_error_message(exc, output)) from exc
     refresh_review_package(
         reqs_path,
         review_log_path,
@@ -325,6 +401,16 @@ def run_review(args: argparse.Namespace) -> int:
     )
     print(f"Refreshed review outputs for {len(package.items)} requirements")
     return 0
+
+
+def _review_error_message(exc: ValueError, output: Path) -> str:
+    message = str(exc)
+    if message.startswith("REQIR_V3_") or "REQIR_LEGACY_" in message:
+        return (
+            f"legacy task artifacts require migration; run: "
+            f"spectrail migrate {output}"
+        )
+    return message
 
 
 def _load_requirements(path: str | Path) -> list[RequirementIR]:

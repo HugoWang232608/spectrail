@@ -216,6 +216,46 @@ def test_reqir_v3_key_with_null_table_row_requires_registry_rebuild(
         read_reqir_package(path)
 
 
+def test_reqir_v3_empty_source_key_requires_registry_rebuild(tmp_path: Path):
+    path = tmp_path / "reqir-v3-empty-key.json"
+    write_json(
+        path,
+        {
+            "schema_version": "reqir_v3",
+            "items": [
+                {
+                    "id": "REQ-1",
+                    "statement": "The system shall log events.",
+                    "sources": [
+                        {
+                            "document_id": "doc_001",
+                            "block_id": "blk_0001",
+                            "quote": "The system shall log events.",
+                            "source_evidence_key": "",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="REQIR_V3_SOURCE_KEYS_REQUIRE_QUOTE_MATCH_REBUILD",
+    ):
+        read_reqir_package(path)
+
+
+def test_source_evidence_key_must_use_canonical_format():
+    with pytest.raises(ValueError, match="must match"):
+        SourceSpan(
+            document_id="doc_001",
+            block_id="blk_0001",
+            quote="quote",
+            source_evidence_key="",
+        )
+
+
 def test_reqir_v3_incomplete_table_locator_requires_reenrichment(tmp_path: Path):
     path = tmp_path / "reqir-v3-incomplete-table.json"
     write_json(

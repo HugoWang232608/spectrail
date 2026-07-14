@@ -304,6 +304,25 @@ python -m spectrail extract docs/sample_srs.md --model-mode live --output output
 
 Recorded fixtures are tied to their source document blocks; the default recorded fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads. See [docs/p3_llm_extraction_adapter.md](docs/p3_llm_extraction_adapter.md) for details.
 
+Migrate a persisted task created with an older ReqIR, quote-match, or Evidence
+schema before reviewing it:
+
+```bash
+python -m spectrail migrate outputs/demo
+```
+
+For a current `reqir_v4` task whose quote-match registry is missing or still uses
+`quote_matches_v2`, validation can rebuild the registry explicitly:
+
+```bash
+python -m spectrail validate outputs/demo/exports/reqir.json \
+  --blocks outputs/demo/parsed/blocks.json \
+  --rebuild-quote-matches
+```
+
+Key changes from an older ReqIR identity algorithm require `migrate`; ordinary
+validation never silently rebinds persisted source identities.
+
 ## P4 Evaluation and chunked extraction
 
 P4 adds deterministic, section-aware chunking for long documents, overlap-safe candidate aggregation, per-item model-output isolation, request fingerprints, quarantine mode, and a checked-in evaluation quality gate.

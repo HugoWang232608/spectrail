@@ -7,7 +7,7 @@ from spectrail.parsers.base import (
     ParsedDocument,
     UnsupportedDocumentTypeError,
 )
-from spectrail.parsers.docx_parser import DocxParser
+from spectrail.parsers.docx_parser import DocxParserV2
 from spectrail.parsers.markdown_parser import MarkdownDocumentParser
 from spectrail.parsers.pdf_parser import TextPdfParser
 
@@ -15,7 +15,7 @@ from spectrail.parsers.pdf_parser import TextPdfParser
 PARSER_REGISTRY = {
     ".md": MarkdownDocumentParser,
     ".markdown": MarkdownDocumentParser,
-    ".docx": DocxParser,
+    ".docx": DocxParserV2,
     ".pdf": TextPdfParser,
 }
 SUPPORTED_DOCUMENT_SUFFIXES = set(PARSER_REGISTRY)

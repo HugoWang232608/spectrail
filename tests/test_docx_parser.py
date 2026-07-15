@@ -219,6 +219,7 @@ def test_docx_table_serializer_escapes_content_without_collapsing_breaks(tmp_pat
     assert parsed.blocks[0].text == (
         r"path \| pattern\\root\nline 2\nparagraph 2 |   keep   spaces  "
     )
+    assert parsed.text == parsed.blocks[0].text + "\n"
     index = parsed.evidence_index
     assert index is not None
     assert index.cells[0].text == r"path \| pattern\\root\nline 2\nparagraph 2"
@@ -247,10 +248,13 @@ def test_docx_grid_slots_without_xml_cells_downgrade_to_text_only(tmp_path: Path
     assert index.cell_occurrences == []
     assert index.blocks[0].table_id is None
     assert index.blocks[0].available_capabilities == ["text_range"]
-    assert parsed.warnings == ["DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table 1"]
+    assert parsed.warnings == [
+        "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table 1: DOCX table physical row "
+        "has XML grid slots without w:tc elements: row 1, columns [1]"
+    ]
 
 
-def test_docx_invalid_merge_falls_back_with_warning(tmp_path: Path):
+def test_docx_invalid_merge_downgrades_to_text_only_with_diagnostics(tmp_path: Path):
     path = tmp_path / "invalid-merge.docx"
     document = Document()
     table = document.add_table(rows=2, cols=1)
@@ -262,9 +266,16 @@ def test_docx_invalid_merge_falls_back_with_warning(tmp_path: Path):
     parsed = DocxParser().parse(path)
     index = parsed.evidence_index
     assert index is not None
-    assert [cell.text for cell in index.cells] == ["A", "B"]
-    assert "DOCX_MERGED_CELL_BEST_EFFORT" in parsed.warnings
-    assert index.tables[0].warnings == ["DOCX_MERGED_CELL_BEST_EFFORT"]
+    assert index.tables == []
+    assert index.cells == []
+    assert index.cell_occurrences == []
+    assert index.blocks[0].table_id is None
+    assert index.blocks[0].available_capabilities == ["text_range"]
+    assert parsed.warnings == [
+        "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table 1: "
+        "DOCX_MERGED_CELL_BEST_EFFORT: vertical continuation has no matching "
+        "anchor or span at row 1, column 1"
+    ]
 
 
 def test_docx_table_runs_structured_evidence_validation_end_to_end(tmp_path: Path):

@@ -93,7 +93,7 @@ class DocxParserV2:
             table_index += 1
             try:
                 grid = _parse_table_grid(item, table_index)
-            except _TableEvidenceUnavailable:
+            except _TableEvidenceUnavailable as exc:
                 order = len(blocks) + 1
                 text = _render_table_text_only(item)
                 if not text:
@@ -114,7 +114,8 @@ class DocxParserV2:
                 blocks.append(block)
                 evidence_blocks.append(_text_block_evidence(block))
                 warnings.append(
-                    f"DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table {table_index}"
+                    "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: "
+                    f"table {table_index}: {exc}"
                 )
                 continue
             table_identifier = table_id(table_index)
@@ -195,17 +196,13 @@ class DocxParserV2:
                     occurrence_ids=table_occurrence_ids,
                     parser_method="docx_xml",
                     topology_status="complete",
-                    warnings=[
-                        *grid.warnings,
-                        *(
-                            ["DOCX_REPEATED_HEADER_PROJECTED"]
-                            if len(row_groups) > 1 and header_row_indices
-                            else []
-                        ),
-                    ],
+                    warnings=(
+                        ["DOCX_REPEATED_HEADER_PROJECTED"]
+                        if len(row_groups) > 1 and header_row_indices
+                        else []
+                    ),
                 )
             )
-            warnings.extend(grid.warnings)
 
         if not blocks:
             raise DocumentParseError(
@@ -335,7 +332,6 @@ class _TableGrid:
     cells: list[_GridCell]
     rows: list[list[_GridCell]]
     header_rows: list[bool]
-    warnings: list[str]
 
 
 @dataclass(frozen=True)
@@ -362,7 +358,6 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
     )
     raw_rows: list[list[_RawCell]] = []
     header_rows: list[bool] = []
-    warnings: list[str] = []
     measured_columns = declared_columns
 
     for row_index, row_element in enumerate(row_elements, start=1):
@@ -400,16 +395,22 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
                 )
             )
             if raw_cells[-1].vertical_merge == "invalid":
-                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                raise _TableEvidenceUnavailable(
+                    "DOCX_MERGED_CELL_BEST_EFFORT: unsupported vertical merge "
+                    f"state at row {row_index}, column {column_index}"
+                )
             if raw_cells[-1].horizontal_merge == "invalid":
-                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                raise _TableEvidenceUnavailable(
+                    "DOCX_MERGED_CELL_BEST_EFFORT: unsupported horizontal merge "
+                    f"state at row {row_index}, column {column_index}"
+                )
             column_index += column_span
         measured_columns = max(
             measured_columns,
             column_index - 1 + grid_after,
         )
         raw_rows.append(
-            _collapse_horizontal_merges(raw_cells, warnings)
+            _collapse_horizontal_merges(raw_cells)
         )
 
     if not raw_rows or measured_columns < 1:
@@ -448,13 +449,17 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
                         for column in occupied_columns
                     )
                 ):
-                    warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
-                    cell = _new_grid_cell(raw_cell, table_index, row_index)
-                    logical_cells.append(cell)
+                    raise _TableEvidenceUnavailable(
+                        "DOCX_MERGED_CELL_BEST_EFFORT: vertical continuation "
+                        "has no matching anchor or span at "
+                        f"row {row_index}, column {raw_cell.column_index}"
+                    )
                 elif raw_cell.text and raw_cell.text != anchor.text:
-                    warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
-                    cell = _new_grid_cell(raw_cell, table_index, row_index)
-                    logical_cells.append(cell)
+                    raise _TableEvidenceUnavailable(
+                        "DOCX_MERGED_CELL_BEST_EFFORT: vertical continuation "
+                        "contains conflicting text at "
+                        f"row {row_index}, column {raw_cell.column_index}"
+                    )
                 else:
                     anchor.row_span = row_index - anchor.row_index + 1
                     cell = anchor
@@ -475,7 +480,6 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
         cells=logical_cells,
         rows=physical_rows,
         header_rows=header_rows,
-        warnings=list(dict.fromkeys(warnings)),
     )
 
 
@@ -650,7 +654,7 @@ def _parser_identity() -> ParserIdentity:
             "header_detection": "explicit_w_tblHeader",
             "repeated_header_projection": "logical_cell_identity",
             "irregular_topology": "text_range_only",
-            "merged_cell_errors": "best_effort_or_text_range_only",
+            "merged_cell_errors": "text_range_only",
         },
         runtime_dependencies={"python-docx": python_docx_version},
     )
@@ -708,22 +712,25 @@ def _horizontal_merge(parent: object | None, qn) -> str | None:
 
 def _collapse_horizontal_merges(
     raw_cells: list[_RawCell],
-    warnings: list[str],
 ) -> list[_RawCell]:
     collapsed: list[_RawCell] = []
     active_index: int | None = None
     for raw_cell in raw_cells:
         if raw_cell.horizontal_merge == "continue":
             if active_index is None:
-                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
-                collapsed.append(replace(raw_cell, horizontal_merge=None))
-                continue
+                raise _TableEvidenceUnavailable(
+                    "DOCX_MERGED_CELL_BEST_EFFORT: horizontal continuation "
+                    "has no matching anchor at "
+                    f"row {raw_cell.row_index}, column {raw_cell.column_index}"
+                )
             anchor = collapsed[active_index]
             if anchor.vertical_merge != raw_cell.vertical_merge:
-                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
-                collapsed.append(replace(raw_cell, horizontal_merge=None))
-                active_index = None
-                continue
+                raise _TableEvidenceUnavailable(
+                    "DOCX_MERGED_CELL_BEST_EFFORT: horizontal merge cells "
+                    "disagree on vertical merge state at "
+                    f"row {raw_cell.row_index}, "
+                    f"column {raw_cell.column_index}"
+                )
             combined_text = " ".join(
                 value for value in (anchor.text, raw_cell.text) if value
             )

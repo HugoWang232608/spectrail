@@ -417,7 +417,18 @@ def test_docx_empty_row_groups_downgrade_without_exceeding_row_limit(tmp_path: P
         <= 20
         for block in parsed.blocks
     )
-    assert "all-empty structured row group: rows 1-20" in parsed.warnings[0]
+    assert parsed.warnings == [
+        "DOCX_EMPTY_ROW_GROUP_REQUIRES_TEXT_ONLY: table 1: DOCX table contains "
+        "all-empty structured row groups; "
+        "skipped_empty_row_groups=[[1, 20], [21, 40]]"
+    ]
+    assert all(
+        block.metadata["degradation_code"]
+        == "DOCX_EMPTY_ROW_GROUP_REQUIRES_TEXT_ONLY"
+        and block.metadata["skipped_empty_row_groups"]
+        == [[1, 20], [21, 40]]
+        for block in parsed.blocks
+    )
 
 
 def test_docx_large_text_only_fallback_is_split_by_physical_rows(tmp_path: Path):
@@ -443,6 +454,12 @@ def test_docx_large_text_only_fallback_is_split_by_physical_rows(tmp_path: Path)
     assert parsed.blocks[0].metadata["physical_row_end"] == 20
     assert parsed.blocks[-1].metadata["physical_row_start"] == 1001
     assert parsed.blocks[-1].metadata["physical_row_end"] == 1001
+    assert all(
+        block.metadata["degradation_code"]
+        == "DOCX_TABLE_TOPOLOGY_UNAVAILABLE"
+        and block.metadata["skipped_empty_row_groups"] == []
+        for block in parsed.blocks
+    )
     assert all(
         block.metadata["physical_row_end"]
         - block.metadata["physical_row_start"]

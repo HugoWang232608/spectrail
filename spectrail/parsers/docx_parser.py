@@ -35,6 +35,17 @@ TABLE_ROW_SEPARATOR = "\n"
 class _TableEvidenceUnavailable(ValueError):
     """The table can be rendered as text but not trusted as cell evidence."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "DOCX_TABLE_TOPOLOGY_UNAVAILABLE",
+        skipped_empty_row_groups: list[list[int]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.skipped_empty_row_groups = skipped_empty_row_groups or []
+
 
 class DocxParserV2:
     parser_name = "docx_parser_v2"
@@ -97,28 +108,29 @@ class DocxParserV2:
                     warnings.append(f"DOCX_EMPTY_TABLE_SKIPPED: table {table_index}")
                     continue
                 row_groups = _table_row_groups(len(grid.rows))
-                empty_group = next(
-                    (
-                        (row_start, row_end)
-                        for row_start, row_end in row_groups
-                        if not _row_group_has_extractable_text(
-                            grid,
-                            row_start=row_start,
-                            row_end=row_end,
-                        )
-                    ),
-                    None,
-                )
-                if empty_group is not None:
+                empty_groups = [
+                    [row_start, row_end]
+                    for row_start, row_end in row_groups
+                    if not _row_group_has_extractable_text(
+                        grid,
+                        row_start=row_start,
+                        row_end=row_end,
+                    )
+                ]
+                if empty_groups:
                     raise _TableEvidenceUnavailable(
-                        "DOCX table contains an all-empty structured row group: "
-                        f"rows {empty_group[0]}-{empty_group[1]}"
+                        "DOCX table contains all-empty structured row groups",
+                        code="DOCX_EMPTY_ROW_GROUP_REQUIRES_TEXT_ONLY",
+                        skipped_empty_row_groups=empty_groups,
                     )
             except _TableEvidenceUnavailable as exc:
-                warnings.append(
-                    "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: "
-                    f"table {table_index}: {exc}"
-                )
+                warning = f"{exc.code}: table {table_index}: {exc}"
+                if exc.skipped_empty_row_groups:
+                    warning += (
+                        "; skipped_empty_row_groups="
+                        f"{exc.skipped_empty_row_groups}"
+                    )
+                warnings.append(warning)
                 for row_start, row_end, text in _render_table_text_only_groups(item):
                     order = len(blocks) + 1
                     block = DocumentBlock(
@@ -134,6 +146,10 @@ class DocxParserV2:
                             "physical_row_start": row_start,
                             "physical_row_end": row_end,
                             "structured_table_evidence": False,
+                            "degradation_code": exc.code,
+                            "skipped_empty_row_groups": (
+                                exc.skipped_empty_row_groups
+                            ),
                         },
                     )
                     blocks.append(block)

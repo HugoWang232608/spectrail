@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from docx import Document
 from docx.oxml import OxmlElement
 
@@ -247,6 +248,7 @@ def test_docx_grid_slots_without_xml_cells_downgrade_to_text_only(tmp_path: Path
     assert index.cells == []
     assert index.cell_occurrences == []
     assert index.blocks[0].table_id is None
+    assert index.blocks[0].expected_capabilities == ["text_range", "table_cell"]
     assert index.blocks[0].available_capabilities == ["text_range"]
     assert parsed.warnings == [
         "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table 1: DOCX table physical row "
@@ -270,12 +272,129 @@ def test_docx_invalid_merge_downgrades_to_text_only_with_diagnostics(tmp_path: P
     assert index.cells == []
     assert index.cell_occurrences == []
     assert index.blocks[0].table_id is None
+    assert index.blocks[0].expected_capabilities == ["text_range", "table_cell"]
     assert index.blocks[0].available_capabilities == ["text_range"]
     assert parsed.warnings == [
         "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table 1: "
         "DOCX_MERGED_CELL_BEST_EFFORT: vertical continuation has no matching "
         "anchor or span at row 1, column 1"
     ]
+
+    requirement = ReqIRExtractor().extract(
+        {
+            "items": [
+                {
+                    "statement": "A",
+                    "source_block_id": parsed.blocks[0].block_id,
+                    "source_quote": "A",
+                }
+            ]
+        },
+        parsed.blocks,
+        document_name=parsed.document_name,
+    )[0]
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, parsed.blocks)
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_if_available",
+        document_blocks=parsed.blocks,
+    )
+    assert validated == [requirement]
+    assert failures == []
+    assert report.valid is True
+    assert requirement.sources[0].locator_status == "WARNING_UNAVAILABLE"
+
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_required",
+        document_blocks=parsed.blocks,
+    )
+    assert validated == []
+    assert failures
+    assert report.valid is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("missing_grid", "missing w:tblGrid"),
+        ("invalid_span", "gridSpan must be positive"),
+        ("invalid_grid_before", "w:gridBefore must be an integer"),
+    ],
+)
+def test_docx_untrusted_topology_errors_downgrade_to_text_only(
+    tmp_path: Path,
+    mutation: str,
+    reason: str,
+):
+    path = tmp_path / "invalid-topology.docx"
+    document = Document()
+    table = document.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "A"
+    {
+        "missing_grid": _remove_table_grid,
+        "invalid_span": _set_invalid_grid_span,
+        "invalid_grid_before": _set_invalid_grid_before,
+    }[mutation](table)
+    document.save(path)
+
+    parsed = DocxParser().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert parsed.blocks[0].text == "A"
+    assert index.tables == []
+    assert index.blocks[0].expected_capabilities == ["text_range", "table_cell"]
+    assert index.blocks[0].available_capabilities == ["text_range"]
+    assert reason in parsed.warnings[0]
+
+
+def test_docx_empty_table_is_not_an_extractable_block(tmp_path: Path):
+    empty_path = tmp_path / "empty-table.docx"
+    empty_document = Document()
+    empty_document.add_table(rows=1, cols=1)
+    empty_document.save(empty_path)
+
+    with pytest.raises(ValueError, match="no extractable text"):
+        DocxParser().parse(empty_path)
+
+    mixed_path = tmp_path / "mixed.docx"
+    mixed_document = Document()
+    mixed_document.add_paragraph("Keep me")
+    mixed_document.add_table(rows=1, cols=1)
+    mixed_document.save(mixed_path)
+
+    parsed = DocxParser().parse(mixed_path)
+    assert [block.text for block in parsed.blocks] == ["Keep me"]
+    assert parsed.evidence_index is not None
+    assert parsed.evidence_index.tables == []
+    assert parsed.warnings == ["DOCX_EMPTY_TABLE_SKIPPED: table 1"]
+
+
+def test_docx_empty_row_groups_are_coalesced_into_nonempty_blocks(tmp_path: Path):
+    path = tmp_path / "empty-row-groups.docx"
+    document = Document()
+    table = document.add_table(rows=61, cols=1)
+    table.cell(40, 0).text = "A"
+    table.cell(60, 0).text = "B"
+    document.save(path)
+
+    parsed = DocxParser().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert all(block.text.strip() for block in parsed.blocks)
+    assert [
+        (block.table_row_start, block.table_row_end) for block in index.blocks
+    ] == [(1, 60), (61, 61)]
 
 
 def test_docx_table_runs_structured_evidence_validation_end_to_end(tmp_path: Path):
@@ -384,3 +503,28 @@ def _set_row_grid_before(row, value: int) -> None:
         str(value),
     )
     row._tr.get_or_add_trPr().append(grid_before)
+
+
+def _remove_table_grid(table) -> None:
+    from docx.oxml.ns import qn
+
+    grid = table._tbl.find(qn("w:tblGrid"))
+    table._tbl.remove(grid)
+
+
+def _set_invalid_grid_span(table) -> None:
+    grid_span = OxmlElement("w:gridSpan")
+    grid_span.set(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val",
+        "0",
+    )
+    table.cell(0, 0)._tc.get_or_add_tcPr().append(grid_span)
+
+
+def _set_invalid_grid_before(table) -> None:
+    grid_before = OxmlElement("w:gridBefore")
+    grid_before.set(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val",
+        "invalid",
+    )
+    table.rows[0]._tr.get_or_add_trPr().append(grid_before)

@@ -94,6 +94,10 @@ class DocxParserV2:
             try:
                 grid = _parse_table_grid(item, table_index)
             except _TableEvidenceUnavailable as exc:
+                warnings.append(
+                    "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: "
+                    f"table {table_index}: {exc}"
+                )
                 order = len(blocks) + 1
                 text = _render_table_text_only(item)
                 if not text:
@@ -112,18 +116,17 @@ class DocxParserV2:
                     },
                 )
                 blocks.append(block)
-                evidence_blocks.append(_text_block_evidence(block))
-                warnings.append(
-                    "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: "
-                    f"table {table_index}: {exc}"
-                )
+                evidence_blocks.append(_text_only_docx_table_evidence(block))
+                continue
+            if not _grid_has_extractable_text(grid):
+                warnings.append(f"DOCX_EMPTY_TABLE_SKIPPED: table {table_index}")
                 continue
             table_identifier = table_id(table_index)
             table_block_ids: list[str] = []
             table_occurrence_ids: list[str] = []
 
             header_row_indices = _repeated_header_row_indices(grid)
-            row_groups = _table_row_groups(len(grid.rows))
+            row_groups = _table_row_groups(grid)
             for group_index, (row_start, row_end) in enumerate(row_groups):
                 order = len(blocks) + 1
                 block_identifier = block_id(order)
@@ -204,7 +207,7 @@ class DocxParserV2:
                 )
             )
 
-        if not blocks:
+        if not any(block.text.strip() for block in blocks):
             raise DocumentParseError(
                 f"docx document has no extractable text: {source_path.name}"
             )
@@ -353,9 +356,13 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
     table_element = getattr(table, "_tbl")
     row_elements = list(table_element.findall(qn("w:tr")))
     grid = table_element.find(qn("w:tblGrid"))
+    if grid is None:
+        raise _TableEvidenceUnavailable("DOCX table is missing w:tblGrid")
     declared_columns = (
         len(grid.findall(qn("w:gridCol"))) if grid is not None else 0
     )
+    if declared_columns < 1:
+        raise _TableEvidenceUnavailable("DOCX table has no declared grid columns")
     raw_rows: list[list[_RawCell]] = []
     header_rows: list[bool] = []
     measured_columns = declared_columns
@@ -366,6 +373,11 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
         header_rows.append(is_header)
         grid_before = _integer_property(row_properties, "w:gridBefore", qn, 0)
         grid_after = _integer_property(row_properties, "w:gridAfter", qn, 0)
+        if grid_before < 0 or grid_after < 0:
+            raise _TableEvidenceUnavailable(
+                "DOCX table gridBefore/gridAfter must be non-negative: "
+                f"row {row_index}"
+            )
         column_index = grid_before + 1
         raw_cells: list[_RawCell] = []
         for cell_element in row_element.findall(qn("w:tc")):
@@ -377,9 +389,9 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
                 1,
             )
             if column_span < 1:
-                raise DocumentParseError(
+                raise _TableEvidenceUnavailable(
                     "DOCX table gridSpan must be positive: "
-                    f"table {table_index}, row {row_index}, column {column_index}"
+                    f"row {row_index}, column {column_index}"
                 )
             raw_cells.append(
                 _RawCell(
@@ -414,8 +426,8 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
         )
 
     if not raw_rows or measured_columns < 1:
-        raise DocumentParseError(
-            f"DOCX table has no physical grid: table {table_index}"
+        raise _TableEvidenceUnavailable(
+            "DOCX table has no recoverable physical grid"
         )
 
     completed_rows = [
@@ -512,7 +524,7 @@ def _validate_complete_physical_row(
             raw_cell.column_index + raw_cell.column_span,
         ):
             if column > column_count or column in occupied:
-                raise DocumentParseError(
+                raise _TableEvidenceUnavailable(
                     "DOCX table row contains overlapping or out-of-bounds cells: "
                     f"row {row_index}, column {column}"
                 )
@@ -586,11 +598,32 @@ def _render_table_row_group(
     return "".join(parts), occurrences
 
 
-def _table_row_groups(row_count: int) -> list[tuple[int, int]]:
-    return [
-        (start, min(start + MAX_ROWS_PER_TABLE_BLOCK - 1, row_count))
-        for start in range(1, row_count + 1, MAX_ROWS_PER_TABLE_BLOCK)
+def _table_row_groups(grid: _TableGrid) -> list[tuple[int, int]]:
+    base_groups = [
+        (start, min(start + MAX_ROWS_PER_TABLE_BLOCK - 1, len(grid.rows)))
+        for start in range(1, len(grid.rows) + 1, MAX_ROWS_PER_TABLE_BLOCK)
     ]
+    groups: list[tuple[int, int]] = []
+    pending_start: int | None = None
+    for start, end in base_groups:
+        has_text = any(
+            cell.text.strip()
+            for row in grid.rows[start - 1 : end]
+            for cell in row
+        )
+        if has_text:
+            groups.append((pending_start or start, end))
+            pending_start = None
+        elif groups:
+            previous_start, _ = groups[-1]
+            groups[-1] = (previous_start, end)
+        else:
+            pending_start = pending_start or start
+    return groups
+
+
+def _grid_has_extractable_text(grid: _TableGrid) -> bool:
+    return any(cell.text.strip() for cell in grid.cells)
 
 
 def _repeated_header_row_indices(grid: _TableGrid) -> list[int]:
@@ -607,13 +640,15 @@ def _render_table_text_only(table: object) -> str:
     from docx.table import _Cell
 
     rows: list[str] = []
+    has_text = False
     for row_element in getattr(table, "_tbl").findall(qn("w:tr")):
         values = [
             _canonicalize_table_cell_text(_Cell(cell_element, table).text)
             for cell_element in row_element.findall(qn("w:tc"))
         ]
+        has_text = has_text or any(value.strip() for value in values)
         rows.append(TABLE_CELL_SEPARATOR.join(values))
-    return TABLE_ROW_SEPARATOR.join(rows)
+    return TABLE_ROW_SEPARATOR.join(rows) if has_text else ""
 
 
 def _canonicalize_table_cell_text(text: str) -> str:
@@ -632,6 +667,17 @@ def _text_block_evidence(block: DocumentBlock) -> BlockEvidenceRecord:
         text_sha256=sha256_text(block.text),
         page=block.page,
         expected_capabilities=["text_range"],
+        available_capabilities=["text_range"],
+    )
+
+
+def _text_only_docx_table_evidence(block: DocumentBlock) -> BlockEvidenceRecord:
+    return BlockEvidenceRecord(
+        block_id=block.block_id,
+        text_length=len(block.text),
+        text_sha256=sha256_text(block.text),
+        page=block.page,
+        expected_capabilities=["text_range", "table_cell"],
         available_capabilities=["text_range"],
     )
 
@@ -677,7 +723,7 @@ def _integer_property(
     try:
         return int(raw)
     except ValueError as exc:
-        raise DocumentParseError(
+        raise _TableEvidenceUnavailable(
             f"DOCX table property {child_name} must be an integer"
         ) from exc
 

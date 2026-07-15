@@ -5,6 +5,7 @@ from importlib.metadata import PackageNotFoundError as DistributionNotFoundError
 from importlib.metadata import version as distribution_version
 import math
 import re
+from statistics import median
 from pathlib import Path
 
 from spectrail.core.ids import block_id
@@ -31,6 +32,13 @@ LIST_RE = re.compile(r"^\s*(?:[-*+]\s+|[•‣]\s*|\d+[.)]\s+).+")
 EDGE_REGION_RATIO = 0.08
 WIDE_BLOCK_RATIO = 0.70
 COLUMN_OVERLAP_RATIO = 0.20
+MIN_REPEATED_EDGE_PAGES = 3
+EDGE_POSITION_TOLERANCE = 0.01
+PARAGRAPH_GAP_RATIO = 0.60
+FONT_LEVEL_DELTA_RATIO = 0.20
+MIN_FONT_LEVEL_DELTA = 2.0
+SPAN_GAP_EM_RATIO = 0.12
+MIN_SPAN_GAP = 0.75
 
 
 class PdfParserV2:
@@ -64,22 +72,26 @@ class PdfParserV2:
         finally:
             document.close()
 
-        _suppress_repeated_page_edges(page_layouts)
+        _mark_repeated_page_edges(page_layouts)
 
         blocks: list[DocumentBlock] = []
         evidence_blocks: list[BlockEvidenceRecord] = []
         fragments: list[TextFragmentRecord] = []
         pages: list[PageRecord] = []
-        suppressed_edge_blocks = 0
+        repeated_edge_candidate_blocks = 0
 
         for layout in page_layouts:
             page_block_ids: list[str] = []
-            candidates = [item for item in layout.blocks if not item.suppressed]
-            suppressed_edge_blocks += len(layout.blocks) - len(candidates)
+            candidates = list(layout.blocks)
+            repeated_edge_candidate_blocks += sum(
+                item.edge_candidate for item in candidates
+            )
+            if any(item.bbox is None for item in candidates):
+                layout.warnings.append("PDF_READING_ORDER_GEOMETRY_UNAVAILABLE")
             ordered, column_count = _order_page_blocks(candidates, layout.width)
             if column_count > 1:
                 layout.warnings.append(
-                    f"PDF_MULTI_COLUMN_LAYOUT_DETECTED: columns={column_count}"
+                    f"PDF_MULTI_COLUMN_ORDER_BEST_EFFORT: columns={column_count}"
                 )
 
             for source_index, candidate in enumerate(ordered, start=1):
@@ -88,7 +100,11 @@ class PdfParserV2:
                 block = DocumentBlock(
                     block_id=block_identifier,
                     document_id=document_id,
-                    type="list" if LIST_RE.match(candidate.text) else "paragraph",
+                    type=(
+                        "list"
+                        if LIST_RE.match(candidate.text)
+                        else candidate.block_type
+                    ),
                     text=candidate.text,
                     page=layout.page,
                     section_path=[],
@@ -99,8 +115,17 @@ class PdfParserV2:
                         "page": layout.page,
                         "source_index": source_index,
                         "source_block_number": candidate.source_block_number,
+                        "source_segment_number": candidate.source_segment_number,
                         "layout_column_index": candidate.column_index,
                         "layout_column_count": column_count,
+                        "page_region_available": candidate.bbox is not None,
+                        "repeated_edge_candidate": candidate.edge_candidate,
+                        "repeated_edge_role": candidate.edge_role,
+                        **(
+                            {"level": 1}
+                            if candidate.block_type == "heading"
+                            else {}
+                        ),
                     },
                 )
                 blocks.append(block)
@@ -134,7 +159,11 @@ class PdfParserV2:
                         bbox=candidate.bbox,
                         fragment_ids=fragment_ids,
                         expected_capabilities=["text_range", "page_region"],
-                        available_capabilities=["text_range", "page_region"],
+                        available_capabilities=(
+                            ["text_range", "page_region"]
+                            if candidate.bbox is not None
+                            else ["text_range"]
+                        ),
                     )
                 )
 
@@ -153,6 +182,9 @@ class PdfParserV2:
 
         if not blocks:
             raise DocumentParseError("no extractable text; scanned PDF is not supported")
+
+        warnings.extend(_top_level_page_warnings(page_layouts))
+        warnings = list(dict.fromkeys(warnings))
 
         evidence_index = finalize_evidence_fingerprint(
             EvidenceIndex(
@@ -179,7 +211,8 @@ class PdfParserV2:
             metadata={
                 "source_path": source_path.as_posix(),
                 "page_count": len(page_layouts),
-                "suppressed_repeated_edge_blocks": suppressed_edge_blocks,
+                "suppressed_repeated_edge_blocks": 0,
+                "repeated_edge_candidate_blocks": repeated_edge_candidate_blocks,
             },
             source_sha256=source_hash,
             parser_identity=parser_identity,
@@ -205,11 +238,13 @@ class _ProjectedFragment:
 @dataclass
 class _PageTextBlock:
     text: str
-    bbox: BoundingBox
+    bbox: BoundingBox | None
     fragments: list[_ProjectedFragment]
     source_block_number: int
+    source_segment_number: int = 1
+    block_type: str = "paragraph"
     column_index: int = 1
-    suppressed: bool = False
+    edge_candidate: bool = False
     edge_role: str | None = None
 
 
@@ -221,6 +256,24 @@ class _PageLayout:
     rotation: int
     blocks: list[_PageTextBlock]
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _RawProjectedSpan:
+    text: str
+    raw_bbox: tuple[float, float, float, float] | None
+    bbox: BoundingBox | None
+    line_index: int
+    span_index: int
+    font_size: float
+    flags: int
+
+
+@dataclass(frozen=True)
+class _ProjectedLine:
+    spans: list[_RawProjectedSpan]
+    raw_bbox: tuple[float, float, float, float] | None
+    font_size: float
 
 
 def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
@@ -241,14 +294,24 @@ def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
             page_height=height,
             source_block_number=source_block_number,
         )
-        if projected is not None:
-            blocks.append(projected)
+        for segment in projected:
+            blocks.append(segment)
+    warnings = [
+        (
+            "PDF_PAGE_REGION_UNAVAILABLE: "
+            f"source_block={block.source_block_number}, "
+            f"segment={block.source_segment_number}"
+        )
+        for block in blocks
+        if block.bbox is None
+    ]
     return _PageLayout(
         page=page_index,
         width=width,
         height=height,
         rotation=rotation,
         blocks=blocks,
+        warnings=warnings,
     )
 
 
@@ -260,11 +323,8 @@ def _project_text_block(
     page_width: float,
     page_height: float,
     source_block_number: int,
-) -> _PageTextBlock | None:
-    text_parts: list[str] = []
-    fragments: list[_ProjectedFragment] = []
-    cursor = 0
-    rendered_line_count = 0
+) -> list[_PageTextBlock]:
+    lines: list[_ProjectedLine] = []
     for line_index, line in enumerate(raw_block.get("lines", [])):
         raw_spans = [
             (span_index, span)
@@ -276,47 +336,216 @@ def _project_text_block(
         line_has_text = any(str(span.get("text", "")).strip() for _, span in raw_spans)
         if not line_has_text:
             continue
-        first_span_in_line = True
+        projected_spans: list[_RawProjectedSpan] = []
         for span_index, span in raw_spans:
             text = str(span.get("text", ""))
-            separator = "\n" if first_span_in_line and rendered_line_count else ""
-            if separator:
-                text_parts.append(separator)
-                cursor += len(separator)
-            start = cursor
-            text_parts.append(text)
-            cursor += len(text)
+            raw_bbox = _raw_bbox(span.get("bbox"))
             bbox = _rotated_bbox(
                 page,
                 span.get("bbox"),
                 page_width=page_width,
                 page_height=page_height,
             )
-            if bbox is None:
-                return None
-            fragments.append(
-                _ProjectedFragment(
-                    start=start,
-                    end=cursor,
+            try:
+                font_size = float(span.get("size", 0.0))
+            except (TypeError, ValueError):
+                font_size = 0.0
+            projected_spans.append(
+                _RawProjectedSpan(
                     text=text,
+                    raw_bbox=raw_bbox,
                     bbox=bbox,
                     line_index=line_index,
                     span_index=span_index,
-                    separator_before=separator,
+                    font_size=max(0.0, font_size),
+                    flags=int(span.get("flags", 0) or 0),
                 )
             )
-            first_span_in_line = False
-        rendered_line_count += 1
+        line_boxes = [span.raw_bbox for span in projected_spans if span.raw_bbox]
+        lines.append(
+            _ProjectedLine(
+                spans=projected_spans,
+                raw_bbox=_raw_bbox_union(line_boxes) if line_boxes else None,
+                font_size=max((span.font_size for span in projected_spans), default=0.0),
+            )
+        )
+
+    if not lines:
+        return []
+    line_groups = _paragraph_line_groups(lines)
+    baseline_font_size = median(
+        [line.font_size for line in lines if line.font_size > 0]
+    ) if any(line.font_size > 0 for line in lines) else 0.0
+    return [
+        _render_line_group(
+            group,
+            source_block_number=source_block_number,
+            source_segment_number=segment_number,
+            baseline_font_size=baseline_font_size,
+        )
+        for segment_number, group in enumerate(line_groups, start=1)
+        if any(span.text.strip() for line in group for span in line.spans)
+    ]
+
+
+def _paragraph_line_groups(
+    lines: list[_ProjectedLine],
+) -> list[list[_ProjectedLine]]:
+    groups: list[list[_ProjectedLine]] = []
+    current: list[_ProjectedLine] = []
+    for line in lines:
+        if current and _starts_new_paragraph(current[-1], line):
+            groups.append(current)
+            current = []
+        current.append(line)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _starts_new_paragraph(
+    previous: _ProjectedLine,
+    current: _ProjectedLine,
+) -> bool:
+    if previous.raw_bbox is not None and current.raw_bbox is not None:
+        previous_height = previous.raw_bbox[3] - previous.raw_bbox[1]
+        current_height = current.raw_bbox[3] - current.raw_bbox[1]
+        vertical_gap = current.raw_bbox[1] - previous.raw_bbox[3]
+        if vertical_gap > max(
+            4.0,
+            max(previous_height, current_height) * PARAGRAPH_GAP_RATIO,
+        ):
+            return True
+    smaller_size = min(previous.font_size, current.font_size)
+    if smaller_size <= 0:
+        return False
+    return abs(previous.font_size - current.font_size) >= max(
+        MIN_FONT_LEVEL_DELTA,
+        smaller_size * FONT_LEVEL_DELTA_RATIO,
+    )
+
+
+def _render_line_group(
+    lines: list[_ProjectedLine],
+    *,
+    source_block_number: int,
+    source_segment_number: int,
+    baseline_font_size: float,
+) -> _PageTextBlock:
+    text_parts: list[str] = []
+    fragments: list[_ProjectedFragment] = []
+    cursor = 0
+    geometry_available = all(
+        span.raw_bbox is not None and span.bbox is not None
+        for line in lines
+        for span in line.spans
+    )
+    for rendered_line_index, line in enumerate(lines):
+        previous_span: _RawProjectedSpan | None = None
+        for span_position, span in enumerate(line.spans):
+            if span_position == 0:
+                separator = "\n" if rendered_line_index else ""
+            else:
+                separator = _same_line_separator(previous_span, span)
+            if separator:
+                text_parts.append(separator)
+                cursor += len(separator)
+            start = cursor
+            text_parts.append(span.text)
+            cursor += len(span.text)
+            if geometry_available:
+                assert span.bbox is not None
+                fragments.append(
+                    _ProjectedFragment(
+                        start=start,
+                        end=cursor,
+                        text=span.text,
+                        bbox=span.bbox,
+                        line_index=span.line_index,
+                        span_index=span.span_index,
+                        separator_before=separator,
+                    )
+                )
+            previous_span = span
 
     text = "".join(text_parts)
-    if not text.strip() or not fragments:
-        return None
-    bbox = _bbox_union([fragment.bbox for fragment in fragments])
+    block_font_size = max((line.font_size for line in lines), default=0.0)
+    block_type = (
+        "heading"
+        if _line_group_is_heading(lines, text, block_font_size, baseline_font_size)
+        else "paragraph"
+    )
     return _PageTextBlock(
         text=text,
-        bbox=bbox,
+        bbox=(
+            _bbox_union([fragment.bbox for fragment in fragments])
+            if fragments
+            else None
+        ),
         fragments=fragments,
         source_block_number=source_block_number,
+        source_segment_number=source_segment_number,
+        block_type=block_type,
+    )
+
+
+def _same_line_separator(
+    previous: _RawProjectedSpan | None,
+    current: _RawProjectedSpan,
+) -> str:
+    if previous is None:
+        return ""
+    if previous.text[-1:].isspace() or current.text[:1].isspace():
+        return ""
+    if previous.raw_bbox is None or current.raw_bbox is None:
+        return ""
+    horizontal_gap = current.raw_bbox[0] - previous.raw_bbox[2]
+    reference_size = min(
+        value for value in (previous.font_size, current.font_size) if value > 0
+    ) if previous.font_size > 0 or current.font_size > 0 else 0.0
+    threshold = max(MIN_SPAN_GAP, reference_size * SPAN_GAP_EM_RATIO)
+    return " " if horizontal_gap > threshold else ""
+
+
+def _line_group_is_heading(
+    lines: list[_ProjectedLine],
+    text: str,
+    block_font_size: float,
+    baseline_font_size: float,
+) -> bool:
+    if len(lines) != 1 or len(text.strip()) > 160:
+        return False
+    non_empty_spans = [span for span in lines[0].spans if span.text.strip()]
+    bold = bool(non_empty_spans) and all(span.flags & 16 for span in non_empty_spans)
+    larger = (
+        baseline_font_size > 0
+        and block_font_size >= baseline_font_size * 1.15
+        and block_font_size - baseline_font_size >= 1.0
+    )
+    return bold or larger
+
+
+def _raw_bbox(raw_bbox: object) -> tuple[float, float, float, float] | None:
+    try:
+        values = tuple(float(value) for value in raw_bbox)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 4 or not all(math.isfinite(value) for value in values):
+        return None
+    x0, y0, x1, y1 = values
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return x0, y0, x1, y1
+
+
+def _raw_bbox_union(
+    boxes: list[tuple[float, float, float, float]],
+) -> tuple[float, float, float, float]:
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
     )
 
 
@@ -327,10 +556,13 @@ def _rotated_bbox(
     page_width: float,
     page_height: float,
 ) -> BoundingBox | None:
+    coordinates = _raw_bbox(raw_bbox)
+    if coordinates is None:
+        return None
     try:
         import fitz
 
-        rect = fitz.Rect(raw_bbox) * page.rotation_matrix
+        rect = fitz.Rect(coordinates) * page.rotation_matrix
     except Exception:
         return None
     x0 = _clamp(float(rect.x0), 0.0, page_width)
@@ -342,37 +574,70 @@ def _rotated_bbox(
     return BoundingBox(x0=x0, y0=y0, x1=x1, y1=y1)
 
 
-def _suppress_repeated_page_edges(page_layouts: list[_PageLayout]) -> None:
-    if len(page_layouts) < 2:
+def _mark_repeated_page_edges(page_layouts: list[_PageLayout]) -> None:
+    if len(page_layouts) < MIN_REPEATED_EDGE_PAGES:
         return
-    occurrences: dict[tuple[str, str], set[int]] = {}
+    occurrences: dict[
+        tuple[str, str],
+        list[tuple[_PageLayout, _PageTextBlock]],
+    ] = {}
     for layout in page_layouts:
         for block in layout.blocks:
+            if block.bbox is None:
+                continue
             role = _edge_role(block.bbox, layout.height)
             if role is None:
                 continue
             key = (role, _normalized_edge_text(block.text))
             if key[1]:
-                occurrences.setdefault(key, set()).add(layout.page)
+                occurrences.setdefault(key, []).append((layout, block))
 
     repeated = {
         key
-        for key, page_numbers in occurrences.items()
-        if len(page_numbers) >= 2
-        and len(page_numbers) >= math.ceil(len(page_layouts) * 0.5)
+        for key, candidates in occurrences.items()
+        if len({layout.page for layout, _ in candidates})
+        >= max(
+            MIN_REPEATED_EDGE_PAGES,
+            math.ceil(len(page_layouts) * 0.5),
+        )
+        and _edge_geometry_is_stable(candidates)
     }
-    for layout in page_layouts:
-        for block in layout.blocks:
-            role = _edge_role(block.bbox, layout.height)
-            if role is None or (role, _normalized_edge_text(block.text)) not in repeated:
-                continue
-            block.suppressed = True
+    for key in sorted(
+        repeated,
+        key=lambda item: (0 if item[0] == "header" else 1, item[1]),
+    ):
+        role, _ = key
+        for layout, block in occurrences[key]:
+            block.edge_candidate = True
             block.edge_role = role
             layout.warnings.append(
-                "PDF_REPEATED_HEADER_SUPPRESSED"
+                "PDF_REPEATED_HEADER_CANDIDATE"
                 if role == "header"
-                else "PDF_REPEATED_FOOTER_SUPPRESSED"
+                else "PDF_REPEATED_FOOTER_CANDIDATE"
             )
+
+
+def _edge_geometry_is_stable(
+    candidates: list[tuple[_PageLayout, _PageTextBlock]],
+) -> bool:
+    normalized_boxes: list[tuple[float, float, float, float]] = []
+    for layout, block in candidates:
+        if block.bbox is None or layout.width <= 0 or layout.height <= 0:
+            return False
+        normalized_boxes.append(
+            (
+                block.bbox.x0 / layout.width,
+                block.bbox.y0 / layout.height,
+                block.bbox.x1 / layout.width,
+                block.bbox.y1 / layout.height,
+            )
+        )
+    return all(
+        max(box[index] for box in normalized_boxes)
+        - min(box[index] for box in normalized_boxes)
+        <= EDGE_POSITION_TOLERANCE
+        for index in range(4)
+    )
 
 
 def _edge_role(bbox: BoundingBox, page_height: float) -> str | None:
@@ -387,13 +652,38 @@ def _normalized_edge_text(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _top_level_page_warnings(page_layouts: list[_PageLayout]) -> list[str]:
+    warnings: list[str] = []
+    for layout in page_layouts:
+        for warning in dict.fromkeys(layout.warnings):
+            code, separator, details = warning.partition(":")
+            suffix = f",{details}" if separator and details else ""
+            warnings.append(f"{code}: page={layout.page}{suffix}")
+    return warnings
+
+
 def _order_page_blocks(
     blocks: list[_PageTextBlock],
     page_width: float,
 ) -> tuple[list[_PageTextBlock], int]:
+    if any(block.bbox is None for block in blocks):
+        for block in blocks:
+            block.column_index = 1
+        return sorted(
+            blocks,
+            key=lambda item: (
+                item.source_block_number,
+                item.source_segment_number,
+            ),
+        ), 1
     if len(blocks) < 2:
         return sorted(blocks, key=_vertical_key), 1
-    wide = [block for block in blocks if _bbox_width(block.bbox) >= page_width * WIDE_BLOCK_RATIO]
+    wide = [
+        block
+        for block in blocks
+        if block.bbox is not None
+        and _bbox_width(block.bbox) >= page_width * WIDE_BLOCK_RATIO
+    ]
     narrow = [block for block in blocks if block not in wide]
     columns = _column_clusters(narrow)
     if len(columns) < 2 or not _clusters_form_parallel_columns(columns):
@@ -440,6 +730,9 @@ def _horizontal_overlap_ratio(
     block: _PageTextBlock,
     cluster: list[_PageTextBlock],
 ) -> float:
+    if block.bbox is None or any(item.bbox is None for item in cluster):
+        return 0.0
+    assert all(item.bbox is not None for item in cluster)
     cluster_x0 = min(item.bbox.x0 for item in cluster)
     cluster_x1 = max(item.bbox.x1 for item in cluster)
     overlap = max(0.0, min(block.bbox.x1, cluster_x1) - max(block.bbox.x0, cluster_x0))
@@ -451,7 +744,9 @@ def _clusters_form_parallel_columns(
     columns: list[list[_PageTextBlock]],
 ) -> bool:
     return any(
-        _vertical_overlap(left.bbox, right.bbox) > 0
+        left.bbox is not None
+        and right.bbox is not None
+        and _vertical_overlap(left.bbox, right.bbox) > 0
         for left_index, left_column in enumerate(columns)
         for right_column in columns[left_index + 1 :]
         for left in left_column
@@ -464,11 +759,22 @@ def _vertical_overlap(left: BoundingBox, right: BoundingBox) -> float:
 
 
 def _column_major(blocks: list[_PageTextBlock]) -> list[_PageTextBlock]:
-    return sorted(blocks, key=lambda item: (item.column_index, item.bbox.y0, item.bbox.x0))
+    return sorted(
+        blocks,
+        key=lambda item: (
+            item.column_index,
+            item.bbox.y0 if item.bbox is not None else float("inf"),
+            item.bbox.x0 if item.bbox is not None else float("inf"),
+        ),
+    )
 
 
 def _vertical_key(block: _PageTextBlock) -> tuple[float, float, int]:
-    return (block.bbox.y0, block.bbox.x0, block.source_block_number)
+    return (
+        block.bbox.y0 if block.bbox is not None else float("inf"),
+        block.bbox.x0 if block.bbox is not None else float("inf"),
+        block.source_block_number,
+    )
 
 
 def _bbox_width(bbox: BoundingBox) -> float:
@@ -493,17 +799,32 @@ def _parser_identity() -> ParserIdentity:
         pymupdf_version = distribution_version("PyMuPDF")
     except DistributionNotFoundError:  # pragma: no cover - import already succeeded
         pymupdf_version = "unknown"
+    try:
+        import fitz
+
+        mupdf_version = str(
+            getattr(fitz, "mupdf_version", None)
+            or getattr(fitz, "version", (None, "unknown"))[1]
+        )
+    except (ImportError, IndexError, TypeError):  # pragma: no cover
+        mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2",
+        parser_version="2.1",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
+            "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
+            "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "wide_anchors_then_column_major_v1",
-            "repeated_page_edges": "suppress_exact_normalized_majority",
+            "repeated_page_edges": "preserve_stable_candidate_v1",
+            "geometry_failure_policy": "text_only_block_v1",
             "table_detection": "deferred_text_only",
         },
-        runtime_dependencies={"PyMuPDF": pymupdf_version},
+        runtime_dependencies={
+            "PyMuPDF": pymupdf_version,
+            "MuPDF": mupdf_version,
+        },
     )

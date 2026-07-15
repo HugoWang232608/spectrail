@@ -13,7 +13,12 @@ from spectrail.evidence.index_builder import (
     validate_evidence_index_against_parsed_document,
 )
 from spectrail.parsers.base import DocumentParseError
-from spectrail.parsers.pdf_parser import PdfParserV2, TextPdfParser
+from spectrail.parsers import pdf_parser as pdf_parser_module
+from spectrail.parsers.pdf_parser import (
+    PdfParserV2,
+    TextPdfParser,
+    _project_text_block,
+)
 from spectrail.parsers.registry import parse_document
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
@@ -41,6 +46,9 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
+    assert parsed.parser_identity.parser_version == "2.1"
+    assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
+    assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
     assert len(parsed.evidence_index.pages) == 2
     assert all(
@@ -76,7 +84,10 @@ def test_text_pdf_parser_extracts_included_ieee29148_fixture():
     assert parsed.source_format == "pdf"
     assert parsed.metadata["page_count"] == 11
     assert len(parsed.blocks) >= 30
-    assert parsed.warnings == []
+    assert any(
+        warning.startswith("PDF_REPEATED_HEADER_CANDIDATE: page=")
+        for warning in parsed.warnings
+    )
     assert {block.page for block in parsed.blocks}
     assert all(block.metadata["page"] == block.page for block in parsed.blocks)
     assert len(parsed.text) > 1000
@@ -109,14 +120,25 @@ def test_text_pdf_parser_rejects_pdf_without_extractable_text(tmp_path: Path):
         TextPdfParser().parse(path)
 
 
+@pytest.mark.parametrize(
+    ("rotation", "expected_size"),
+    [
+        (0, (200.0, 300.0)),
+        (90, (300.0, 200.0)),
+        (180, (200.0, 300.0)),
+        (270, (300.0, 200.0)),
+    ],
+)
 def test_pdf_v2_builds_rotated_page_geometry_and_validates_page_locator(
     tmp_path: Path,
+    rotation: int,
+    expected_size: tuple[float, float],
 ):
     path = tmp_path / "rotated.pdf"
     document = fitz.open()
     page = document.new_page(width=200, height=300)
     page.insert_text((20, 40), "Hello rotated PDF")
-    page.set_rotation(90)
+    page.set_rotation(rotation)
     document.save(path)
     document.close()
 
@@ -124,8 +146,8 @@ def test_pdf_v2_builds_rotated_page_geometry_and_validates_page_locator(
     index = parsed.evidence_index
     assert index is not None
     page_record = index.pages[0]
-    assert page_record.source_rotation == 90
-    assert (page_record.width, page_record.height) == (300.0, 200.0)
+    assert page_record.source_rotation == rotation
+    assert (page_record.width, page_record.height) == expected_size
     assert index.fragments
     assert all(
         0 <= fragment.bbox.x0 < fragment.bbox.x1 <= page_record.width
@@ -152,7 +174,7 @@ def test_pdf_v2_builds_rotated_page_geometry_and_validates_page_locator(
     SourceEvidenceEnricher().enrich([requirement], index, registry, parsed.blocks)
     source = requirement.sources[0]
     assert source.page_locator is not None
-    assert source.page_locator.source_rotation == 90
+    assert source.page_locator.source_rotation == rotation
     assert source.page_locator.derivation == "quote_span_union"
     validated, report, failures = SourceLocatorValidator().validate(
         [requirement],
@@ -193,14 +215,17 @@ def test_pdf_v2_uses_column_major_reading_order(tmp_path: Path):
     ]
     assert parsed.evidence_index is not None
     assert parsed.evidence_index.pages[0].warnings == [
-        "PDF_MULTI_COLUMN_LAYOUT_DETECTED: columns=2"
+        "PDF_MULTI_COLUMN_ORDER_BEST_EFFORT: columns=2"
+    ]
+    assert parsed.warnings == [
+        "PDF_MULTI_COLUMN_ORDER_BEST_EFFORT: page=1, columns=2"
     ]
 
 
-def test_pdf_v2_suppresses_repeated_headers_and_footers(tmp_path: Path):
+def test_pdf_v2_preserves_and_marks_repeated_headers_and_footers(tmp_path: Path):
     path = tmp_path / "headers.pdf"
     document = fitz.open()
-    for page_number in range(1, 3):
+    for page_number in range(1, 4):
         page = document.new_page(width=600, height=800)
         page.insert_text((50, 30), "Repeated Header")
         page.insert_text((50, 120), f"Body page {page_number}")
@@ -209,17 +234,50 @@ def test_pdf_v2_suppresses_repeated_headers_and_footers(tmp_path: Path):
     document.close()
 
     parsed = PdfParserV2().parse(path)
-    assert [block.text for block in parsed.blocks] == ["Body page 1", "Body page 2"]
-    assert parsed.metadata["suppressed_repeated_edge_blocks"] == 4
+    assert [block.text for block in parsed.blocks] == [
+        "Repeated Header",
+        "Body page 1",
+        "Repeated Footer",
+        "Repeated Header",
+        "Body page 2",
+        "Repeated Footer",
+        "Repeated Header",
+        "Body page 3",
+        "Repeated Footer",
+    ]
+    assert parsed.metadata["suppressed_repeated_edge_blocks"] == 0
+    assert parsed.metadata["repeated_edge_candidate_blocks"] == 6
     assert parsed.evidence_index is not None
     assert all(
         page.warnings
         == [
-            "PDF_REPEATED_HEADER_SUPPRESSED",
-            "PDF_REPEATED_FOOTER_SUPPRESSED",
+            "PDF_REPEATED_HEADER_CANDIDATE",
+            "PDF_REPEATED_FOOTER_CANDIDATE",
         ]
         for page in parsed.evidence_index.pages
     )
+    assert all(
+        block.metadata["repeated_edge_candidate"]
+        for block in parsed.blocks
+        if block.text in {"Repeated Header", "Repeated Footer"}
+    )
+
+
+def test_pdf_v2_does_not_mark_two_page_repeated_edge_text(tmp_path: Path):
+    path = tmp_path / "two-page-edge.pdf"
+    document = fitz.open()
+    for page_number in range(1, 3):
+        page = document.new_page(width=600, height=800)
+        page.insert_text((50, 30), "Potential requirement heading")
+        page.insert_text((50, 120), f"Body page {page_number}")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+
+    assert len(parsed.blocks) == 4
+    assert parsed.metadata["repeated_edge_candidate_blocks"] == 0
+    assert not any("REPEATED_HEADER" in warning for warning in parsed.warnings)
 
 
 def test_pdf_v2_does_not_claim_table_cell_without_proven_sparse_topology(
@@ -253,3 +311,257 @@ def test_pdf_v2_does_not_claim_table_cell_without_proven_sparse_topology(
         and block.available_capabilities == ["text_range", "page_region"]
         for block in index.blocks
     )
+
+
+def test_pdf_v2_keeps_text_and_downgrades_page_region_for_bad_span_bbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = tmp_path / "bad-geometry.pdf"
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "The system shall preserve recoverable PDF text.")
+    document.save(path)
+    document.close()
+
+    original = pdf_parser_module._rotated_bbox
+    call_count = 0
+
+    def fail_first_bbox(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pdf_parser_module, "_rotated_bbox", fail_first_bbox)
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+
+    assert [block.text for block in parsed.blocks] == [
+        "The system shall preserve recoverable PDF text."
+    ]
+    assert index is not None
+    assert index.blocks[0].expected_capabilities == ["text_range", "page_region"]
+    assert index.blocks[0].available_capabilities == ["text_range"]
+    assert index.blocks[0].bbox is None
+    assert index.blocks[0].fragment_ids == []
+    assert index.fragments == []
+    assert index.warnings == parsed.warnings
+    assert "PDF_PAGE_REGION_UNAVAILABLE: page=1, source_block=1, segment=1" in (
+        parsed.warnings
+    )
+
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement=parsed.blocks[0].text,
+        sources=[
+            SourceSpan(
+                document_id=parsed.document_id,
+                block_id=parsed.blocks[0].block_id,
+                quote=parsed.blocks[0].text,
+            )
+        ],
+    )
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, parsed.blocks)
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_if_available",
+        document_blocks=parsed.blocks,
+    )
+    assert validated == [requirement]
+    assert report.valid is True
+    assert failures == []
+    assert requirement.sources[0].text_locator is not None
+    assert requirement.sources[0].page_locator is None
+    assert requirement.sources[0].locator_status == "WARNING_UNAVAILABLE"
+
+
+def test_pdf_v2_inserts_canonical_space_between_geometrically_separated_spans():
+    page = _IdentityPage()
+    raw_block = {
+        "type": 0,
+        "lines": [
+            {
+                "spans": [
+                    {
+                        "text": "🧪 The system",
+                        "bbox": [10, 10, 70, 22],
+                        "size": 11,
+                        "flags": 0,
+                    },
+                    {
+                        "text": "shall respond 𠀀\ufe0f",
+                        "bbox": [80, 10, 170, 22],
+                        "size": 11,
+                        "flags": 16,
+                    },
+                ]
+            }
+        ],
+    }
+
+    blocks = _project_text_block(
+        page,
+        raw_block,
+        page_index=1,
+        page_width=300,
+        page_height=200,
+        source_block_number=1,
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].text == "🧪 The system shall respond 𠀀\ufe0f"
+    assert len(blocks[0].fragments) == 2
+    assert blocks[0].fragments[1].separator_before == " "
+    assert blocks[0].fragments[1].start == len("🧪 The system ")
+
+
+def test_pdf_v2_splits_heading_and_paragraph_inside_raw_block():
+    page = _IdentityPage()
+    raw_block = {
+        "type": 0,
+        "lines": [
+            {
+                "spans": [
+                    {
+                        "text": "System Requirements",
+                        "bbox": [10, 10, 180, 30],
+                        "size": 18,
+                        "flags": 16,
+                    }
+                ]
+            },
+            {
+                "spans": [
+                    {
+                        "text": "The system shall respond.",
+                        "bbox": [10, 55, 190, 67],
+                        "size": 10,
+                        "flags": 0,
+                    }
+                ]
+            },
+        ],
+    }
+
+    blocks = _project_text_block(
+        page,
+        raw_block,
+        page_index=1,
+        page_width=300,
+        page_height=200,
+        source_block_number=1,
+    )
+
+    assert [(block.block_type, block.text) for block in blocks] == [
+        ("heading", "System Requirements"),
+        ("paragraph", "The system shall respond."),
+    ]
+    assert [block.source_segment_number for block in blocks] == [1, 2]
+
+
+def test_pdf_v2_quote_can_span_multiple_font_spans(tmp_path: Path):
+    path = tmp_path / "multi-font.pdf"
+    document = fitz.open()
+    page = document.new_page(width=500, height=200)
+    page.insert_htmlbox(
+        fitz.Rect(50, 50, 450, 120),
+        "<span>The system </span><b>shall respond</b>",
+    )
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    block = next(item for item in parsed.blocks if "shall respond" in item.text)
+    assert block.text == "The system shall respond"
+    assert len(index.fragments) == 2
+
+    requirement = RequirementIR(
+        id="REQ-1",
+        statement=block.text,
+        sources=[
+            SourceSpan(
+                document_id=parsed.document_id,
+                block_id=block.block_id,
+                quote=block.text,
+            )
+        ],
+    )
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, parsed.blocks)
+    source = requirement.sources[0]
+    assert source.text_locator is not None
+    assert source.page_locator is not None
+    assert source.page_locator.derivation == "quote_span_union"
+
+
+def test_pdf_v2_uses_cropbox_preview_dimensions(tmp_path: Path):
+    path = tmp_path / "cropbox.pdf"
+    document = fitz.open()
+    page = document.new_page(width=400, height=400)
+    page.set_cropbox(fitz.Rect(50, 60, 350, 360))
+    page.insert_text((20, 40), "CropBox text")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    page_record = index.pages[0]
+    assert (page_record.width, page_record.height) == (300.0, 300.0)
+    assert all(
+        0 <= fragment.bbox.x0 < fragment.bbox.x1 <= page_record.width
+        and 0 <= fragment.bbox.y0 < fragment.bbox.y1 <= page_record.height
+        for fragment in index.fragments
+    )
+
+
+def test_pdf_v2_fragment_bbox_overlays_rendered_preview_pixels(tmp_path: Path):
+    path = tmp_path / "overlay.pdf"
+    document = fitz.open()
+    page = document.new_page(width=300, height=200)
+    page.insert_text((40, 80), "Overlay target", fontsize=18)
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    assert parsed.evidence_index is not None
+    bbox = parsed.evidence_index.fragments[0].bbox
+
+    document = fitz.open(path)
+    pixmap = document[0].get_pixmap(
+        matrix=fitz.Matrix(2, 2),
+        colorspace=fitz.csGRAY,
+        alpha=False,
+    )
+    document.close()
+    scale = 2
+    tolerance = 2
+    x0 = max(0, int(bbox.x0 * scale) - tolerance)
+    y0 = max(0, int(bbox.y0 * scale) - tolerance)
+    x1 = min(pixmap.width, int(bbox.x1 * scale) + tolerance + 1)
+    y1 = min(pixmap.height, int(bbox.y1 * scale) + tolerance + 1)
+    darkest = min(
+        pixmap.samples[y * pixmap.stride + x]
+        for y in range(y0, y1)
+        for x in range(x0, x1)
+    )
+    assert darkest < 128
+
+
+class _IdentityPage:
+    rotation_matrix = fitz.Matrix(1, 0, 0, 1, 0, 0)

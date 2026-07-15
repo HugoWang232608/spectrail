@@ -2,7 +2,7 @@
   "name": "ieee29148_real_pdf_selected_scope",
   "document": "tests/fixtures/ieee29148_srs_example.pdf",
   "gold": "eval/cases/ieee29148_selected/gold.json",
-  "scope_block_ids": ["blk_0016"],
+  "scope_block_ids": ["blk_0081"],
   "model_mode": "recorded",
   "recorded_fixture": "eval/cases/ieee29148_selected/response.json",
   "chunking_mode": "off",

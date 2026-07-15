@@ -9,14 +9,14 @@ from spectrail.parsers.base import (
 )
 from spectrail.parsers.docx_parser import DocxParserV2
 from spectrail.parsers.markdown_parser import MarkdownDocumentParser
-from spectrail.parsers.pdf_parser import TextPdfParser
+from spectrail.parsers.pdf_parser import PdfParserV2
 
 
 PARSER_REGISTRY = {
     ".md": MarkdownDocumentParser,
     ".markdown": MarkdownDocumentParser,
     ".docx": DocxParserV2,
-    ".pdf": TextPdfParser,
+    ".pdf": PdfParserV2,
 }
 SUPPORTED_DOCUMENT_SUFFIXES = set(PARSER_REGISTRY)
 PARSER_SOURCE_FORMATS = {

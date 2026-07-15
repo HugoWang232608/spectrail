@@ -37,5 +37,5 @@ def test_parser_name_format_registration_is_owned_by_parser_registry():
     assert PARSER_SOURCE_FORMATS == {
         "markdown_parser_v1": "markdown",
         "docx_parser_v2": "docx",
-        "text_pdf_parser_v1": "pdf",
+        "pdf_parser_v2": "pdf",
     }

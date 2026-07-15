@@ -63,6 +63,25 @@ def validate_evidence_index_against_parsed_document(
             )
 
     cells_by_id = {cell.cell_id: cell for cell in index.cells}
+    for fragment in index.fragments:
+        block_text = parsed_blocks[fragment.block_id].text
+        actual = block_text[fragment.start : fragment.end]
+        if actual != fragment.text:
+            raise ValueError(
+                "text fragment content does not match parsed block text: "
+                f"{fragment.fragment_id}"
+            )
+        if fragment.separator_before:
+            separator_start = fragment.start - len(fragment.separator_before)
+            if (
+                separator_start < 0
+                or block_text[separator_start : fragment.start]
+                != fragment.separator_before
+            ):
+                raise ValueError(
+                    "text fragment separator does not match parsed block text: "
+                    f"{fragment.fragment_id}"
+                )
     for occurrence in index.cell_occurrences:
         block_text = parsed_blocks[occurrence.block_id].text
         cell = cells_by_id[occurrence.cell_id]

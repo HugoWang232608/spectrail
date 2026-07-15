@@ -26,6 +26,16 @@ from spectrail.parsers.base import DocumentParseError, ParsedDocument
 from spectrail.parsers.render import render_blocks_to_markdown
 
 
+MAX_ROWS_PER_TABLE_BLOCK = 20
+REPEAT_HEADER_ROWS = 1
+TABLE_CELL_SEPARATOR = " | "
+TABLE_ROW_SEPARATOR = "\n"
+
+
+class _TableEvidenceUnavailable(ValueError):
+    """The table can be rendered as text but not trusted as cell evidence."""
+
+
 class DocxParserV2:
     parser_name = "docx_parser_v2"
     source_format = "docx"
@@ -81,16 +91,51 @@ class DocxParserV2:
                 continue
 
             table_index += 1
-            grid = _parse_table_grid(item, table_index)
+            try:
+                grid = _parse_table_grid(item, table_index)
+            except _TableEvidenceUnavailable:
+                order = len(blocks) + 1
+                text = _render_table_text_only(item)
+                if not text:
+                    continue
+                block = DocumentBlock(
+                    block_id=block_id(order),
+                    document_id=document_id,
+                    type="table",
+                    text=text,
+                    section_path=list(section_stack),
+                    order=order,
+                    metadata={
+                        **self._metadata(source_index),
+                        "table_index": table_index,
+                        "structured_table_evidence": False,
+                    },
+                )
+                blocks.append(block)
+                evidence_blocks.append(_text_block_evidence(block))
+                warnings.append(
+                    f"DOCX_TABLE_TOPOLOGY_UNAVAILABLE: table {table_index}"
+                )
+                continue
             table_identifier = table_id(table_index)
             table_block_ids: list[str] = []
             table_occurrence_ids: list[str] = []
 
-            for physical_row_index, row_cells in enumerate(grid.rows, start=1):
+            header_row_indices = _repeated_header_row_indices(grid)
+            row_groups = _table_row_groups(len(grid.rows))
+            for group_index, (row_start, row_end) in enumerate(row_groups):
                 order = len(blocks) + 1
                 block_identifier = block_id(order)
-                row_text, ranges = _render_physical_row(row_cells)
-                row_cell_ids = [cell.cell_id for cell in row_cells]
+                repeated_rows = header_row_indices if group_index > 0 else []
+                row_text, rendered_occurrences = _render_table_row_group(
+                    grid,
+                    row_start=row_start,
+                    row_end=row_end,
+                    repeated_header_rows=repeated_rows,
+                )
+                row_cell_ids = list(
+                    dict.fromkeys(item.cell.cell_id for item in rendered_occurrences)
+                )
                 block = DocumentBlock(
                     block_id=block_identifier,
                     document_id=document_id,
@@ -102,8 +147,9 @@ class DocxParserV2:
                         **self._metadata(source_index),
                         "table_id": table_identifier,
                         "table_index": table_index,
-                        "physical_row_index": physical_row_index,
-                        "header_row": grid.header_rows[physical_row_index - 1],
+                        "table_row_start": row_start,
+                        "table_row_end": row_end,
+                        "repeated_header_rows": repeated_rows,
                     },
                 )
                 blocks.append(block)
@@ -114,30 +160,25 @@ class DocxParserV2:
                         text_length=len(row_text),
                         text_sha256=sha256_text(row_text),
                         table_id=table_identifier,
-                        table_row_start=physical_row_index,
-                        table_row_end=physical_row_index,
+                        table_row_start=row_start,
+                        table_row_end=row_end,
                         cell_ids=row_cell_ids,
                         expected_capabilities=["text_range", "table_cell"],
                         available_capabilities=["text_range", "table_cell"],
                     )
                 )
-                for cell in row_cells:
+                for rendered in rendered_occurrences:
                     occurrence_index += 1
                     occurrence_identifier = occurrence_id(occurrence_index)
-                    start, end = ranges[cell.cell_id]
                     occurrences.append(
                         CellBlockOccurrence(
                             occurrence_id=occurrence_identifier,
-                            cell_id=cell.cell_id,
+                            cell_id=rendered.cell.cell_id,
                             block_id=block_identifier,
-                            physical_row_index=physical_row_index,
-                            canonical_start=start,
-                            canonical_end=end,
-                            occurrence_role=(
-                                "original"
-                                if physical_row_index == cell.row_index
-                                else "row_span_projection"
-                            ),
+                            physical_row_index=rendered.physical_row_index,
+                            canonical_start=rendered.start,
+                            canonical_end=rendered.end,
+                            occurrence_role=rendered.role,
                         )
                     )
                     table_occurrence_ids.append(occurrence_identifier)
@@ -154,16 +195,17 @@ class DocxParserV2:
                     occurrence_ids=table_occurrence_ids,
                     parser_method="docx_xml",
                     topology_status="complete",
-                    warnings=(
-                        [
-                            "w:tblHeader semantics recorded on logical cells; "
-                            "page-layout repeat projections are unavailable"
-                        ]
-                        if any(grid.header_rows)
-                        else []
-                    ),
+                    warnings=[
+                        *grid.warnings,
+                        *(
+                            ["DOCX_REPEATED_HEADER_PROJECTED"]
+                            if len(row_groups) > 1 and header_row_indices
+                            else []
+                        ),
+                    ],
                 )
             )
+            warnings.extend(grid.warnings)
 
         if not blocks:
             raise DocumentParseError(
@@ -293,6 +335,16 @@ class _TableGrid:
     cells: list[_GridCell]
     rows: list[list[_GridCell]]
     header_rows: list[bool]
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
+class _RenderedCellOccurrence:
+    cell: _GridCell
+    physical_row_index: int
+    start: int
+    end: int
+    role: str
 
 
 def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
@@ -310,6 +362,7 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
     )
     raw_rows: list[list[_RawCell]] = []
     header_rows: list[bool] = []
+    warnings: list[str] = []
     measured_columns = declared_columns
 
     for row_index, row_element in enumerate(row_elements, start=1):
@@ -338,18 +391,26 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
                     row_index=row_index,
                     column_index=column_index,
                     column_span=column_span,
-                    text=_normalize_text(_Cell(cell_element, table).text),
+                    text=_canonicalize_table_cell_text(
+                        _Cell(cell_element, table).text
+                    ),
                     vertical_merge=_vertical_merge(cell_properties, qn),
                     horizontal_merge=_horizontal_merge(cell_properties, qn),
                     is_header=is_header,
                 )
             )
+            if raw_cells[-1].vertical_merge == "invalid":
+                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+            if raw_cells[-1].horizontal_merge == "invalid":
+                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
             column_index += column_span
         measured_columns = max(
             measured_columns,
             column_index - 1 + grid_after,
         )
-        raw_rows.append(_collapse_horizontal_merges(raw_cells, table_index))
+        raw_rows.append(
+            _collapse_horizontal_merges(raw_cells, warnings)
+        )
 
     if not raw_rows or measured_columns < 1:
         raise DocumentParseError(
@@ -357,7 +418,7 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
         )
 
     completed_rows = [
-        _complete_physical_row(
+        _validate_complete_physical_row(
             raw_cells,
             row_index=row_index,
             column_count=measured_columns,
@@ -387,33 +448,18 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
                         for column in occupied_columns
                     )
                 ):
-                    raise DocumentParseError(
-                        "DOCX vertical merge continuation has no matching anchor: "
-                        f"table {table_index}, row {row_index}, "
-                        f"column {raw_cell.column_index}"
-                    )
-                if raw_cell.text and raw_cell.text != anchor.text:
-                    raise DocumentParseError(
-                        "DOCX vertical merge continuation contains conflicting text: "
-                        f"table {table_index}, row {row_index}, "
-                        f"column {raw_cell.column_index}"
-                    )
-                anchor.row_span = row_index - anchor.row_index + 1
-                cell = anchor
+                    warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                    cell = _new_grid_cell(raw_cell, table_index, row_index)
+                    logical_cells.append(cell)
+                elif raw_cell.text and raw_cell.text != anchor.text:
+                    warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                    cell = _new_grid_cell(raw_cell, table_index, row_index)
+                    logical_cells.append(cell)
+                else:
+                    anchor.row_span = row_index - anchor.row_index + 1
+                    cell = anchor
             else:
-                cell = _GridCell(
-                    cell_id=cell_id(
-                        table_index,
-                        row_index,
-                        raw_cell.column_index,
-                    ),
-                    row_index=row_index,
-                    column_index=raw_cell.column_index,
-                    row_span=1,
-                    column_span=raw_cell.column_span,
-                    text=raw_cell.text,
-                    is_header=raw_cell.is_header,
-                )
+                cell = _new_grid_cell(raw_cell, table_index, row_index)
                 logical_cells.append(cell)
 
             row_cells.append(cell)
@@ -429,10 +475,27 @@ def _parse_table_grid(table: object, table_index: int) -> _TableGrid:
         cells=logical_cells,
         rows=physical_rows,
         header_rows=header_rows,
+        warnings=list(dict.fromkeys(warnings)),
     )
 
 
-def _complete_physical_row(
+def _new_grid_cell(
+    raw_cell: _RawCell,
+    table_index: int,
+    row_index: int,
+) -> _GridCell:
+    return _GridCell(
+        cell_id=cell_id(table_index, row_index, raw_cell.column_index),
+        row_index=row_index,
+        column_index=raw_cell.column_index,
+        row_span=1,
+        column_span=raw_cell.column_span,
+        text=raw_cell.text,
+        is_header=raw_cell.is_header,
+    )
+
+
+def _validate_complete_physical_row(
     raw_cells: list[_RawCell],
     *,
     row_index: int,
@@ -450,40 +513,112 @@ def _complete_physical_row(
                     f"row {row_index}, column {column}"
                 )
             occupied.add(column)
-    completed = list(raw_cells)
-    header = raw_cells[0].is_header if raw_cells else False
-    for column in range(1, column_count + 1):
-        if column not in occupied:
-            completed.append(
-                _RawCell(
-                    row_index=row_index,
-                    column_index=column,
-                    column_span=1,
-                    text="",
-                    vertical_merge=None,
-                    horizontal_merge=None,
-                    is_header=header,
-                )
-            )
-    return sorted(completed, key=lambda item: item.column_index)
+    missing = sorted(set(range(1, column_count + 1)) - occupied)
+    if missing:
+        raise _TableEvidenceUnavailable(
+            "DOCX table physical row has XML grid slots without w:tc elements: "
+            f"row {row_index}, columns {missing}"
+        )
+    return sorted(raw_cells, key=lambda item: item.column_index)
 
 
 def _render_physical_row(
     cells: list[_GridCell],
 ) -> tuple[str, dict[str, tuple[int, int]]]:
-    parts = ["| "]
+    parts: list[str] = []
     ranges: dict[str, tuple[int, int]] = {}
-    cursor = 2
+    cursor = 0
     for index, cell in enumerate(cells):
         start = cursor
         parts.append(cell.text)
         cursor += len(cell.text)
         ranges[cell.cell_id] = (start, cursor)
         if index < len(cells) - 1:
-            parts.append(" | ")
-            cursor += 3
-    parts.append(" |")
+            parts.append(TABLE_CELL_SEPARATOR)
+            cursor += len(TABLE_CELL_SEPARATOR)
     return "".join(parts), ranges
+
+
+def _render_table_row_group(
+    grid: _TableGrid,
+    *,
+    row_start: int,
+    row_end: int,
+    repeated_header_rows: list[int],
+) -> tuple[str, list[_RenderedCellOccurrence]]:
+    rendered_rows = [
+        *((row_index, True) for row_index in repeated_header_rows),
+        *((row_index, False) for row_index in range(row_start, row_end + 1)),
+    ]
+    parts: list[str] = []
+    occurrences: list[_RenderedCellOccurrence] = []
+    cursor = 0
+    for rendered_index, (row_index, repeated) in enumerate(rendered_rows):
+        if rendered_index:
+            parts.append(TABLE_ROW_SEPARATOR)
+            cursor += len(TABLE_ROW_SEPARATOR)
+        row_text, ranges = _render_physical_row(grid.rows[row_index - 1])
+        parts.append(row_text)
+        for cell in grid.rows[row_index - 1]:
+            start, end = ranges[cell.cell_id]
+            occurrences.append(
+                _RenderedCellOccurrence(
+                    cell=cell,
+                    physical_row_index=row_index,
+                    start=cursor + start,
+                    end=cursor + end,
+                    role=(
+                        "repeated_header"
+                        if repeated
+                        else (
+                            "original"
+                            if row_index == cell.row_index
+                            else "row_span_projection"
+                        )
+                    ),
+                )
+            )
+        cursor += len(row_text)
+    return "".join(parts), occurrences
+
+
+def _table_row_groups(row_count: int) -> list[tuple[int, int]]:
+    return [
+        (start, min(start + MAX_ROWS_PER_TABLE_BLOCK - 1, row_count))
+        for start in range(1, row_count + 1, MAX_ROWS_PER_TABLE_BLOCK)
+    ]
+
+
+def _repeated_header_row_indices(grid: _TableGrid) -> list[int]:
+    result: list[int] = []
+    for row_index, is_header in enumerate(grid.header_rows, start=1):
+        if not is_header or len(result) >= REPEAT_HEADER_ROWS:
+            break
+        result.append(row_index)
+    return result
+
+
+def _render_table_text_only(table: object) -> str:
+    from docx.oxml.ns import qn
+    from docx.table import _Cell
+
+    rows: list[str] = []
+    for row_element in getattr(table, "_tbl").findall(qn("w:tr")):
+        values = [
+            _canonicalize_table_cell_text(_Cell(cell_element, table).text)
+            for cell_element in row_element.findall(qn("w:tc"))
+        ]
+        rows.append(TABLE_CELL_SEPARATOR.join(values))
+    return TABLE_ROW_SEPARATOR.join(rows)
+
+
+def _canonicalize_table_cell_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return (
+        normalized.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\n", "\\n")
+    )
 
 
 def _text_block_evidence(block: DocumentBlock) -> BlockEvidenceRecord:
@@ -507,10 +642,15 @@ def _parser_identity() -> ParserIdentity:
         parser_version="2",
         source_format="docx",
         parser_config={
-            "table_block_mode": "one_physical_row_per_block",
+            "table_block_mode": "complete_row_groups",
+            "max_rows_per_table_block": MAX_ROWS_PER_TABLE_BLOCK,
+            "repeat_header_rows": REPEAT_HEADER_ROWS,
+            "canonical_table_serializer": "escaped_cells_v1",
             "merged_cell_projection": "repeat_logical_text_per_physical_row",
             "header_detection": "explicit_w_tblHeader",
-            "repeated_header_projection": "layout_unavailable",
+            "repeated_header_projection": "logical_cell_identity",
+            "irregular_topology": "text_range_only",
+            "merged_cell_errors": "best_effort_or_text_range_only",
         },
         runtime_dependencies={"python-docx": python_docx_version},
     )
@@ -549,7 +689,7 @@ def _vertical_merge(parent: object | None, qn) -> str | None:
         return "continue"
     if value.lower() == "restart":
         return "restart"
-    raise DocumentParseError(f"unsupported DOCX vertical merge value: {value}")
+    return "invalid"
 
 
 def _horizontal_merge(parent: object | None, qn) -> str | None:
@@ -563,30 +703,27 @@ def _horizontal_merge(parent: object | None, qn) -> str | None:
         return "continue"
     if value.lower() == "restart":
         return "restart"
-    raise DocumentParseError(f"unsupported DOCX horizontal merge value: {value}")
+    return "invalid"
 
 
 def _collapse_horizontal_merges(
     raw_cells: list[_RawCell],
-    table_index: int,
+    warnings: list[str],
 ) -> list[_RawCell]:
     collapsed: list[_RawCell] = []
     active_index: int | None = None
     for raw_cell in raw_cells:
         if raw_cell.horizontal_merge == "continue":
             if active_index is None:
-                raise DocumentParseError(
-                    "DOCX horizontal merge continuation has no matching anchor: "
-                    f"table {table_index}, row {raw_cell.row_index}, "
-                    f"column {raw_cell.column_index}"
-                )
+                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                collapsed.append(replace(raw_cell, horizontal_merge=None))
+                continue
             anchor = collapsed[active_index]
             if anchor.vertical_merge != raw_cell.vertical_merge:
-                raise DocumentParseError(
-                    "DOCX horizontal merge cells disagree on vertical merge state: "
-                    f"table {table_index}, row {raw_cell.row_index}, "
-                    f"column {raw_cell.column_index}"
-                )
+                warnings.append("DOCX_MERGED_CELL_BEST_EFFORT")
+                collapsed.append(replace(raw_cell, horizontal_merge=None))
+                active_index = None
+                continue
             combined_text = " ".join(
                 value for value in (anchor.text, raw_cell.text) if value
             )

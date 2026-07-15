@@ -26,7 +26,7 @@ from spectrail.parsers.base import DocumentParseError, ParsedDocument
 from spectrail.parsers.render import render_blocks_to_markdown
 
 
-MAX_ROWS_PER_TABLE_BLOCK = 20
+MAX_PRIMARY_ROWS_PER_TABLE_BLOCK = 20
 REPEAT_HEADER_ROWS = 1
 TABLE_CELL_SEPARATOR = " | "
 TABLE_ROW_SEPARATOR = "\n"
@@ -93,40 +93,57 @@ class DocxParserV2:
             table_index += 1
             try:
                 grid = _parse_table_grid(item, table_index)
+                if not _grid_has_extractable_text(grid):
+                    warnings.append(f"DOCX_EMPTY_TABLE_SKIPPED: table {table_index}")
+                    continue
+                row_groups = _table_row_groups(len(grid.rows))
+                empty_group = next(
+                    (
+                        (row_start, row_end)
+                        for row_start, row_end in row_groups
+                        if not _row_group_has_extractable_text(
+                            grid,
+                            row_start=row_start,
+                            row_end=row_end,
+                        )
+                    ),
+                    None,
+                )
+                if empty_group is not None:
+                    raise _TableEvidenceUnavailable(
+                        "DOCX table contains an all-empty structured row group: "
+                        f"rows {empty_group[0]}-{empty_group[1]}"
+                    )
             except _TableEvidenceUnavailable as exc:
                 warnings.append(
                     "DOCX_TABLE_TOPOLOGY_UNAVAILABLE: "
                     f"table {table_index}: {exc}"
                 )
-                order = len(blocks) + 1
-                text = _render_table_text_only(item)
-                if not text:
-                    continue
-                block = DocumentBlock(
-                    block_id=block_id(order),
-                    document_id=document_id,
-                    type="table",
-                    text=text,
-                    section_path=list(section_stack),
-                    order=order,
-                    metadata={
-                        **self._metadata(source_index),
-                        "table_index": table_index,
-                        "structured_table_evidence": False,
-                    },
-                )
-                blocks.append(block)
-                evidence_blocks.append(_text_only_docx_table_evidence(block))
-                continue
-            if not _grid_has_extractable_text(grid):
-                warnings.append(f"DOCX_EMPTY_TABLE_SKIPPED: table {table_index}")
+                for row_start, row_end, text in _render_table_text_only_groups(item):
+                    order = len(blocks) + 1
+                    block = DocumentBlock(
+                        block_id=block_id(order),
+                        document_id=document_id,
+                        type="table",
+                        text=text,
+                        section_path=list(section_stack),
+                        order=order,
+                        metadata={
+                            **self._metadata(source_index),
+                            "table_index": table_index,
+                            "physical_row_start": row_start,
+                            "physical_row_end": row_end,
+                            "structured_table_evidence": False,
+                        },
+                    )
+                    blocks.append(block)
+                    evidence_blocks.append(_text_only_docx_table_evidence(block))
                 continue
             table_identifier = table_id(table_index)
             table_block_ids: list[str] = []
             table_occurrence_ids: list[str] = []
 
             header_row_indices = _repeated_header_row_indices(grid)
-            row_groups = _table_row_groups(grid)
             for group_index, (row_start, row_end) in enumerate(row_groups):
                 order = len(blocks) + 1
                 block_identifier = block_id(order)
@@ -598,28 +615,31 @@ def _render_table_row_group(
     return "".join(parts), occurrences
 
 
-def _table_row_groups(grid: _TableGrid) -> list[tuple[int, int]]:
-    base_groups = [
-        (start, min(start + MAX_ROWS_PER_TABLE_BLOCK - 1, len(grid.rows)))
-        for start in range(1, len(grid.rows) + 1, MAX_ROWS_PER_TABLE_BLOCK)
-    ]
-    groups: list[tuple[int, int]] = []
-    pending_start: int | None = None
-    for start, end in base_groups:
-        has_text = any(
-            cell.text.strip()
-            for row in grid.rows[start - 1 : end]
-            for cell in row
+def _table_row_groups(row_count: int) -> list[tuple[int, int]]:
+    return [
+        (
+            start,
+            min(start + MAX_PRIMARY_ROWS_PER_TABLE_BLOCK - 1, row_count),
         )
-        if has_text:
-            groups.append((pending_start or start, end))
-            pending_start = None
-        elif groups:
-            previous_start, _ = groups[-1]
-            groups[-1] = (previous_start, end)
-        else:
-            pending_start = pending_start or start
-    return groups
+        for start in range(
+            1,
+            row_count + 1,
+            MAX_PRIMARY_ROWS_PER_TABLE_BLOCK,
+        )
+    ]
+
+
+def _row_group_has_extractable_text(
+    grid: _TableGrid,
+    *,
+    row_start: int,
+    row_end: int,
+) -> bool:
+    return any(
+        cell.text.strip()
+        for row in grid.rows[row_start - 1 : row_end]
+        for cell in row
+    )
 
 
 def _grid_has_extractable_text(grid: _TableGrid) -> bool:
@@ -635,20 +655,38 @@ def _repeated_header_row_indices(grid: _TableGrid) -> list[int]:
     return result
 
 
-def _render_table_text_only(table: object) -> str:
+def _render_table_text_only_groups(
+    table: object,
+) -> list[tuple[int, int, str]]:
     from docx.oxml.ns import qn
     from docx.table import _Cell
 
-    rows: list[str] = []
-    has_text = False
+    rows: list[tuple[str, bool]] = []
     for row_element in getattr(table, "_tbl").findall(qn("w:tr")):
         values = [
             _canonicalize_table_cell_text(_Cell(cell_element, table).text)
             for cell_element in row_element.findall(qn("w:tc"))
         ]
-        has_text = has_text or any(value.strip() for value in values)
-        rows.append(TABLE_CELL_SEPARATOR.join(values))
-    return TABLE_ROW_SEPARATOR.join(rows) if has_text else ""
+        rows.append(
+            (
+                TABLE_CELL_SEPARATOR.join(values),
+                any(value.strip() for value in values),
+            )
+        )
+
+    groups: list[tuple[int, int, str]] = []
+    for row_start, row_end in _table_row_groups(len(rows)):
+        selected = rows[row_start - 1 : row_end]
+        if not any(has_text for _, has_text in selected):
+            continue
+        groups.append(
+            (
+                row_start,
+                row_end,
+                TABLE_ROW_SEPARATOR.join(text for text, _ in selected),
+            )
+        )
+    return groups
 
 
 def _canonicalize_table_cell_text(text: str) -> str:
@@ -693,7 +731,11 @@ def _parser_identity() -> ParserIdentity:
         source_format="docx",
         parser_config={
             "table_block_mode": "complete_row_groups",
-            "max_rows_per_table_block": MAX_ROWS_PER_TABLE_BLOCK,
+            "max_primary_rows_per_table_block": MAX_PRIMARY_ROWS_PER_TABLE_BLOCK,
+            "text_only_max_physical_rows_per_block": (
+                MAX_PRIMARY_ROWS_PER_TABLE_BLOCK
+            ),
+            "text_only_table_block_mode": "physical_row_groups",
             "repeat_header_rows": REPEAT_HEADER_ROWS,
             "canonical_table_serializer": "escaped_cells_v1",
             "merged_cell_projection": "repeat_logical_text_per_physical_row",

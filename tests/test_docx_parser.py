@@ -184,6 +184,11 @@ def test_docx_parser_groups_large_tables_and_projects_repeated_header(tmp_path: 
     index = parsed.evidence_index
     assert index is not None
     assert len(parsed.blocks) == 2
+    assert all(
+        block.table_row_end - block.table_row_start + 1 <= 20
+        for block in index.blocks
+        if block.table_row_start is not None and block.table_row_end is not None
+    )
     assert index.tables[0].block_ids == ["blk_0001", "blk_0002"]
     assert (
         index.blocks[0].table_row_start,
@@ -380,7 +385,7 @@ def test_docx_empty_table_is_not_an_extractable_block(tmp_path: Path):
     assert parsed.warnings == ["DOCX_EMPTY_TABLE_SKIPPED: table 1"]
 
 
-def test_docx_empty_row_groups_are_coalesced_into_nonempty_blocks(tmp_path: Path):
+def test_docx_empty_row_groups_downgrade_without_exceeding_row_limit(tmp_path: Path):
     path = tmp_path / "empty-row-groups.docx"
     document = Document()
     table = document.add_table(rows=61, cols=1)
@@ -392,9 +397,59 @@ def test_docx_empty_row_groups_are_coalesced_into_nonempty_blocks(tmp_path: Path
     index = parsed.evidence_index
     assert index is not None
     assert all(block.text.strip() for block in parsed.blocks)
+    assert index.tables == []
+    assert all(
+        block.expected_capabilities == ["text_range", "table_cell"]
+        and block.available_capabilities == ["text_range"]
+        for block in index.blocks
+    )
     assert [
-        (block.table_row_start, block.table_row_end) for block in index.blocks
-    ] == [(1, 60), (61, 61)]
+        (
+            block.metadata["physical_row_start"],
+            block.metadata["physical_row_end"],
+        )
+        for block in parsed.blocks
+    ] == [(41, 60), (61, 61)]
+    assert all(
+        block.metadata["physical_row_end"]
+        - block.metadata["physical_row_start"]
+        + 1
+        <= 20
+        for block in parsed.blocks
+    )
+    assert "all-empty structured row group: rows 1-20" in parsed.warnings[0]
+
+
+def test_docx_large_text_only_fallback_is_split_by_physical_rows(tmp_path: Path):
+    path = tmp_path / "large-fallback.docx"
+    document = Document()
+    table = document.add_table(rows=1001, cols=1)
+    for row_index, row in enumerate(table.rows, start=1):
+        row.cells[0].text = f"R{row_index}"
+    _remove_table_grid(table)
+    document.save(path)
+
+    parsed = DocxParser().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert len(parsed.blocks) == 51
+    assert index.tables == []
+    assert all(
+        block.expected_capabilities == ["text_range", "table_cell"]
+        and block.available_capabilities == ["text_range"]
+        for block in index.blocks
+    )
+    assert parsed.blocks[0].metadata["physical_row_start"] == 1
+    assert parsed.blocks[0].metadata["physical_row_end"] == 20
+    assert parsed.blocks[-1].metadata["physical_row_start"] == 1001
+    assert parsed.blocks[-1].metadata["physical_row_end"] == 1001
+    assert all(
+        block.metadata["physical_row_end"]
+        - block.metadata["physical_row_start"]
+        + 1
+        <= 20
+        for block in parsed.blocks
+    )
 
 
 def test_docx_table_runs_structured_evidence_validation_end_to_end(tmp_path: Path):

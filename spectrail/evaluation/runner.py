@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from spectrail.evaluation.metrics import build_evaluation_metrics
 from spectrail.evaluation.models import EvaluationCase, GoldPackage
 from spectrail.evidence.models import EvidenceIndex
 from spectrail.evidence.fingerprint import validate_evidence_fingerprint
+from spectrail.evidence.index_builder import ensure_evidence_index
 from spectrail.llm.errors import ModelError
 from spectrail.parsers import DocumentParseError, ParsedDocument, parse_document
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
@@ -222,6 +224,13 @@ def _preflight_case(
 
     parsed = parse_document(document, document_id="doc_001")
     if requires_identity_check:
+        evidence_index = ensure_evidence_index(document, parsed)
+        parsed = replace(
+            parsed,
+            source_sha256=evidence_index.source_sha256,
+            parser_identity=evidence_index.parser_identity,
+            evidence_index=evidence_index,
+        )
         _validate_fixture_identity(parsed, case, recorded_fixture)
     if not case.scope_block_ids:
         return parsed
@@ -279,12 +288,17 @@ def _validate_fixture_identity(
                 f"actual={actual_fingerprint!r}"
             )
         if recorded_fixture is not None:
+            metadata_path = (
+                recorded_fixture / "manifest.json"
+                if recorded_fixture.is_dir()
+                else recorded_fixture
+            )
             try:
-                fixture_payload = read_json(recorded_fixture)
+                fixture_payload = read_json(metadata_path)
             except (OSError, ValueError, TypeError) as exc:
                 mismatches.append(
                     "recorded_fixture unreadable "
-                    f"path={recorded_fixture.as_posix()!r} error={str(exc)!r}"
+                    f"path={metadata_path.as_posix()!r} error={str(exc)!r}"
                 )
                 fixture_payload = None
             fixture_fingerprint = (

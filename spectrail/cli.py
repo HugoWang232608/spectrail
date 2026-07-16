@@ -149,6 +149,16 @@ def run_evaluate(args: argparse.Namespace) -> int:
     except (ValueError, PipelineError, DocumentParseError, ModelError) as exc:
         raise SystemExit(str(exc)) from exc
     print(f"Evaluated {report['case_count']} case(s): {report['case_passed']} passed")
+    if not report["passed"]:
+        output = Path(args.output)
+        for case_report in sorted(output.glob("cases/*/case_report.json")):
+            payload = read_json(case_report)
+            if not isinstance(payload, dict) or payload.get("passed") is not False:
+                continue
+            markdown_path = case_report.with_name("case_report.md")
+            print(f"\nFailed evaluation report: {markdown_path}")
+            if markdown_path.exists():
+                print(markdown_path.read_text(encoding="utf-8").rstrip())
     return 0 if report["passed"] else 1
 
 

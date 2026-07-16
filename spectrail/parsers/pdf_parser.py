@@ -39,6 +39,13 @@ FONT_LEVEL_DELTA_RATIO = 0.20
 MIN_FONT_LEVEL_DELTA = 2.0
 SPAN_GAP_EM_RATIO = 0.12
 MIN_SPAN_GAP = 0.75
+BOLD_HEADING_MAX_CHARS = 80
+BOLD_HEADING_MAX_WORDS = 12
+NORMATIVE_SENTENCE_RE = re.compile(r"\b(?:shall|must|should|will)\b", re.IGNORECASE)
+BOLD_LABEL_RE = re.compile(
+    r"^(?:note|warning|caution|input|output|example|tip)\s*:?$",
+    re.IGNORECASE,
+)
 
 
 class PdfParserV2:
@@ -249,6 +256,7 @@ class _PageTextBlock:
     source_segment_number: int = 1
     block_type: str = "paragraph"
     font_size: float = 0.0
+    bold_heading_candidate: bool = False
     heading_level: int | None = None
     section_path: list[str] = field(default_factory=list)
     column_index: int = 1
@@ -478,10 +486,11 @@ def _render_line_group(
 
     text = "".join(text_parts)
     block_font_size = max((line.font_size for line in lines), default=0.0)
-    block_type = (
-        "heading"
-        if _line_group_is_heading(lines, text, block_font_size, baseline_font_size)
-        else "paragraph"
+    larger_heading, bold_heading_candidate = _line_group_heading_signals(
+        lines,
+        text,
+        block_font_size,
+        baseline_font_size,
     )
     return _PageTextBlock(
         text=text,
@@ -493,8 +502,9 @@ def _render_line_group(
         fragments=fragments,
         source_block_number=source_block_number,
         source_segment_number=source_segment_number,
-        block_type=block_type,
+        block_type="heading" if larger_heading else "paragraph",
         font_size=block_font_size,
+        bold_heading_candidate=bold_heading_candidate and not larger_heading,
     )
 
 
@@ -516,14 +526,14 @@ def _same_line_separator(
     return " " if horizontal_gap > threshold else ""
 
 
-def _line_group_is_heading(
+def _line_group_heading_signals(
     lines: list[_ProjectedLine],
     text: str,
     block_font_size: float,
     baseline_font_size: float,
-) -> bool:
+) -> tuple[bool, bool]:
     if len(lines) != 1 or len(text.strip()) > 160:
-        return False
+        return False, False
     non_empty_spans = [span for span in lines[0].spans if span.text.strip()]
     bold = bool(non_empty_spans) and all(span.flags & 16 for span in non_empty_spans)
     larger = (
@@ -531,7 +541,20 @@ def _line_group_is_heading(
         and block_font_size >= baseline_font_size * 1.15
         and block_font_size - baseline_font_size >= 1.0
     )
-    return bold or larger
+    return larger, bold
+
+
+def _bold_candidate_looks_like_heading(text: str) -> bool:
+    normalized = " ".join(text.split())
+    if not normalized or len(normalized) > BOLD_HEADING_MAX_CHARS:
+        return False
+    if len(normalized.split()) > BOLD_HEADING_MAX_WORDS:
+        return False
+    if normalized.endswith((":", ".", "!", "?")):
+        return False
+    if BOLD_LABEL_RE.fullmatch(normalized):
+        return False
+    return NORMATIVE_SENTENCE_RE.search(normalized) is None
 
 
 def _raw_bbox(raw_bbox: object) -> tuple[float, float, float, float] | None:
@@ -662,6 +685,7 @@ def _normalized_edge_text(text: str) -> str:
 
 
 def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
+    _resolve_bold_heading_candidates(page_layouts)
     heading_sizes = sorted(
         {
             round(block.font_size, 1)
@@ -695,6 +719,26 @@ def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
                 sections_by_level[level] = title
                 block.heading_level = level
             block.section_path = _section_path(sections_by_level)
+
+
+def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
+    for layout in page_layouts:
+        ordered, _ = _order_page_blocks(list(layout.blocks), layout.width)
+        for index, block in enumerate(ordered):
+            if (
+                block.edge_candidate
+                or not block.bold_heading_candidate
+                or not _bold_candidate_looks_like_heading(block.text)
+            ):
+                continue
+            has_following_body = any(
+                not following.edge_candidate
+                and following.block_type == "paragraph"
+                and not following.bold_heading_candidate
+                for following in ordered[index + 1 :]
+            )
+            if has_following_body:
+                block.block_type = "heading"
 
 
 def _section_path(sections_by_level: dict[int, str]) -> list[str]:
@@ -912,14 +956,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.2",
+        parser_version="2.3",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v1",
+            "section_hierarchy": "numeric_prefix_then_font_size_v2",
+            "bold_heading_detection": "short_non_normative_with_following_body_v1",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

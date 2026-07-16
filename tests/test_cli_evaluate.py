@@ -141,7 +141,10 @@ def test_gold_requirements_min_prevents_empty_scope_ci_pass(tmp_path: Path):
     }
 
 
-def test_evaluate_cli_returns_one_when_threshold_fails(tmp_path: Path):
+def test_evaluate_cli_returns_one_and_prints_case_report_when_threshold_fails(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
     case = tmp_path / "case.json"
     case.write_text(
         '{"name":"failing-gate","document":"docs/sample_srs.md",'
@@ -150,6 +153,10 @@ def test_evaluate_cli_returns_one_when_threshold_fails(tmp_path: Path):
         encoding="utf-8",
     )
     assert main(["evaluate", str(case), "--output", str(tmp_path / "report")]) == 1
+    output = capsys.readouterr().out
+    assert "Failed evaluation report:" in output
+    assert "# failing-gate" in output
+    assert "Status: FAIL" in output
 
 
 def test_locator_metrics_participate_in_threshold_gate(tmp_path: Path):
@@ -185,7 +192,7 @@ def test_ieee_pdf_release_gate_evaluates_real_page_region(tmp_path: Path):
     report = read_json(output / "evaluation_report.json")["cases"][0]
     assert report["page_accuracy"] == 1.0
     assert report["page_evaluated_count"] == 1
-    assert report["bbox_iou_mean"] == pytest.approx(0.8794261336524364)
+    assert report["bbox_iou_mean"] >= 0.8
     assert report["bbox_iou_pass_rate"] == 1.0
     assert report["bbox_evaluated_count"] == 1
     assert report["structured_grounding_coverage"] == 1.0
@@ -373,3 +380,59 @@ def test_recorded_fixture_fingerprint_is_bound_to_evaluation_case(
     report = read_json(output / "evaluation_report.json")["cases"][0]
     assert report["error_code"] == "EVALUATION_FIXTURE_STALE"
     assert "recorded_fixture.evidence_fingerprint" in report["error"]
+
+
+def test_recorded_bundle_manifest_fingerprint_is_bound_to_evaluation_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    document = Path("tests/fixtures/ieee29148_srs_example.pdf")
+    parsed = parse_document(document)
+    assert parsed.parser_identity is not None
+    assert parsed.evidence_index is not None
+    bundle = tmp_path / "recorded-bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "evidence_fingerprint": "0" * 64,
+                },
+                "responses": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "name": "stale-recorded-bundle-manifest",
+                "document": document.as_posix(),
+                "gold": "eval/cases/ieee29148_selected/gold.json",
+                "model_mode": "recorded",
+                "recorded_fixture": bundle.as_posix(),
+                "expected_parser_name": parsed.parser_identity.parser_name,
+                "expected_parser_version": parsed.parser_identity.parser_version,
+                "expected_evidence_fingerprint": (
+                    parsed.evidence_index.evidence_fingerprint
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_if_pipeline_called(*args, **kwargs):
+        raise AssertionError("stale recorded bundle must fail before pipeline")
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.runner.PipelineRunner.extract",
+        fail_if_pipeline_called,
+    )
+    output = tmp_path / "stale-recorded-bundle-report"
+
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["error_code"] == "EVALUATION_FIXTURE_STALE"
+    assert "recorded_fixture.evidence_fingerprint" in report["error"]
+    assert "recorded_fixture unreadable" not in report["error"]

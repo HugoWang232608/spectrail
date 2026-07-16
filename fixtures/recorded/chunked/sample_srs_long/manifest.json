@@ -2,6 +2,7 @@
   "metadata": {
     "bundle_version": 2,
     "document": "eval/cases/sample_srs_long/document.md",
+    "evidence_fingerprint": "ac1013423afccc31c1fae981b26e18834969578dd87b4c01087e419d6aad2170",
     "prompt_version": "reqir_extraction_v10_table_row_evidence_v5",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",

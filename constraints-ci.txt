@@ -1,0 +1,4 @@
+# Release fixtures and Evidence fingerprints are generated with this exact
+# PyMuPDF build. Keep CI deterministic; update this pin only when regenerating
+# the PDF evaluation fixtures and their expected Evidence fingerprints.
+PyMuPDF==1.28.0

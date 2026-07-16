@@ -47,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.2"
+    assert parsed.parser_identity.parser_version == "2.3"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -574,6 +574,39 @@ def test_pdf_v2_builds_numeric_heading_hierarchy_and_replaces_siblings(
     assert by_text["The system shall validate input."].section_path == [
         "1 Requirements",
         "1.2 Behavior",
+    ]
+
+
+def test_pdf_v2_bold_labels_and_requirements_do_not_create_sections(
+    tmp_path: Path,
+):
+    path = tmp_path / "bold-body-text.pdf"
+    document = fitz.open()
+    page = document.new_page(width=500, height=500)
+    page.insert_text((50, 50), "System Requirements", fontname="hebo")
+    page.insert_text((50, 90), "This section defines system behavior.")
+    page.insert_text((50, 140), "Warning:", fontname="hebo")
+    page.insert_text((50, 170), "Validate configuration before deployment.")
+    page.insert_text(
+        (50, 220),
+        "The system shall preserve audit records.",
+        fontname="hebo",
+    )
+    page.insert_text((50, 250), "Audit records remain available to reviewers.")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert by_text["System Requirements"].type == "heading"
+    assert by_text["Warning:"].type == "paragraph"
+    assert by_text["The system shall preserve audit records."].type == "paragraph"
+    assert by_text["Validate configuration before deployment."].section_path == [
+        "System Requirements"
+    ]
+    assert by_text["Audit records remain available to reviewers."].section_path == [
+        "System Requirements"
     ]
 
 

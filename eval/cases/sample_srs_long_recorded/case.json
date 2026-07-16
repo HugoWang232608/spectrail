@@ -2,6 +2,9 @@
   "name": "sample_srs_long_recorded_bundle",
   "document": "eval/cases/sample_srs_long/document.md",
   "gold": "eval/cases/sample_srs/gold.json",
+  "expected_parser_name": "markdown_parser_v1",
+  "expected_parser_version": "1",
+  "expected_evidence_fingerprint": "ac1013423afccc31c1fae981b26e18834969578dd87b4c01087e419d6aad2170",
   "model_mode": "recorded",
   "recorded_fixture": "fixtures/recorded/chunked/sample_srs_long",
   "request_profile": {

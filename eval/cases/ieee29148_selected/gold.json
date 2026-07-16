@@ -10,7 +10,16 @@
       "sources": [
         {
           "block_id": "blk_0081",
-          "quote": "The application shall allow users to create a new empty document."
+          "quote": "The application shall allow users to create a new empty document.",
+          "page": 5,
+          "bbox": {
+            "x0": 165.38,
+            "y0": 192.98,
+            "x1": 518.672,
+            "y1": 204.98,
+            "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+          },
+          "bbox_iou_threshold": 0.8
         }
       ],
       "tags": ["file-operations"]

@@ -22,6 +22,10 @@ from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 RequirementList = TypeAdapter(list[RequirementIR])
 
 
+class EvaluationFixtureStaleError(Exception):
+    code = "EVALUATION_FIXTURE_STALE"
+
+
 class EvaluationRunner:
     def run(self, case_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
         path = Path(case_path)
@@ -48,14 +52,15 @@ class EvaluationRunner:
         gold_path = _resolve_path(case.gold, case_file.parent)
         gold = GoldPackage.model_validate(read_json(gold_path))
         pipeline_output = output / "pipeline"
+        recorded_fixture = (
+            _resolve_path(case.recorded_fixture, case_file.parent)
+            if case.recorded_fixture
+            else None
+        )
         config = PipelineConfig(
             model_mode=case.model_mode,
             model_name=case.model_name,
-            recorded_fixture=(
-                _resolve_path(case.recorded_fixture, case_file.parent)
-                if case.recorded_fixture
-                else None
-            ),
+            recorded_fixture=recorded_fixture,
             request_profile=(case.request_profile.to_runtime() if case.request_profile else None),
             chunking=ChunkingConfig(
                 mode=case.chunking_mode,
@@ -67,14 +72,25 @@ class EvaluationRunner:
         )
         pipeline_exception: Exception | None = None
         try:
-            parsed_document = _preflight_selected_scope(document, case, gold)
+            parsed_document = _preflight_case(
+                document,
+                case,
+                gold,
+                recorded_fixture=recorded_fixture,
+            )
             PipelineRunner().extract(
                 document,
                 pipeline_output,
                 config=config,
                 parsed_document=parsed_document,
             )
-        except (PipelineError, ChunkPlanningError, DocumentParseError, ModelError) as exc:
+        except (
+            PipelineError,
+            ChunkPlanningError,
+            DocumentParseError,
+            ModelError,
+            EvaluationFixtureStaleError,
+        ) as exc:
             pipeline_exception = exc
 
         manifest_path = pipeline_output / "run_manifest.json"
@@ -85,7 +101,9 @@ class EvaluationRunner:
                 "status": "failed",
                 "error": str(pipeline_exception) if pipeline_exception else "pipeline failed",
                 "error_code": (
-                    type(pipeline_exception).__name__ if pipeline_exception else "PIPELINE_FAILED"
+                    getattr(pipeline_exception, "code", type(pipeline_exception).__name__)
+                    if pipeline_exception
+                    else "PIPELINE_FAILED"
                 ),
                 "counts": {},
                 "execution": {},
@@ -185,15 +203,29 @@ def _resolve_path(value: str | Path, case_dir: Path) -> Path:
     return case_dir / path
 
 
-def _preflight_selected_scope(
+def _preflight_case(
     document: Path,
     case: EvaluationCase,
     gold: GoldPackage,
+    *,
+    recorded_fixture: Path | None,
 ) -> ParsedDocument | None:
-    if not case.scope_block_ids:
+    requires_identity_check = any(
+        (
+            case.expected_parser_name,
+            case.expected_parser_version,
+            case.expected_evidence_fingerprint,
+        )
+    )
+    if not case.scope_block_ids and not requires_identity_check:
         return None
 
     parsed = parse_document(document, document_id="doc_001")
+    if requires_identity_check:
+        _validate_fixture_identity(parsed, case, recorded_fixture)
+    if not case.scope_block_ids:
+        return parsed
+
     scope = set(case.scope_block_ids)
     parsed_block_ids = {block.block_id for block in parsed.blocks}
     missing_scope_ids = sorted(scope - parsed_block_ids)
@@ -212,6 +244,63 @@ def _preflight_selected_scope(
             "set allow_empty_gold_scope=true only for intentional empty-scope cases"
         )
     return parsed
+
+
+def _validate_fixture_identity(
+    parsed: ParsedDocument,
+    case: EvaluationCase,
+    recorded_fixture: Path | None,
+) -> None:
+    mismatches: list[str] = []
+    identity = parsed.parser_identity
+    if case.expected_parser_name is not None:
+        actual = identity.parser_name if identity is not None else None
+        if actual != case.expected_parser_name:
+            mismatches.append(
+                f"parser_name expected={case.expected_parser_name!r} actual={actual!r}"
+            )
+    if case.expected_parser_version is not None:
+        actual = identity.parser_version if identity is not None else None
+        if actual != case.expected_parser_version:
+            mismatches.append(
+                "parser_version "
+                f"expected={case.expected_parser_version!r} actual={actual!r}"
+            )
+    if case.expected_evidence_fingerprint is not None:
+        actual_fingerprint = (
+            parsed.evidence_index.evidence_fingerprint
+            if parsed.evidence_index is not None
+            else None
+        )
+        if actual_fingerprint != case.expected_evidence_fingerprint:
+            mismatches.append(
+                "evidence_fingerprint "
+                f"expected={case.expected_evidence_fingerprint!r} "
+                f"actual={actual_fingerprint!r}"
+            )
+        if recorded_fixture is not None:
+            try:
+                fixture_payload = read_json(recorded_fixture)
+            except (OSError, ValueError, TypeError) as exc:
+                mismatches.append(
+                    "recorded_fixture unreadable "
+                    f"path={recorded_fixture.as_posix()!r} error={str(exc)!r}"
+                )
+                fixture_payload = None
+            fixture_fingerprint = (
+                fixture_payload.get("metadata", {}).get("evidence_fingerprint")
+                if isinstance(fixture_payload, dict)
+                and isinstance(fixture_payload.get("metadata", {}), dict)
+                else None
+            )
+            if fixture_fingerprint != case.expected_evidence_fingerprint:
+                mismatches.append(
+                    "recorded_fixture.evidence_fingerprint "
+                    f"expected={case.expected_evidence_fingerprint!r} "
+                    f"actual={fixture_fingerprint!r}"
+                )
+    if mismatches:
+        raise EvaluationFixtureStaleError("; ".join(mismatches))
 
 
 def _threshold_results(metrics: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any]:
@@ -256,6 +345,7 @@ def _case_markdown(report: dict[str, Any]) -> str:
         "",
         f"- Pipeline status: {report['pipeline_status']}",
         f"- Error code: {report.get('error_code') or 'None'}",
+        f"- Error: {report.get('error') or 'None'}",
         f"- Zero result reason: {report.get('zero_result_reason') or 'None'}",
         f"- Warning codes: {', '.join(report.get('warning_codes', [])) or 'None'}",
         "",

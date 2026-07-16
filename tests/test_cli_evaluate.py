@@ -1,9 +1,12 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from spectrail.cli import main
 from spectrail.core.io import read_json
+from spectrail.evaluation.runner import PipelineRunner
+from spectrail.parsers import parse_document
 
 
 def test_evaluate_cli_generates_passing_report(tmp_path: Path):
@@ -168,6 +171,32 @@ def test_locator_metrics_participate_in_threshold_gate(tmp_path: Path):
     assert results["text_locator_evaluated_count_min"]["actual"] > 0
 
 
+def test_ieee_pdf_release_gate_evaluates_real_page_region(tmp_path: Path):
+    output = tmp_path / "ieee-page-region-gate"
+
+    assert main(
+        [
+            "evaluate",
+            "eval/cases/ieee29148_selected/case.json",
+            "--output",
+            str(output),
+        ]
+    ) == 0
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["page_accuracy"] == 1.0
+    assert report["page_evaluated_count"] == 1
+    assert report["bbox_iou_mean"] == pytest.approx(0.8794261336524364)
+    assert report["bbox_iou_pass_rate"] == 1.0
+    assert report["bbox_evaluated_count"] == 1
+    assert report["structured_grounding_coverage"] == 1.0
+    assert report["structured_grounding_eligible_count"] == 1
+    assert report["text_locator_pass_rate"] == 1.0
+    assert report["text_locator_evaluated_count"] == 1
+    assert all(
+        result["passed"] for result in report["threshold_results"].values()
+    )
+
+
 def test_evaluation_suite_reports_failed_pipeline_and_continues(tmp_path: Path):
     cases = tmp_path / "cases"
     failing = cases / "a_failing"
@@ -237,3 +266,110 @@ def test_selected_scope_parse_failure_is_reported_and_suite_continues(tmp_path: 
     assert failed["passed"] is False
     assert suite["cases"][1]["passed"] is True
     assert (output / "cases" / "a_parse_failure" / "case_report.json").exists()
+
+
+def test_evaluation_fixture_identity_mismatch_is_reported_and_suite_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cases = tmp_path / "cases"
+    stale = cases / "a_stale"
+    passing = cases / "b_passing"
+    stale.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    (stale / "case.json").write_text(
+        json.dumps(
+            {
+                "name": "stale-parser-fixture",
+                "document": "docs/sample_srs.md",
+                "gold": "eval/cases/sample_srs/gold.json",
+                "expected_parser_name": "pdf_parser_v2",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        '{"name":"passing-after-stale","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json"}',
+        encoding="utf-8",
+    )
+
+    original_extract = PipelineRunner.extract
+    calls = 0
+
+    def count_pipeline_calls(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_extract(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.runner.PipelineRunner.extract",
+        count_pipeline_calls,
+    )
+    output = tmp_path / "stale-suite-report"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    assert suite["cases"][0]["error_code"] == "EVALUATION_FIXTURE_STALE"
+    assert "parser_name" in suite["cases"][0]["error"]
+    assert suite["cases"][1]["passed"] is True
+    assert calls == 1
+    markdown = (output / "cases" / "a_stale" / "case_report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "EVALUATION_FIXTURE_STALE" in markdown
+    assert "parser_name" in markdown
+
+
+def test_recorded_fixture_fingerprint_is_bound_to_evaluation_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    document = Path("tests/fixtures/ieee29148_srs_example.pdf")
+    parsed = parse_document(document)
+    assert parsed.parser_identity is not None
+    assert parsed.evidence_index is not None
+    fixture = tmp_path / "response.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "metadata": {"evidence_fingerprint": "0" * 64},
+                "items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "name": "stale-recorded-bundle",
+                "document": document.as_posix(),
+                "gold": "eval/cases/ieee29148_selected/gold.json",
+                "model_mode": "recorded",
+                "recorded_fixture": fixture.as_posix(),
+                "expected_parser_name": parsed.parser_identity.parser_name,
+                "expected_parser_version": parsed.parser_identity.parser_version,
+                "expected_evidence_fingerprint": (
+                    parsed.evidence_index.evidence_fingerprint
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_if_pipeline_called(*args, **kwargs):
+        raise AssertionError("stale recorded fixture must fail before pipeline")
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.runner.PipelineRunner.extract",
+        fail_if_pipeline_called,
+    )
+    output = tmp_path / "stale-recorded-report"
+
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["error_code"] == "EVALUATION_FIXTURE_STALE"
+    assert "recorded_fixture.evidence_fingerprint" in report["error"]

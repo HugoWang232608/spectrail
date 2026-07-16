@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from spectrail.evidence.models import BoundingBox
 from spectrail.llm.request_profile import ModelRequestProfile
@@ -77,6 +77,9 @@ class EvaluationCase(BaseModel):
     name: str
     document: str
     gold: str
+    expected_parser_name: str | None = None
+    expected_parser_version: str | None = None
+    expected_evidence_fingerprint: str | None = None
     scope_block_ids: list[str] = Field(default_factory=list)
     allow_empty_gold_scope: bool = False
     model_mode: Literal["mock", "recorded", "live"] = "mock"
@@ -93,6 +96,21 @@ class EvaluationCase(BaseModel):
     allowed_pipeline_statuses: list[str] = Field(default_factory=lambda: ["completed"])
     allowed_zero_result_reasons: list[str | None] = Field(default_factory=lambda: [None])
     thresholds: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("expected_evidence_fingerprint")
+    @classmethod
+    def validate_expected_evidence_fingerprint(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is not None and (
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError(
+                "expected_evidence_fingerprint must be a lowercase SHA-256"
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_model_identity(self) -> "EvaluationCase":

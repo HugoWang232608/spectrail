@@ -73,6 +73,7 @@ class PdfParserV2:
             document.close()
 
         _mark_repeated_page_edges(page_layouts)
+        _assign_pdf_sections(page_layouts)
 
         blocks: list[DocumentBlock] = []
         evidence_blocks: list[BlockEvidenceRecord] = []
@@ -87,7 +88,9 @@ class PdfParserV2:
                 item.edge_candidate for item in candidates
             )
             if any(item.bbox is None for item in candidates):
-                layout.warnings.append("PDF_READING_ORDER_GEOMETRY_UNAVAILABLE")
+                layout.warnings.append(
+                    "PDF_READING_ORDER_PARTIAL_GEOMETRY_FALLBACK"
+                )
             ordered, column_count = _order_page_blocks(candidates, layout.width)
             if column_count > 1:
                 layout.warnings.append(
@@ -101,13 +104,15 @@ class PdfParserV2:
                     block_id=block_identifier,
                     document_id=document_id,
                     type=(
-                        "list"
+                        "heading"
+                        if candidate.block_type == "heading"
+                        else "list"
                         if LIST_RE.match(candidate.text)
-                        else candidate.block_type
+                        else "paragraph"
                     ),
                     text=candidate.text,
                     page=layout.page,
-                    section_path=[],
+                    section_path=list(candidate.section_path),
                     order=order,
                     metadata={
                         "source_format": self.source_format,
@@ -122,8 +127,8 @@ class PdfParserV2:
                         "repeated_edge_candidate": candidate.edge_candidate,
                         "repeated_edge_role": candidate.edge_role,
                         **(
-                            {"level": 1}
-                            if candidate.block_type == "heading"
+                            {"level": candidate.heading_level}
+                            if candidate.heading_level is not None
                             else {}
                         ),
                     },
@@ -243,6 +248,9 @@ class _PageTextBlock:
     source_block_number: int
     source_segment_number: int = 1
     block_type: str = "paragraph"
+    font_size: float = 0.0
+    heading_level: int | None = None
+    section_path: list[str] = field(default_factory=list)
     column_index: int = 1
     edge_candidate: bool = False
     edge_role: str | None = None
@@ -486,6 +494,7 @@ def _render_line_group(
         source_block_number=source_block_number,
         source_segment_number=source_segment_number,
         block_type=block_type,
+        font_size=block_font_size,
     )
 
 
@@ -652,6 +661,56 @@ def _normalized_edge_text(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
+    heading_sizes = sorted(
+        {
+            round(block.font_size, 1)
+            for layout in page_layouts
+            for block in layout.blocks
+            if block.block_type == "heading"
+            and not block.edge_candidate
+            and block.font_size > 0
+        },
+        reverse=True,
+    )
+    font_levels = {
+        size: min(index, 6) for index, size in enumerate(heading_sizes, start=1)
+    }
+    sections_by_level: dict[int, str] = {}
+    for layout in page_layouts:
+        ordered, _ = _order_page_blocks(list(layout.blocks), layout.width)
+        for block in ordered:
+            if block.edge_candidate:
+                block.block_type = "paragraph"
+                block.heading_level = None
+                block.section_path = _section_path(sections_by_level)
+                continue
+            if block.block_type == "heading":
+                level = _pdf_heading_level(block, font_levels)
+                title = " ".join(block.text.split())
+                for stale_level in [
+                    item for item in sections_by_level if item >= level
+                ]:
+                    del sections_by_level[stale_level]
+                sections_by_level[level] = title
+                block.heading_level = level
+            block.section_path = _section_path(sections_by_level)
+
+
+def _section_path(sections_by_level: dict[int, str]) -> list[str]:
+    return [sections_by_level[level] for level in sorted(sections_by_level)]
+
+
+def _pdf_heading_level(
+    block: _PageTextBlock,
+    font_levels: dict[float, int],
+) -> int:
+    numeric = re.match(r"^\s*(\d+(?:\.\d+)*)(?:[.)]|\s)", block.text)
+    if numeric is not None:
+        return min(numeric.group(1).count(".") + 1, 6)
+    return font_levels.get(round(block.font_size, 1), 1)
+
+
 def _top_level_page_warnings(page_layouts: list[_PageLayout]) -> list[str]:
     warnings: list[str] = []
     for layout in page_layouts:
@@ -666,16 +725,18 @@ def _order_page_blocks(
     blocks: list[_PageTextBlock],
     page_width: float,
 ) -> tuple[list[_PageTextBlock], int]:
-    if any(block.bbox is None for block in blocks):
-        for block in blocks:
-            block.column_index = 1
-        return sorted(
-            blocks,
-            key=lambda item: (
-                item.source_block_number,
-                item.source_segment_number,
-            ),
-        ), 1
+    geometric = [block for block in blocks if block.bbox is not None]
+    fallback = [block for block in blocks if block.bbox is None]
+    ordered, column_count = _order_geometric_page_blocks(geometric, page_width)
+    for block in sorted(fallback, key=_source_key):
+        _insert_fallback_block(ordered, block)
+    return ordered, column_count
+
+
+def _order_geometric_page_blocks(
+    blocks: list[_PageTextBlock],
+    page_width: float,
+) -> tuple[list[_PageTextBlock], int]:
     if len(blocks) < 2:
         return sorted(blocks, key=_vertical_key), 1
     wide = [
@@ -706,6 +767,47 @@ def _order_page_blocks(
         ordered.append(anchor)
     ordered.extend(_column_major(remaining))
     return ordered, len(columns)
+
+
+def _insert_fallback_block(
+    ordered: list[_PageTextBlock],
+    fallback: _PageTextBlock,
+) -> None:
+    fallback_key = _source_key(fallback)
+    preceding = [block for block in ordered if _source_key(block) < fallback_key]
+    following = [block for block in ordered if _source_key(block) > fallback_key]
+    previous = max(preceding, key=_source_key) if preceding else None
+    next_block = min(following, key=_source_key) if following else None
+
+    if previous is not None:
+        fallback.column_index = previous.column_index
+    elif next_block is not None:
+        fallback.column_index = next_block.column_index
+    else:
+        fallback.column_index = 1
+
+    if previous is None and next_block is None:
+        ordered.append(fallback)
+        return
+    if previous is None:
+        ordered.insert(ordered.index(next_block), fallback)
+        return
+    if next_block is None:
+        ordered.insert(ordered.index(previous) + 1, fallback)
+        return
+
+    previous_position = ordered.index(previous)
+    next_position = ordered.index(next_block)
+    insertion_position = (
+        previous_position + 1
+        if previous_position < next_position
+        else next_position
+    )
+    ordered.insert(insertion_position, fallback)
+
+
+def _source_key(block: _PageTextBlock) -> tuple[int, int]:
+    return block.source_block_number, block.source_segment_number
 
 
 def _column_clusters(blocks: list[_PageTextBlock]) -> list[list[_PageTextBlock]]:
@@ -810,15 +912,16 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.1",
+        parser_version="2.2",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
+            "section_hierarchy": "numeric_prefix_then_font_size_v1",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
-            "reading_order": "wide_anchors_then_column_major_v1",
+            "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",
             "geometry_failure_policy": "text_only_block_v1",
             "table_detection": "deferred_text_only",

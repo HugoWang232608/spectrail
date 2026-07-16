@@ -2,18 +2,29 @@
   "name": "ieee29148_real_pdf_selected_scope",
   "document": "tests/fixtures/ieee29148_srs_example.pdf",
   "gold": "eval/cases/ieee29148_selected/gold.json",
+  "expected_parser_name": "pdf_parser_v2",
+  "expected_parser_version": "2.2",
+  "expected_evidence_fingerprint": "bad7f09f5f440a115c481ed68f4ecf76022a1b89083a4c84b834590336db0c60",
   "scope_block_ids": ["blk_0081"],
   "model_mode": "recorded",
   "recorded_fixture": "eval/cases/ieee29148_selected/response.json",
   "chunking_mode": "off",
   "validation_policy": "strict",
-  "allowed_pipeline_statuses": ["completed_with_warnings"],
+  "allowed_pipeline_statuses": ["completed", "completed_with_warnings"],
   "allowed_zero_result_reasons": [null],
   "thresholds": {
     "source_alignment_precision_min": 1.0,
     "source_alignment_recall_min": 1.0,
     "requirement_exact_precision_min": 1.0,
     "requirement_exact_recall_min": 1.0,
-    "export_grounding_pass_rate_min": 1.0
+    "export_grounding_pass_rate_min": 1.0,
+    "page_accuracy_min": 1.0,
+    "page_evaluated_count_min": 1,
+    "bbox_iou_pass_rate_min": 1.0,
+    "bbox_evaluated_count_min": 1,
+    "structured_grounding_coverage_min": 1.0,
+    "structured_grounding_eligible_count_min": 1,
+    "text_locator_pass_rate_min": 1.0,
+    "text_locator_evaluated_count_min": 1
   }
 }

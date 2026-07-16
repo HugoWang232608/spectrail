@@ -5,6 +5,7 @@ from pathlib import Path
 import fitz
 import pytest
 
+from spectrail.chunking import SectionAwareChunker
 from spectrail.core.models import RequirementIR, SourceSpan
 from spectrail.evidence import build_quote_match_registry
 from spectrail.evidence.enricher import SourceEvidenceEnricher
@@ -46,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.1"
+    assert parsed.parser_identity.parser_version == "2.2"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -91,6 +92,26 @@ def test_text_pdf_parser_extracts_included_ieee29148_fixture():
     assert {block.page for block in parsed.blocks}
     assert all(block.metadata["page"] == block.page for block in parsed.blocks)
     assert len(parsed.text) > 1000
+    requirement_block = next(
+        block
+        for block in parsed.blocks
+        if "create a new empty document" in block.text
+    )
+    assert requirement_block.section_path == [
+        "2. Requirements",
+        "2.2.1 File Operations",
+        "2.2.1.1 Create Document",
+    ]
+    requirement_position = parsed.blocks.index(requirement_block)
+    heading_context = SectionAwareChunker._heading_context(
+        parsed.blocks,
+        requirement_position,
+    )
+    assert [block.text.strip() for block in heading_context] == [
+        "2. Requirements",
+        "2.2.1 File Operations",
+        "2.2.1.1 Create Document",
+    ]
 
 
 def test_text_pdf_parser_records_warning_for_empty_page_and_continues(tmp_path: Path):
@@ -222,6 +243,55 @@ def test_pdf_v2_uses_column_major_reading_order(tmp_path: Path):
     ]
 
 
+def test_pdf_v2_keeps_column_order_with_one_geometryless_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = tmp_path / "partial-geometry-columns.pdf"
+    document = fitz.open()
+    page = document.new_page(width=600, height=800)
+    page.insert_textbox(fitz.Rect(50, 100, 250, 140), "Left 1")
+    page.insert_textbox(fitz.Rect(50, 200, 250, 240), "Left 2")
+    page.insert_textbox(fitz.Rect(350, 100, 550, 140), "Right 1")
+    page.insert_textbox(fitz.Rect(350, 200, 550, 240), "Right 2")
+    document.save(path)
+    document.close()
+
+    original = pdf_parser_module._rotated_bbox
+    call_count = 0
+
+    def fail_first_bbox(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pdf_parser_module, "_rotated_bbox", fail_first_bbox)
+    parsed = PdfParserV2().parse(path)
+
+    assert [block.text for block in parsed.blocks] == [
+        "Left 1",
+        "Left 2",
+        "Right 1",
+        "Right 2",
+    ]
+    assert all(block.metadata["layout_column_count"] == 2 for block in parsed.blocks)
+    assert parsed.blocks[0].metadata["page_region_available"] is False
+    assert all(
+        block.metadata["page_region_available"] is True
+        for block in parsed.blocks[1:]
+    )
+    assert (
+        "PDF_READING_ORDER_PARTIAL_GEOMETRY_FALLBACK: page=1"
+        in parsed.warnings
+    )
+    assert (
+        "PDF_MULTI_COLUMN_ORDER_BEST_EFFORT: page=1, columns=2"
+        in parsed.warnings
+    )
+
+
 def test_pdf_v2_preserves_and_marks_repeated_headers_and_footers(tmp_path: Path):
     path = tmp_path / "headers.pdf"
     document = fitz.open()
@@ -258,6 +328,11 @@ def test_pdf_v2_preserves_and_marks_repeated_headers_and_footers(tmp_path: Path)
     )
     assert all(
         block.metadata["repeated_edge_candidate"]
+        for block in parsed.blocks
+        if block.text in {"Repeated Header", "Repeated Footer"}
+    )
+    assert all(
+        block.type == "paragraph"
         for block in parsed.blocks
         if block.text in {"Repeated Header", "Repeated Footer"}
     )
@@ -466,6 +541,40 @@ def test_pdf_v2_splits_heading_and_paragraph_inside_raw_block():
         ("paragraph", "The system shall respond."),
     ]
     assert [block.source_segment_number for block in blocks] == [1, 2]
+
+
+def test_pdf_v2_builds_numeric_heading_hierarchy_and_replaces_siblings(
+    tmp_path: Path,
+):
+    path = tmp_path / "sections.pdf"
+    document = fitz.open()
+    page = document.new_page(width=500, height=500)
+    page.insert_text((50, 50), "1 Requirements", fontsize=18, fontname="hebo")
+    page.insert_text((50, 100), "1.1 Interface", fontsize=15, fontname="hebo")
+    page.insert_text((50, 130), "The system shall expose an API.")
+    page.insert_text((50, 190), "1.2 Behavior", fontsize=15, fontname="hebo")
+    page.insert_text((50, 220), "The system shall validate input.")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert by_text["1 Requirements"].type == "heading"
+    assert by_text["1 Requirements"].metadata["level"] == 1
+    assert by_text["1.1 Interface"].metadata["level"] == 2
+    assert by_text["The system shall expose an API."].section_path == [
+        "1 Requirements",
+        "1.1 Interface",
+    ]
+    assert by_text["1.2 Behavior"].section_path == [
+        "1 Requirements",
+        "1.2 Behavior",
+    ]
+    assert by_text["The system shall validate input."].section_path == [
+        "1 Requirements",
+        "1.2 Behavior",
+    ]
 
 
 def test_pdf_v2_quote_can_span_multiple_font_spans(tmp_path: Path):

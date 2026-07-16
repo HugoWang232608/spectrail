@@ -45,6 +45,7 @@ BOLD_HEADING_BODY_GAP_POINTS = 36.0
 BOLD_HEADING_BODY_GAP_EM_RATIO = 3.0
 CROSS_PAGE_HEADING_BOTTOM_RATIO = 0.80
 CROSS_PAGE_BODY_TOP_RATIO = 0.20
+CROSS_PAGE_HORIZONTAL_OVERLAP_RATIO = 0.50
 NORMATIVE_SENTENCE_RE = re.compile(r"\b(?:shall|must|should|will)\b", re.IGNORECASE)
 NUMBERED_HEADING_RE = re.compile(r"^\s*\d+(?:\.\d+)*(?:[.)]|\s)")
 BOLD_LABEL_RE = re.compile(
@@ -802,11 +803,34 @@ def _is_cross_page_adjacent_heading_body(
         and not body.bold_heading_candidate
         and heading.bbox is not None
         and body.bbox is not None
-        and heading.column_index == body.column_index
+        and _cross_page_horizontal_overlap_ratio(
+            heading.bbox,
+            heading_layout.width,
+            body.bbox,
+            body_layout.width,
+        )
+        >= CROSS_PAGE_HORIZONTAL_OVERLAP_RATIO
         and heading.bbox.y1
         >= heading_layout.height * CROSS_PAGE_HEADING_BOTTOM_RATIO
         and body.bbox.y0 <= body_layout.height * CROSS_PAGE_BODY_TOP_RATIO
     )
+
+
+def _cross_page_horizontal_overlap_ratio(
+    heading: BoundingBox,
+    heading_page_width: float,
+    body: BoundingBox,
+    body_page_width: float,
+) -> float:
+    if heading_page_width <= 0 or body_page_width <= 0:
+        return 0.0
+    heading_x0 = heading.x0 / heading_page_width
+    heading_x1 = heading.x1 / heading_page_width
+    body_x0 = body.x0 / body_page_width
+    body_x1 = body.x1 / body_page_width
+    overlap = max(0.0, min(heading_x1, body_x1) - max(heading_x0, body_x0))
+    minimum_width = min(heading_x1 - heading_x0, body_x1 - body_x0)
+    return 0.0 if minimum_width <= 0 else overlap / minimum_width
 
 
 def _section_path(sections_by_level: dict[int, str]) -> list[str]:
@@ -1024,15 +1048,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.5",
+        parser_version="2.6",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v4",
-            "bold_heading_detection": "adjacent_body_with_page_boundary_v3",
+            "section_hierarchy": "numeric_prefix_then_font_size_v5",
+            "bold_heading_detection": "adjacent_body_with_normalized_page_boundary_v4",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from json import JSONDecodeError
 from pathlib import Path
+import shutil
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
@@ -49,6 +50,12 @@ class EvaluationRunner:
         if not case_files:
             raise ValueError(f"no evaluation cases found: {path}")
         output = ensure_dir(output_dir)
+        for report_name in ("evaluation_report.json", "evaluation_report.md"):
+            (output / report_name).unlink(missing_ok=True)
+        cases_output = output / "cases"
+        if cases_output.exists():
+            shutil.rmtree(cases_output)
+        ensure_dir(cases_output)
         reports = []
         for case_file in case_files:
             case_output = output / "cases" / case_file.parent.name
@@ -85,9 +92,22 @@ class EvaluationRunner:
             case = EvaluationCase.model_validate(case_payload)
             case_name = case.name
             document = _resolve_path(case.document, case_file.parent)
+            if not document.is_file():
+                raise EvaluationCaseConfigurationError(
+                    f"evaluation document not found: {document}",
+                    case_name=case.name,
+                )
             gold_path = _resolve_path(case.gold, case_file.parent)
             gold = GoldPackage.model_validate(read_json(gold_path))
-        except (OSError, JSONDecodeError, TypeError, ValidationError) as exc:
+        except EvaluationCaseConfigurationError:
+            raise
+        except (
+            OSError,
+            UnicodeError,
+            JSONDecodeError,
+            TypeError,
+            ValidationError,
+        ) as exc:
             raise EvaluationCaseConfigurationError(
                 str(exc),
                 case_name=case_name,
@@ -135,6 +155,11 @@ class EvaluationRunner:
                 config=config,
                 parsed_document=parsed_document,
             )
+        except FileNotFoundError as exc:
+            pipeline_exception = EvaluationCaseConfigurationError(
+                f"evaluation document not found: {document}",
+                case_name=case.name,
+            )
         except (
             PipelineError,
             ChunkPlanningError,
@@ -146,23 +171,18 @@ class EvaluationRunner:
             pipeline_exception = exc
 
         manifest_path = pipeline_output / "run_manifest.json"
-        manifest = (
-            read_json(manifest_path)
-            if manifest_path.exists()
-            else {
-                "status": "failed",
-                "error": str(pipeline_exception) if pipeline_exception else "pipeline failed",
-                "error_code": (
-                    getattr(pipeline_exception, "code", type(pipeline_exception).__name__)
-                    if pipeline_exception
-                    else "PIPELINE_FAILED"
-                ),
-                "counts": {},
-                "execution": {},
-            }
-        )
+        if pipeline_exception is not None:
+            manifest = _failed_manifest(pipeline_exception)
+        elif manifest_path.exists():
+            manifest = read_json(manifest_path)
+        else:
+            manifest = _failed_manifest(None)
         export_path = pipeline_output / "exports" / "reqir.json"
-        if manifest.get("status") in {"completed", "completed_with_warnings"} and export_path.exists():
+        if (
+            pipeline_exception is None
+            and manifest.get("status") in {"completed", "completed_with_warnings"}
+            and export_path.exists()
+        ):
             candidates = RequirementList.validate_python(read_reqir_items(export_path))
         else:
             candidates = []
@@ -172,7 +192,7 @@ class EvaluationRunner:
         evidence_index_path = pipeline_output / "parsed" / "evidence_index.json"
         evidence_index = (
             EvidenceIndex.model_validate(read_json(evidence_index_path))
-            if evidence_index_path.exists()
+            if pipeline_exception is None and evidence_index_path.exists()
             else None
         )
         if evidence_index is not None:
@@ -373,6 +393,20 @@ def _validate_fixture_identity(
                 )
     if mismatches:
         raise EvaluationFixtureStaleError("; ".join(mismatches))
+
+
+def _failed_manifest(error: Exception | None) -> dict[str, Any]:
+    return {
+        "status": "failed",
+        "error": str(error) if error is not None else "pipeline failed",
+        "error_code": (
+            getattr(error, "code", type(error).__name__)
+            if error is not None
+            else "PIPELINE_FAILED"
+        ),
+        "counts": {},
+        "execution": {},
+    }
 
 
 def _configuration_failure_report(

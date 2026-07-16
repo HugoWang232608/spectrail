@@ -465,6 +465,94 @@ def test_evaluation_fixture_identity_mismatch_is_reported_and_suite_continues(
     assert "parser_name" in markdown
 
 
+def test_reused_output_does_not_mask_current_preflight_failure(tmp_path: Path):
+    case_payload = read_json("eval/cases/ieee29148_selected/case.json")
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps(case_payload), encoding="utf-8")
+    output = tmp_path / "reused-output"
+
+    assert main(["evaluate", str(case), "--output", str(output)]) == 0
+    first = read_json(output / "evaluation_report.json")["cases"][0]
+    assert first["pipeline_status"] in {"completed", "completed_with_warnings"}
+    assert first["exported_requirements"] == 1
+
+    case_payload["expected_evidence_fingerprint"] = "0" * 64
+    case.write_text(json.dumps(case_payload), encoding="utf-8")
+
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
+    second = read_json(output / "evaluation_report.json")["cases"][0]
+    assert second["pipeline_status"] == "failed"
+    assert second["error_code"] == "EVALUATION_FIXTURE_STALE"
+    assert second["exported_requirements"] == 0
+    assert second["validated_candidates_in_scope"] == 0
+    assert second["evidence_index_available"] is False
+    assert not list(output.glob("cases/*/pipeline/exports/reqir.json"))
+
+
+def test_missing_document_does_not_stop_evaluation_suite(tmp_path: Path):
+    cases = tmp_path / "cases"
+    missing = cases / "a_missing_document"
+    passing = cases / "b_passing"
+    missing.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    (missing / "case.json").write_text(
+        json.dumps(
+            {
+                "name": "missing-markdown-document",
+                "document": "does-not-exist.md",
+                "gold": "eval/cases/sample_srs/gold.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        json.dumps(
+            {
+                "name": "passing-after-missing-document",
+                "document": "docs/sample_srs.md",
+                "gold": "eval/cases/sample_srs/gold.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "missing-document-suite"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    assert suite["cases"][0]["error_code"] == "EVALUATION_CASE_INVALID"
+    assert "evaluation document not found" in suite["cases"][0]["error"]
+    assert suite["cases"][1]["passed"] is True
+
+
+def test_invalid_utf8_case_does_not_stop_evaluation_suite(tmp_path: Path):
+    cases = tmp_path / "cases"
+    invalid = cases / "a_invalid_utf8"
+    passing = cases / "b_passing"
+    invalid.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    (invalid / "case.json").write_bytes(b"\xff\xfe")
+    (passing / "case.json").write_text(
+        json.dumps(
+            {
+                "name": "passing-after-invalid-utf8",
+                "document": "docs/sample_srs.md",
+                "gold": "eval/cases/sample_srs/gold.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "invalid-utf8-suite"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    assert suite["cases"][0]["error_code"] == "EVALUATION_CASE_INVALID"
+    assert suite["cases"][1]["passed"] is True
+
+
 def test_recorded_fixture_fingerprint_is_bound_to_evaluation_case(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -32,6 +32,15 @@ class EvaluationFixtureStaleError(Exception):
 class EvaluationCaseConfigurationError(Exception):
     code = "EVALUATION_CASE_INVALID"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        case_name: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.case_name = case_name
+
 
 class EvaluationRunner:
     def run(self, case_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
@@ -65,32 +74,53 @@ class EvaluationRunner:
         return suite
 
     def _run_case(self, case_file: Path, output: Path) -> dict[str, Any]:
+        case_name: str | None = None
         try:
-            case = EvaluationCase.model_validate(read_json(case_file))
+            case_payload = read_json(case_file)
+            if isinstance(case_payload, dict) and isinstance(
+                case_payload.get("name"),
+                str,
+            ):
+                case_name = case_payload["name"]
+            case = EvaluationCase.model_validate(case_payload)
+            case_name = case.name
             document = _resolve_path(case.document, case_file.parent)
             gold_path = _resolve_path(case.gold, case_file.parent)
             gold = GoldPackage.model_validate(read_json(gold_path))
         except (OSError, JSONDecodeError, TypeError, ValidationError) as exc:
-            raise EvaluationCaseConfigurationError(str(exc)) from exc
+            raise EvaluationCaseConfigurationError(
+                str(exc),
+                case_name=case_name,
+            ) from exc
         pipeline_output = output / "pipeline"
         recorded_fixture = (
             _resolve_path(case.recorded_fixture, case_file.parent)
             if case.recorded_fixture
             else None
         )
-        config = PipelineConfig(
-            model_mode=case.model_mode,
-            model_name=case.model_name,
-            recorded_fixture=recorded_fixture,
-            request_profile=(case.request_profile.to_runtime() if case.request_profile else None),
-            chunking=ChunkingConfig(
-                mode=case.chunking_mode,
-                max_rendered_prompt_chars=case.max_rendered_prompt_chars,
-                overlap_blocks=case.overlap_blocks,
-            ),
-            validation_policy=case.validation_policy,
-            evidence_policy=case.evidence_policy,
-        )
+        try:
+            config = PipelineConfig(
+                model_mode=case.model_mode,
+                model_name=case.model_name,
+                recorded_fixture=recorded_fixture,
+                request_profile=(
+                    case.request_profile.to_runtime()
+                    if case.request_profile
+                    else None
+                ),
+                chunking=ChunkingConfig(
+                    mode=case.chunking_mode,
+                    max_rendered_prompt_chars=case.max_rendered_prompt_chars,
+                    overlap_blocks=case.overlap_blocks,
+                ),
+                validation_policy=case.validation_policy,
+                evidence_policy=case.evidence_policy,
+            )
+        except (TypeError, ValueError) as exc:
+            raise EvaluationCaseConfigurationError(
+                str(exc),
+                case_name=case.name,
+            ) from exc
         pipeline_exception: Exception | None = None
         try:
             parsed_document = _preflight_case(
@@ -191,7 +221,13 @@ class EvaluationRunner:
             ),
             "evidence_index_available": evidence_index is not None,
         }
-        threshold_results = _threshold_results(metrics, case.thresholds)
+        try:
+            threshold_results = _threshold_results(metrics, case.thresholds)
+        except ValueError as exc:
+            raise EvaluationCaseConfigurationError(
+                str(exc),
+                case_name=case.name,
+            ) from exc
         outcome_pass = (
             manifest.get("status") in case.allowed_pipeline_statuses
             and manifest.get("zero_result_reason") in case.allowed_zero_result_reasons
@@ -260,7 +296,8 @@ def _preflight_case(
     missing_scope_ids = sorted(scope - parsed_block_ids)
     if missing_scope_ids:
         raise EvaluationCaseConfigurationError(
-            "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids)
+            "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids),
+            case_name=case.name,
         )
 
     scoped_gold_count = sum(
@@ -270,7 +307,8 @@ def _preflight_case(
     if scoped_gold_count == 0 and not case.allow_empty_gold_scope:
         raise EvaluationCaseConfigurationError(
             "selected scope contains no gold requirements; "
-            "set allow_empty_gold_scope=true only for intentional empty-scope cases"
+            "set allow_empty_gold_scope=true only for intentional empty-scope cases",
+            case_name=case.name,
         )
     return parsed
 
@@ -361,7 +399,7 @@ def _configuration_failure_report(
         "evidence_index_available": False,
     }
     report = {
-        "name": case_file.parent.name,
+        "name": error.case_name or case_file.parent.name,
         "passed": False,
         "pipeline_status": "failed",
         "error_code": error.code,

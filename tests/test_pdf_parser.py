@@ -47,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.4"
+    assert parsed.parser_identity.parser_version == "2.5"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -616,6 +616,34 @@ def test_pdf_v2_bold_labels_and_requirements_do_not_create_sections(
     assert by_text["The service uses a layered architecture."].section_path == [
         "Architecture"
     ]
+
+
+def test_pdf_v2_bold_heading_can_be_confirmed_by_next_page_body(
+    tmp_path: Path,
+):
+    path = tmp_path / "cross-page-heading.pdf"
+    document = fitz.open()
+    page_one = document.new_page(width=500, height=800)
+    page_one.insert_text(
+        (50, 760),
+        "System Interfaces",
+        fontname="hebo",
+    )
+    page_two = document.new_page(width=500, height=800)
+    page_two.insert_text(
+        (50, 50),
+        "Interfaces are exposed through authenticated endpoints.",
+    )
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert by_text["System Interfaces"].type == "heading"
+    assert by_text[
+        "Interfaces are exposed through authenticated endpoints."
+    ].section_path == ["System Interfaces"]
 
 
 def test_pdf_v2_quote_can_span_multiple_font_spans(tmp_path: Path):

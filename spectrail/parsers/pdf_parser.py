@@ -43,6 +43,8 @@ BOLD_HEADING_MAX_CHARS = 80
 BOLD_HEADING_MAX_WORDS = 12
 BOLD_HEADING_BODY_GAP_POINTS = 36.0
 BOLD_HEADING_BODY_GAP_EM_RATIO = 3.0
+CROSS_PAGE_HEADING_BOTTOM_RATIO = 0.80
+CROSS_PAGE_BODY_TOP_RATIO = 0.20
 NORMATIVE_SENTENCE_RE = re.compile(r"\b(?:shall|must|should|will)\b", re.IGNORECASE)
 NUMBERED_HEADING_RE = re.compile(r"^\s*\d+(?:\.\d+)*(?:[.)]|\s)")
 BOLD_LABEL_RE = re.compile(
@@ -726,31 +728,46 @@ def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
 
 
 def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
+    reading_sequence: list[tuple[_PageLayout, _PageTextBlock]] = []
     for layout in page_layouts:
         ordered, _ = _order_page_blocks(list(layout.blocks), layout.width)
-        for index, block in enumerate(ordered):
-            if (
-                block.edge_candidate
-                or not block.bold_heading_candidate
-                or not _bold_candidate_looks_like_heading(block.text)
-            ):
-                continue
-            if NUMBERED_HEADING_RE.match(block.text):
-                block.block_type = "heading"
-                continue
-            following = next(
-                (
-                    candidate
-                    for candidate in ordered[index + 1 :]
-                    if not candidate.edge_candidate
-                ),
-                None,
-            )
-            if following is not None and _is_adjacent_heading_body(
+        reading_sequence.extend((layout, block) for block in ordered)
+
+    for index, (layout, block) in enumerate(reading_sequence):
+        if (
+            block.edge_candidate
+            or not block.bold_heading_candidate
+            or not _bold_candidate_looks_like_heading(block.text)
+        ):
+            continue
+        if NUMBERED_HEADING_RE.match(block.text):
+            block.block_type = "heading"
+            continue
+        following_entry = next(
+            (
+                entry
+                for entry in reading_sequence[index + 1 :]
+                if not entry[1].edge_candidate
+            ),
+            None,
+        )
+        if following_entry is None:
+            continue
+        following_layout, following = following_entry
+        if following_layout is layout:
+            if _is_adjacent_heading_body(
                 block,
                 following,
             ):
                 block.block_type = "heading"
+            continue
+        if _is_cross_page_adjacent_heading_body(
+            layout,
+            block,
+            following_layout,
+            following,
+        ):
+            block.block_type = "heading"
 
 
 def _is_adjacent_heading_body(
@@ -771,6 +788,25 @@ def _is_adjacent_heading_body(
         max(heading.font_size, following.font_size) * BOLD_HEADING_BODY_GAP_EM_RATIO,
     )
     return -1.0 <= vertical_gap <= maximum_gap
+
+
+def _is_cross_page_adjacent_heading_body(
+    heading_layout: _PageLayout,
+    heading: _PageTextBlock,
+    body_layout: _PageLayout,
+    body: _PageTextBlock,
+) -> bool:
+    return (
+        body_layout.page == heading_layout.page + 1
+        and body.block_type == "paragraph"
+        and not body.bold_heading_candidate
+        and heading.bbox is not None
+        and body.bbox is not None
+        and heading.column_index == body.column_index
+        and heading.bbox.y1
+        >= heading_layout.height * CROSS_PAGE_HEADING_BOTTOM_RATIO
+        and body.bbox.y0 <= body_layout.height * CROSS_PAGE_BODY_TOP_RATIO
+    )
 
 
 def _section_path(sections_by_level: dict[int, str]) -> list[str]:
@@ -988,15 +1024,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.4",
+        parser_version="2.5",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v3",
-            "bold_heading_detection": "adjacent_same_column_body_v2",
+            "section_hierarchy": "numeric_prefix_then_font_size_v4",
+            "bold_heading_detection": "adjacent_body_with_page_boundary_v3",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

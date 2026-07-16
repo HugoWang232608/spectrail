@@ -87,8 +87,8 @@ class EvaluationCase(BaseModel):
     request_profile: EvaluationRequestProfile | None = None
     recorded_fixture: str | None = None
     chunking_mode: Literal["off", "auto", "force"] = "auto"
-    max_rendered_prompt_chars: int = 16000
-    overlap_blocks: int = 1
+    max_rendered_prompt_chars: int = Field(default=16000, ge=1000)
+    overlap_blocks: int = Field(default=1, ge=0, le=5)
     validation_policy: Literal["strict", "quarantine"] = "strict"
     evidence_policy: Literal[
         "quote_only", "structured_if_available", "structured_required"
@@ -109,6 +109,27 @@ class EvaluationCase(BaseModel):
         ):
             raise ValueError(
                 "expected_evidence_fingerprint must be a lowercase SHA-256"
+            )
+        return value
+
+    @field_validator("thresholds")
+    @classmethod
+    def validate_threshold_names(
+        cls,
+        value: dict[str, float],
+    ) -> dict[str, float]:
+        invalid = sorted(
+            name
+            for name in value
+            if not (
+                (name.endswith("_min") and len(name) > len("_min"))
+                or (name.endswith("_max") and len(name) > len("_max"))
+            )
+        )
+        if invalid:
+            raise ValueError(
+                "threshold names must end in _min or _max: "
+                + ", ".join(invalid)
             )
         return value
 

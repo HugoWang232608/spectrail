@@ -162,9 +162,82 @@ def test_invalid_case_schema_does_not_stop_evaluation_suite(tmp_path: Path):
     suite = read_json(output / "evaluation_report.json")
     assert suite["case_count"] == 2
     assert suite["case_passed"] == 1
-    assert suite["cases"][0]["name"] == "a_invalid_schema"
+    assert suite["cases"][0]["name"] == "missing-required-paths"
     assert suite["cases"][0]["error_code"] == "EVALUATION_CASE_INVALID"
     assert suite["cases"][1]["passed"] is True
+
+
+def test_invalid_runtime_options_do_not_stop_evaluation_suite(tmp_path: Path):
+    cases = tmp_path / "cases"
+    invalid_chunking = cases / "a_invalid_chunking"
+    invalid_threshold = cases / "b_invalid_threshold"
+    passing = cases / "c_passing"
+    invalid_chunking.mkdir(parents=True)
+    invalid_threshold.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    common = {
+        "document": "docs/sample_srs.md",
+        "gold": "eval/cases/sample_srs/gold.json",
+    }
+    (invalid_chunking / "case.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "name": "invalid-chunking-config",
+                "max_rendered_prompt_chars": 100,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (invalid_threshold / "case.json").write_text(
+        json.dumps(
+            {
+                **common,
+                "name": "invalid-threshold-config",
+                "thresholds": {"page_accuracy": 1.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        json.dumps({**common, "name": "passing-after-invalid-options"}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "invalid-options-suite"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 3
+    assert suite["case_passed"] == 1
+    assert [item["error_code"] for item in suite["cases"][:2]] == [
+        "EVALUATION_CASE_INVALID",
+        "EVALUATION_CASE_INVALID",
+    ]
+    assert suite["cases"][0]["name"] == "invalid-chunking-config"
+    assert suite["cases"][1]["name"] == "invalid-threshold-config"
+    assert suite["cases"][2]["passed"] is True
+
+
+def test_invalid_gold_schema_report_preserves_case_name(tmp_path: Path):
+    gold = tmp_path / "invalid-gold.json"
+    gold.write_text('{"items":"not-a-list"}', encoding="utf-8")
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "name": "configured-case-name",
+                "document": "docs/sample_srs.md",
+                "gold": gold.as_posix(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "invalid-gold-report"
+
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["name"] == "configured-case-name"
+    assert report["error_code"] == "EVALUATION_CASE_INVALID"
 
 
 def test_selected_scope_allows_intentional_empty_gold(tmp_path: Path):

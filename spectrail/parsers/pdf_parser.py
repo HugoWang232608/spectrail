@@ -41,9 +41,13 @@ SPAN_GAP_EM_RATIO = 0.12
 MIN_SPAN_GAP = 0.75
 BOLD_HEADING_MAX_CHARS = 80
 BOLD_HEADING_MAX_WORDS = 12
+BOLD_HEADING_BODY_GAP_POINTS = 36.0
+BOLD_HEADING_BODY_GAP_EM_RATIO = 3.0
 NORMATIVE_SENTENCE_RE = re.compile(r"\b(?:shall|must|should|will)\b", re.IGNORECASE)
+NUMBERED_HEADING_RE = re.compile(r"^\s*\d+(?:\.\d+)*(?:[.)]|\s)")
 BOLD_LABEL_RE = re.compile(
-    r"^(?:note|warning|caution|input|output|example|tip)\s*:?$",
+    r"^(?:note|warning|caution|input|output|example|tip|status|owner|"
+    r"rationale|priority|dependencies)\s*:?$",
     re.IGNORECASE,
 )
 
@@ -731,14 +735,42 @@ def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
                 or not _bold_candidate_looks_like_heading(block.text)
             ):
                 continue
-            has_following_body = any(
-                not following.edge_candidate
-                and following.block_type == "paragraph"
-                and not following.bold_heading_candidate
-                for following in ordered[index + 1 :]
-            )
-            if has_following_body:
+            if NUMBERED_HEADING_RE.match(block.text):
                 block.block_type = "heading"
+                continue
+            following = next(
+                (
+                    candidate
+                    for candidate in ordered[index + 1 :]
+                    if not candidate.edge_candidate
+                ),
+                None,
+            )
+            if following is not None and _is_adjacent_heading_body(
+                block,
+                following,
+            ):
+                block.block_type = "heading"
+
+
+def _is_adjacent_heading_body(
+    heading: _PageTextBlock,
+    following: _PageTextBlock,
+) -> bool:
+    if (
+        following.block_type != "paragraph"
+        or following.bold_heading_candidate
+        or heading.bbox is None
+        or following.bbox is None
+        or heading.column_index != following.column_index
+    ):
+        return False
+    vertical_gap = following.bbox.y0 - heading.bbox.y1
+    maximum_gap = max(
+        BOLD_HEADING_BODY_GAP_POINTS,
+        max(heading.font_size, following.font_size) * BOLD_HEADING_BODY_GAP_EM_RATIO,
+    )
+    return -1.0 <= vertical_gap <= maximum_gap
 
 
 def _section_path(sections_by_level: dict[int, str]) -> list[str]:
@@ -956,15 +988,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.3",
+        parser_version="2.4",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v2",
-            "bold_heading_detection": "short_non_normative_with_following_body_v1",
+            "section_hierarchy": "numeric_prefix_then_font_size_v3",
+            "bold_heading_detection": "adjacent_same_column_body_v2",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

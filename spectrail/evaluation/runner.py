@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from spectrail.core.io import ensure_dir, read_json, read_reqir_items, write_json
 from spectrail.core.models import RequirementIR
@@ -28,6 +29,10 @@ class EvaluationFixtureStaleError(Exception):
     code = "EVALUATION_FIXTURE_STALE"
 
 
+class EvaluationCaseConfigurationError(Exception):
+    code = "EVALUATION_CASE_INVALID"
+
+
 class EvaluationRunner:
     def run(self, case_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
         path = Path(case_path)
@@ -35,7 +40,18 @@ class EvaluationRunner:
         if not case_files:
             raise ValueError(f"no evaluation cases found: {path}")
         output = ensure_dir(output_dir)
-        reports = [self._run_case(case_file, output / "cases" / case_file.parent.name) for case_file in case_files]
+        reports = []
+        for case_file in case_files:
+            case_output = output / "cases" / case_file.parent.name
+            try:
+                report = self._run_case(case_file, case_output)
+            except EvaluationCaseConfigurationError as exc:
+                report = _configuration_failure_report(
+                    case_file,
+                    case_output,
+                    exc,
+                )
+            reports.append(report)
         passed = sum(report["passed"] for report in reports)
         suite = {
             "case_count": len(reports),
@@ -49,10 +65,13 @@ class EvaluationRunner:
         return suite
 
     def _run_case(self, case_file: Path, output: Path) -> dict[str, Any]:
-        case = EvaluationCase.model_validate(read_json(case_file))
-        document = _resolve_path(case.document, case_file.parent)
-        gold_path = _resolve_path(case.gold, case_file.parent)
-        gold = GoldPackage.model_validate(read_json(gold_path))
+        try:
+            case = EvaluationCase.model_validate(read_json(case_file))
+            document = _resolve_path(case.document, case_file.parent)
+            gold_path = _resolve_path(case.gold, case_file.parent)
+            gold = GoldPackage.model_validate(read_json(gold_path))
+        except (OSError, JSONDecodeError, TypeError, ValidationError) as exc:
+            raise EvaluationCaseConfigurationError(str(exc)) from exc
         pipeline_output = output / "pipeline"
         recorded_fixture = (
             _resolve_path(case.recorded_fixture, case_file.parent)
@@ -92,6 +111,7 @@ class EvaluationRunner:
             DocumentParseError,
             ModelError,
             EvaluationFixtureStaleError,
+            EvaluationCaseConfigurationError,
         ) as exc:
             pipeline_exception = exc
 
@@ -239,7 +259,7 @@ def _preflight_case(
     parsed_block_ids = {block.block_id for block in parsed.blocks}
     missing_scope_ids = sorted(scope - parsed_block_ids)
     if missing_scope_ids:
-        raise ValueError(
+        raise EvaluationCaseConfigurationError(
             "scope_block_ids not found in parsed blocks: " + ", ".join(missing_scope_ids)
         )
 
@@ -248,7 +268,7 @@ def _preflight_case(
         for requirement in gold.items
     )
     if scoped_gold_count == 0 and not case.allow_empty_gold_scope:
-        raise ValueError(
+        raise EvaluationCaseConfigurationError(
             "selected scope contains no gold requirements; "
             "set allow_empty_gold_scope=true only for intentional empty-scope cases"
         )
@@ -315,6 +335,54 @@ def _validate_fixture_identity(
                 )
     if mismatches:
         raise EvaluationFixtureStaleError("; ".join(mismatches))
+
+
+def _configuration_failure_report(
+    case_file: Path,
+    output: Path,
+    error: EvaluationCaseConfigurationError,
+) -> dict[str, Any]:
+    matches = match_requirements([], [])
+    metrics = {
+        **build_evaluation_metrics(
+            gold_count=0,
+            candidate_count=0,
+            matches=matches,
+            aggregated_count=0,
+            validated_count=0,
+            exported_count=0,
+            grounded_exported_count=0,
+        ),
+        **build_locator_metrics(
+            candidates=[],
+            gold=[],
+            matches=matches,
+        ),
+        "evidence_index_available": False,
+    }
+    report = {
+        "name": case_file.parent.name,
+        "passed": False,
+        "pipeline_status": "failed",
+        "error_code": error.code,
+        "error": str(error),
+        "warning_codes": [],
+        "zero_result_reason": None,
+        "annotation_scope": "unavailable",
+        "scope_block_ids": [],
+        "full_gold_requirements": 0,
+        **metrics,
+        "threshold_results": {},
+        "source_alignment_matches": [],
+        "requirement_exact_matches": [],
+    }
+    ensure_dir(output)
+    write_json(output / "case_report.json", report)
+    (output / "case_report.md").write_text(
+        _case_markdown(report),
+        encoding="utf-8",
+    )
+    return report
 
 
 def _threshold_results(metrics: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any]:

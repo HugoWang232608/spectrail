@@ -5,26 +5,15 @@ on:
   pull_request:
 
 jobs:
-  test:
+  evaluation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: "frontend/package-lock.json"
-      - name: Install
-        run: python -m pip install -c constraints-ci.txt -e ".[dev]"
-      - name: Run deterministic release smoke pipelines
-        run: |
-          python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo
-          python -m spectrail extract eval/cases/sample_srs_long/document.md --model-mode mock --chunking force --max-rendered-prompt-chars 4000 --overlap-blocks 1 --output outputs/demo-chunked
-          python -m spectrail extract docs/sample_srs.md --model-mode recorded --recorded-fixture fixtures/recorded/sample_srs_reqir_response_full.json --output outputs/demo-recorded-full
-          python -m spectrail extract docs/sample_srs.md --model-mode recorded --recorded-fixture fixtures/recorded/sample_srs_live_deepseek_response.json --output outputs/demo-sanitized-live
+      - name: Install evaluation dependencies
+        run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev]"
       - name: Run evaluation quality gate
         run: python -m spectrail evaluate eval/cases --output outputs/evaluation
       - name: Upload evaluation reports
@@ -34,12 +23,38 @@ jobs:
           name: evaluation-reports
           path: outputs/evaluation
           if-no-files-found: warn
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev]"
+      - name: Run deterministic release smoke pipelines
+        run: |
+          python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo
+          python -m spectrail extract eval/cases/sample_srs_long/document.md --model-mode mock --chunking force --max-rendered-prompt-chars 4000 --overlap-blocks 1 --output outputs/demo-chunked
+          python -m spectrail extract docs/sample_srs.md --model-mode recorded --recorded-fixture fixtures/recorded/sample_srs_reqir_response_full.json --output outputs/demo-recorded-full
+          python -m spectrail extract docs/sample_srs.md --model-mode recorded --recorded-fixture fixtures/recorded/sample_srs_live_deepseek_response.json --output outputs/demo-sanitized-live
       - name: Re-run validation
         run: python -m spectrail validate outputs/demo/extracted/reqir.raw.json --blocks outputs/demo/parsed/blocks.json --output outputs/demo/extracted/validation_report.json
       - name: Run tests
         run: pytest
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
       - name: Install frontend
         working-directory: frontend
         run: npm ci

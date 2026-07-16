@@ -47,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.3"
+    assert parsed.parser_identity.parser_version == "2.4"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -593,6 +593,9 @@ def test_pdf_v2_bold_labels_and_requirements_do_not_create_sections(
         fontname="hebo",
     )
     page.insert_text((50, 250), "Audit records remain available to reviewers.")
+    page.insert_text((50, 300), "Status", fontname="hebo")
+    page.insert_text((50, 340), "Architecture", fontname="hebo")
+    page.insert_text((50, 370), "The service uses a layered architecture.")
     document.save(path)
     document.close()
 
@@ -602,11 +605,16 @@ def test_pdf_v2_bold_labels_and_requirements_do_not_create_sections(
     assert by_text["System Requirements"].type == "heading"
     assert by_text["Warning:"].type == "paragraph"
     assert by_text["The system shall preserve audit records."].type == "paragraph"
+    assert by_text["Status"].type == "paragraph"
+    assert by_text["Architecture"].type == "heading"
     assert by_text["Validate configuration before deployment."].section_path == [
         "System Requirements"
     ]
     assert by_text["Audit records remain available to reviewers."].section_path == [
         "System Requirements"
+    ]
+    assert by_text["The service uses a layered architecture."].section_path == [
+        "Architecture"
     ]
 
 

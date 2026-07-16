@@ -76,9 +76,12 @@ def test_selected_scope_rejects_unknown_parsed_block_before_pipeline(
 
     monkeypatch.setattr("spectrail.evaluation.runner.PipelineRunner.extract", fail_if_pipeline_called)
 
-    with pytest.raises(SystemExit, match="scope_block_ids not found"):
-        main(["evaluate", str(case), "--output", str(tmp_path / "invalid-scope-report")])
+    output = tmp_path / "invalid-scope-report"
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
     assert pipeline_called is False
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["error_code"] == "EVALUATION_CASE_INVALID"
+    assert "scope_block_ids not found" in report["error"]
 
 
 def test_selected_scope_rejects_empty_gold_before_pipeline(
@@ -100,9 +103,68 @@ def test_selected_scope_rejects_empty_gold_before_pipeline(
 
     monkeypatch.setattr("spectrail.evaluation.runner.PipelineRunner.extract", fail_if_pipeline_called)
 
-    with pytest.raises(SystemExit, match="selected scope contains no gold requirements"):
-        main(["evaluate", str(case), "--output", str(tmp_path / "empty-scope-report")])
+    output = tmp_path / "empty-scope-report"
+    assert main(["evaluate", str(case), "--output", str(output)]) == 1
     assert pipeline_called is False
+    report = read_json(output / "evaluation_report.json")["cases"][0]
+    assert report["error_code"] == "EVALUATION_CASE_INVALID"
+    assert "selected scope contains no gold requirements" in report["error"]
+
+
+def test_invalid_scope_case_does_not_stop_evaluation_suite(tmp_path: Path):
+    cases = tmp_path / "cases"
+    invalid = cases / "a_invalid_scope"
+    passing = cases / "b_passing"
+    invalid.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    (invalid / "case.json").write_text(
+        '{"name":"invalid-scope","document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json",'
+        '"scope_block_ids":["blk_missing"]}',
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        '{"name":"passing-after-invalid-scope",'
+        '"document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json"}',
+        encoding="utf-8",
+    )
+    output = tmp_path / "invalid-scope-suite"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    assert suite["cases"][0]["error_code"] == "EVALUATION_CASE_INVALID"
+    assert suite["cases"][1]["passed"] is True
+    assert (output / "cases" / "a_invalid_scope" / "case_report.md").exists()
+
+
+def test_invalid_case_schema_does_not_stop_evaluation_suite(tmp_path: Path):
+    cases = tmp_path / "cases"
+    invalid = cases / "a_invalid_schema"
+    passing = cases / "b_passing"
+    invalid.mkdir(parents=True)
+    passing.mkdir(parents=True)
+    (invalid / "case.json").write_text(
+        '{"name":"missing-required-paths"}',
+        encoding="utf-8",
+    )
+    (passing / "case.json").write_text(
+        '{"name":"passing-after-invalid-schema",'
+        '"document":"docs/sample_srs.md",'
+        '"gold":"eval/cases/sample_srs/gold.json"}',
+        encoding="utf-8",
+    )
+    output = tmp_path / "invalid-schema-suite"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 1
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert suite["case_passed"] == 1
+    assert suite["cases"][0]["name"] == "a_invalid_schema"
+    assert suite["cases"][0]["error_code"] == "EVALUATION_CASE_INVALID"
+    assert suite["cases"][1]["passed"] is True
 
 
 def test_selected_scope_allows_intentional_empty_gold(tmp_path: Path):

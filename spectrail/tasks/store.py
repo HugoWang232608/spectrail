@@ -624,6 +624,7 @@ class LocalTaskStore:
                 f"failed to hash PDF preview source: {task_id}"
             ) from exc
         if signature_after != signature_before:
+            self._invalidate_cached_source(cache_entry)
             raise PagePreviewUnavailableError(
                 f"PDF preview source changed while hashing: {task_id}"
             )

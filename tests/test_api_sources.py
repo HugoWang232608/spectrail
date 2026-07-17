@@ -521,25 +521,32 @@ def test_api_pdf_page_preview_rejects_source_changed_while_hashing(
     task_id = _create_completed_pdf_task(api_client)
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
     document_path = task_dir / "input" / "original.pdf"
-    original_sha256 = sha256_file(document_path)
+    preview_url = _preview_url(api_client, task_id, 1)
+    assert api_client.get(preview_url).status_code == 200
+    cache_entry = api_client.app.state.task_store._evidence_cache[task_id]
+    cached_sha256 = cache_entry.source_sha256
+    assert cached_sha256 == sha256_file(document_path)
+
+    document_path.write_bytes(b"%PDF generation B")
 
     def hash_then_change(path: Path) -> str:
-        Path(path).write_bytes(b"%PDF changed while hashing")
-        return original_sha256
+        generation_b_sha256 = sha256_file(path)
+        Path(path).write_bytes(b"%PDF generation C changed while hashing")
+        return generation_b_sha256
 
     monkeypatch.setattr(
         "spectrail.tasks.store.sha256_file",
         hash_then_change,
     )
 
-    response = api_client.get(_preview_url(api_client, task_id, 1))
+    response = api_client.get(preview_url)
 
     assert response.status_code == 409
     assert response.json()["detail"] == {
         "code": "PAGE_PREVIEW_UNAVAILABLE",
         "message": f"PDF preview source changed while hashing: {task_id}",
     }
-    cache_entry = api_client.app.state.task_store._evidence_cache[task_id]
+    assert cached_sha256 is not None
     assert cache_entry.source_file_signature is None
     assert cache_entry.source_sha256 is None
 

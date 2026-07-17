@@ -182,6 +182,56 @@ describe('SourceViewer', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy()
   })
 
+  it('stabilizes the default source before a same-requirement reorder', () => {
+    const blocks = [
+      makeBlock('blk_default_a', 'Default evidence A'),
+      makeBlock('blk_default_b', 'Default evidence B')
+    ]
+    const sources = blocks.map((block) => locatedSource(block, block.text))
+    const requirementId = 'req_default_reorder'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, sources)}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByText('Default evidence A', { selector: 'mark' })).toBeTruthy()
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [sources[1], sources[0]])}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByText('Default evidence A', { selector: 'mark' })).toBeTruthy()
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+  })
+
+  it('allows selecting a duplicate source occurrence', () => {
+    const block = makeBlock('blk_duplicate', 'Duplicate evidence')
+    const source = locatedSource(block, block.text)
+
+    renderViewer(
+      makeRequirement('req_duplicate', [source, { ...source }]),
+      [block]
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement).disabled).toBe(
+      false
+    )
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

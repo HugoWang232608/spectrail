@@ -90,10 +90,12 @@ Preview failure state is also keyed by the selected source; legacy sources use
 their block, text range, and quote so a failed same-page source cannot poison
 the next source.
 
-Source selection itself uses the same stable identity instead of a numeric
-index. Reordering preserves the currently selected source, while removal or
-replacement synchronously falls back to the first remaining source without an
-intermediate `No source` render.
+Source selection itself uses the same stable identity plus its occurrence
+ordinal instead of a numeric list index. The initially displayed source is
+committed to that selection state even before the reviewer navigates.
+Reordering therefore preserves the current source, exact duplicate sources
+remain individually selectable, and removal or replacement synchronously falls
+back to the first remaining source without an intermediate `No source` render.
 
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or

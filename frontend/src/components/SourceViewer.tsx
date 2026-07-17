@@ -17,13 +17,17 @@ type SourceViewerProps = {
   blocksError: ApiError | null
 }
 
+type SourceSelection = {
+  requirementId: string | null
+  sourceIdentity: string | null
+  sourceOccurrence: number | null
+}
+
 function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewerProps) {
-  const [sourceSelection, setSourceSelection] = useState<{
-    requirementId: string | null
-    sourceIdentity: string | null
-  }>({
+  const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
     requirementId: null,
-    sourceIdentity: null
+    sourceIdentity: null,
+    sourceOccurrence: null
   })
   const [previewFailed, setPreviewFailed] = useState(false)
   const [previewAttempt, setPreviewAttempt] = useState(0)
@@ -32,14 +36,24 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   const selectedIdentity = sourceSelection.requirementId === requirementId
     ? sourceSelection.sourceIdentity
     : null
-  const selectedIdentityIndex = selectedIdentity
-    ? sources.findIndex((item) => sourceSelectionIdentity(item) === selectedIdentity)
+  const selectedOccurrence = sourceSelection.requirementId === requirementId
+    ? sourceSelection.sourceOccurrence
+    : null
+  const selectedIdentityIndex = selectedIdentity && selectedOccurrence != null
+    ? findSourceSelectionIndex(sources, selectedIdentity, selectedOccurrence)
     : -1
   const effectiveSourceIndex = selectedIdentityIndex >= 0 ? selectedIdentityIndex : 0
   const source = sources[effectiveSourceIndex] ?? null
-  const sourceIdentitySignature = sources.map(sourceSelectionIdentity).join('\u0000')
+  const effectiveSelection = sourceSelectionAt(sources, effectiveSourceIndex)
+  const effectiveSourceIdentity = effectiveSelection?.sourceIdentity ?? null
+  const effectiveSourceOccurrence = effectiveSelection?.sourceOccurrence ?? null
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
-  const sourcePreviewIdentity = source ? sourceSelectionIdentity(source) : ''
+  const sourcePreviewIdentity = effectiveSelection
+    ? JSON.stringify([
+      effectiveSelection.sourceIdentity,
+      effectiveSelection.sourceOccurrence
+    ])
+    : ''
   const pageRegionStatus = source ? getPageRegionStatus(source) : undefined
   const pageRegionPassed = pageRegionStatus === 'PASS'
   const displayedPage = pageRegionPassed
@@ -52,18 +66,24 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   )
 
   useEffect(() => {
-    if (selectedIdentity && selectedIdentityIndex < 0) {
+    if (
+      sourceSelection.requirementId !== requirementId
+      || sourceSelection.sourceIdentity !== effectiveSourceIdentity
+      || sourceSelection.sourceOccurrence !== effectiveSourceOccurrence
+    ) {
       setSourceSelection({
         requirementId,
-        sourceIdentity: source ? sourceSelectionIdentity(source) : null
+        sourceIdentity: effectiveSourceIdentity,
+        sourceOccurrence: effectiveSourceOccurrence
       })
     }
   }, [
+    effectiveSourceIdentity,
+    effectiveSourceOccurrence,
     requirementId,
-    selectedIdentity,
-    selectedIdentityIndex,
-    source,
-    sourceIdentitySignature
+    sourceSelection.requirementId,
+    sourceSelection.sourceIdentity,
+    sourceSelection.sourceOccurrence
   ])
 
   useEffect(() => {
@@ -296,19 +316,52 @@ function selectSource(
   index: number,
   requirementId: string | null,
   sources: SourceSpan[],
-  setSelection: (selection: {
-    requirementId: string | null
-    sourceIdentity: string | null
-  }) => void
+  setSelection: (selection: SourceSelection) => void
 ) {
-  const source = sources[index]
-  if (!source) {
+  const selection = sourceSelectionAt(sources, index)
+  if (!selection) {
     return
   }
   setSelection({
     requirementId,
-    sourceIdentity: sourceSelectionIdentity(source)
+    ...selection
   })
+}
+
+function sourceSelectionAt(
+  sources: SourceSpan[],
+  index: number
+): Omit<SourceSelection, 'requirementId'> | null {
+  const source = sources[index]
+  if (!source) {
+    return null
+  }
+  const sourceIdentity = sourceSelectionIdentity(source)
+  let sourceOccurrence = 0
+  for (let current = 0; current < index; current += 1) {
+    if (sourceSelectionIdentity(sources[current]) === sourceIdentity) {
+      sourceOccurrence += 1
+    }
+  }
+  return { sourceIdentity, sourceOccurrence }
+}
+
+function findSourceSelectionIndex(
+  sources: SourceSpan[],
+  sourceIdentity: string,
+  sourceOccurrence: number
+): number {
+  let currentOccurrence = 0
+  for (let index = 0; index < sources.length; index += 1) {
+    if (sourceSelectionIdentity(sources[index]) !== sourceIdentity) {
+      continue
+    }
+    if (currentOccurrence === sourceOccurrence) {
+      return index
+    }
+    currentOccurrence += 1
+  }
+  return -1
 }
 
 function sourceSelectionIdentity(source: SourceSpan): string {

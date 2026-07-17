@@ -373,6 +373,9 @@ function sourceSelectionIdentity(source: SourceSpan): string {
     source.text_locator?.start ?? null,
     source.text_locator?.end ?? null,
     source.quote,
+    source.source_table_row_index ?? null,
+    source.canonical_source_cell_ids ?? [],
+    source.source_cell_ids_raw ?? [],
     source.table_locator
       ? [
         source.table_locator.table_id,

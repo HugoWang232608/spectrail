@@ -285,6 +285,49 @@ describe('SourceViewer', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy()
   })
 
+  it('keeps canonical table cells stable before TableLocator derivation', () => {
+    const block = makeBlock('blk_pre_locator_table', 'Shared pre-locator quote')
+    const textSource = locatedSource(block, block.text)
+    const cellASource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_cell_a'],
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0001'],
+      source_table_row_index: 1,
+      locator_score: 0.1
+    })
+    const cellBSource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_cell_b'],
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0002'],
+      source_table_row_index: 1,
+      locator_score: 0.2
+    })
+    const requirementId = 'req_pre_locator_table'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, cellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellBSource, cellASource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

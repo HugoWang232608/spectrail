@@ -120,6 +120,9 @@ export type SourceSpan = {
   bbox?: number[] | null
   table_cell?: string | null
   image_region?: string | null
+  source_cell_ids_raw?: string[]
+  canonical_source_cell_ids?: string[]
+  source_table_row_index?: number | null
   text_locator?: TextLocator | null
   page_locator?: PageLocator | null
   table_locator?: TableLocator | null

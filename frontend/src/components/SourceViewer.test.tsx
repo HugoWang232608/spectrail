@@ -506,6 +506,63 @@ describe('SourceViewer', () => {
     expect(screen.getByText('2 / 2')).toBeTruthy()
   })
 
+  it('migrates canonical selection to a final evidence key across reorder', () => {
+    const block = makeBlock('blk_final_key', 'Final key lifecycle quote')
+    const textSource = locatedSource(block, block.text)
+    const cellASource = makeSource({
+      ...textSource,
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0001'],
+      source_table_row_index: 1,
+      locator_score: 0.1
+    })
+    const cellBSource = makeSource({
+      ...textSource,
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0002'],
+      source_table_row_index: 1,
+      locator_score: 0.2
+    })
+    const requirementId = 'req_final_key'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, cellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+
+    const finalCellBSource = {
+      ...cellBSource,
+      source_evidence_key: 'src_222222222222222222222222'
+    }
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [finalCellBSource, cellASource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, finalCellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

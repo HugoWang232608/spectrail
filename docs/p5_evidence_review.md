@@ -116,6 +116,11 @@ never replace an existing canonical primary identity. Table sources with
 identical text but different structured cells remain stable across reorder,
 enrichment lifecycle transitions, and task switches.
 
+Identity generation, alias matching, and occurrence resolution live in the
+pure `frontend/src/evidence/sourceSelection.ts` module. Its migration matrix is
+tested independently from SourceViewer, while component tests verify that
+canonical selection survives final evidence-key assignment and list reorder.
+
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or
 unverified locator cannot choose the preview page or aspect ratio; the UI

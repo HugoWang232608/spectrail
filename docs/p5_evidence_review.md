@@ -65,9 +65,23 @@ For each source, the Review UI shows:
 - validation status for `text_range`, `page_region`, and `table_cell`;
 - highlighted canonical block text as the fallback evidence view.
 
+Canonical block highlighting uses the final `TextLocator` before considering the
+legacy exact-quote fallback. Offsets are applied to `Array.from(text)` so the
+`unicode_code_point` contract remains correct for emoji and supplementary CJK
+characters. A normalized match with a valid locator is highlighted even when
+the displayed canonical range is not byte-for-byte equal to `source.quote`.
+
 Preview loading occurs only after ReqIR and block reads complete, avoiding
 read-lock races. A failed image can be retried explicitly without losing the
 text evidence view.
+
+Run the frontend evidence tests and production build with:
+
+```bash
+cd frontend
+npm test
+npm run build
+```
 
 ## Next acceptance steps
 

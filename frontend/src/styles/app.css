@@ -630,6 +630,7 @@ mark {
 
 .page-locator-overlay {
   position: absolute;
+  box-sizing: border-box;
   border: 2px solid #d92d20;
   border-radius: 3px;
   background: rgb(217 45 32 / 16%);

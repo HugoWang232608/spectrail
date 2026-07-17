@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { getPagePreviewUrl } from '../api/client'
 import type { ApiError, DocumentBlock, RequirementIR, SourceSpan } from '../api/types'
+import { resolveTextHighlight } from '../evidence/textHighlight'
 
 type SourceViewerProps = {
   taskId: string | null
@@ -209,21 +210,16 @@ function SourceItem({ label, value }: { label: string; value: string }) {
 }
 
 function renderHighlightedBlock(text: string, source: SourceSpan) {
-  if (source.match_status !== 'PASS_EXACT' || !source.quote) {
+  const highlight = resolveTextHighlight(text, source)
+  if (!highlight) {
     return text
   }
 
-  const start = text.indexOf(source.quote)
-  if (start < 0) {
-    return text
-  }
-
-  const end = start + source.quote.length
   return (
     <>
-      {text.slice(0, start)}
-      <mark>{text.slice(start, end)}</mark>
-      {text.slice(end)}
+      {highlight.before}
+      <mark>{highlight.highlighted}</mark>
+      {highlight.after}
     </>
   )
 }

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import fitz
 from fastapi.testclient import TestClient
 
@@ -103,6 +105,40 @@ def test_api_pdf_page_preview_uses_rotated_page_dimensions(
     assert response.status_code == 200
     assert response.headers["x-spectrail-preview-width"] == "600"
     assert response.headers["x-spectrail-preview-height"] == "800"
+
+
+def test_api_pdf_page_preview_maps_render_failure_to_structured_error(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id = _create_completed_pdf_task(api_client)
+
+    class BrokenPage:
+        rect = SimpleNamespace(width=400, height=300)
+
+        def get_pixmap(self, **kwargs):
+            del kwargs
+            raise RuntimeError("broken page resource")
+
+    class BrokenDocument:
+        page_count = 1
+
+        def __getitem__(self, index):
+            assert index == 0
+            return BrokenPage()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(fitz, "open", lambda path: BrokenDocument())
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "PAGE_PREVIEW_UNAVAILABLE",
+        "message": "failed to render PDF page preview: 1",
+    }
 
 
 def test_api_page_preview_rejects_non_pdf_task(

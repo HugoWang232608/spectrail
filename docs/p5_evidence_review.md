@@ -369,13 +369,22 @@ Physical-grid validation is independent from the logical Evidence topology
 check. With a 0.5-point boundary tolerance, every detected cell must remain
 inside the table bbox, row and column boundaries must align, adjacent cells
 must meet without a gap or area overlap, the cells must cover the table bbox,
-and every pair of non-merged cells must have no material intersection. A
-detector result that violates any of these invariants is downgraded before an
-`EvidenceIndex` can claim `topology_status="complete"`.
+and non-merged cells must form a disjoint tiling. A detector result that
+violates any of these invariants is downgraded before an `EvidenceIndex` can
+claim `topology_status="complete"`. The physical check is linear in the number
+of detected cells: aligned row/column boundaries plus monotonic, meeting
+adjacent boundaries prove the global tiling without an all-pairs intersection
+scan.
 
-Merged or incomplete PDF grids are not guessed. Their ordinary PDF text blocks
-remain available, a `PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the
-reason, and no `table_cell` capability is exposed.
+Merged, incomplete, or physically invalid PDF grids are not guessed. Their
+ordinary PDF text blocks remain available, a
+`PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the reason, and no
+`TableRecord` or available `table_cell` capability is exposed. The rejected
+candidate bbox is retained long enough to mark overlapping fallback blocks
+with expected capabilities `text_range + page_region + table_cell`, while
+available capabilities remain `text_range + page_region`. Consequently,
+`structured_if_available` preserves the source with
+`table_cell=WARNING_UNAVAILABLE`, whereas `structured_required` rejects it.
 
 The checked-in `pdf_table_requirements.pdf` fixture runs through prompt cell
 mapping, source identity canonicalization, quote matching, enrichment, quote

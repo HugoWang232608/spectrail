@@ -206,6 +206,12 @@ class PdfParserV2:
                         "layout_column_index": candidate.column_index,
                         "layout_column_count": column_count,
                         "page_region_available": candidate.bbox is not None,
+                        "table_cell_expected": bool(
+                            candidate.rejected_table_numbers
+                        ),
+                        "rejected_table_candidates": list(
+                            candidate.rejected_table_numbers
+                        ),
                         "repeated_edge_candidate": candidate.edge_candidate,
                         "repeated_edge_role": candidate.edge_role,
                         **(
@@ -237,6 +243,9 @@ class PdfParserV2:
                         )
                     )
 
+                expected_capabilities = ["text_range", "page_region"]
+                if candidate.rejected_table_numbers:
+                    expected_capabilities.append("table_cell")
                 evidence_blocks.append(
                     BlockEvidenceRecord(
                         block_id=block_identifier,
@@ -245,7 +254,7 @@ class PdfParserV2:
                         page=layout.page,
                         bbox=candidate.bbox,
                         fragment_ids=fragment_ids,
-                        expected_capabilities=["text_range", "page_region"],
+                        expected_capabilities=expected_capabilities,
                         available_capabilities=(
                             ["text_range", "page_region"]
                             if candidate.bbox is not None
@@ -352,6 +361,13 @@ class _ProjectedPdfTable:
     cells: tuple[_ProjectedPdfTableCell, ...]
 
 
+@dataclass(frozen=True)
+class _RejectedPdfTableRegion:
+    source_table_number: int
+    bbox: BoundingBox
+    reason: str
+
+
 @dataclass
 class _PageTextBlock:
     text: str
@@ -368,6 +384,7 @@ class _PageTextBlock:
     edge_candidate: bool = False
     edge_role: str | None = None
     table: _ProjectedPdfTable | None = None
+    rejected_table_numbers: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -445,12 +462,18 @@ def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
         for block in blocks
         if block.bbox is None
     ]
-    projected_tables, table_warnings = _extract_page_tables(
+    projected_tables, rejected_tables, table_warnings = _extract_page_tables(
         page,
         page_width=width,
         page_height=height,
     )
     warnings.extend(table_warnings)
+    for block in blocks:
+        block.rejected_table_numbers = [
+            rejected.source_table_number
+            for rejected in rejected_tables
+            if _text_block_belongs_to_bbox(block, rejected.bbox)
+        ]
     if projected_tables:
         blocks = [
             block
@@ -479,16 +502,21 @@ def _extract_page_tables(
     *,
     page_width: float,
     page_height: float,
-) -> tuple[list[_ProjectedPdfTable], list[str]]:
+) -> tuple[
+    list[_ProjectedPdfTable],
+    list[_RejectedPdfTableRegion],
+    list[str],
+]:
     try:
         finder = page.find_tables(strategy=PDF_TABLE_DETECTION_STRATEGY)
     except Exception as exc:
-        return [], [
+        return [], [], [
             "PDF_TABLE_DETECTION_UNAVAILABLE: "
             f"{type(exc).__name__}"
         ]
 
     projected: list[_ProjectedPdfTable] = []
+    rejected: list[_RejectedPdfTableRegion] = []
     warnings: list[str] = []
     raw_tables = list(getattr(finder, "tables", []))
     for source_table_number, raw_table in enumerate(raw_tables, start=1):
@@ -501,6 +529,20 @@ def _extract_page_tables(
                 page_height=page_height,
             )
         except _PdfTableEvidenceUnavailable as exc:
+            rejected_bbox = _rotated_bbox(
+                page,
+                getattr(raw_table, "bbox", None),
+                page_width=page_width,
+                page_height=page_height,
+            )
+            if rejected_bbox is not None:
+                rejected.append(
+                    _RejectedPdfTableRegion(
+                        source_table_number=source_table_number,
+                        bbox=rejected_bbox,
+                        reason=str(exc),
+                    )
+                )
             warnings.append(
                 "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: "
                 f"table={source_table_number}, reason={exc}"
@@ -517,7 +559,16 @@ def _extract_page_tables(
             item.source_table_number,
         )
     )
-    return projected, warnings
+    rejected.sort(
+        key=lambda item: (
+            item.bbox.y0,
+            item.bbox.x0,
+            item.bbox.y1,
+            item.bbox.x1,
+            item.source_table_number,
+        )
+    )
+    return projected, rejected, warnings
 
 
 def _project_pdf_table(
@@ -701,6 +752,15 @@ def _validate_pdf_table_geometry(
                 raise _PdfTableEvidenceUnavailable(
                     f"cell columns are not ordered: row {row_index}"
                 )
+            if (
+                _pdf_bbox_intersection_area(left.bbox, right.bbox)
+                > PDF_TABLE_OVERLAP_AREA_EPSILON
+            ):
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell bboxes overlap in physical PDF space: "
+                    f"row {row_index}, columns "
+                    f"{left.column_index}/{right.column_index}"
+                )
             boundary_delta = right.bbox[0] - left.bbox[2]
             if boundary_delta < -tolerance:
                 raise _PdfTableEvidenceUnavailable(
@@ -734,6 +794,15 @@ def _validate_pdf_table_geometry(
                 raise _PdfTableEvidenceUnavailable(
                     f"cell rows are not ordered: column {column_index}"
                 )
+            if (
+                _pdf_bbox_intersection_area(upper.bbox, lower.bbox)
+                > PDF_TABLE_OVERLAP_AREA_EPSILON
+            ):
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell bboxes overlap in physical PDF space: "
+                    f"column {column_index}, rows "
+                    f"{upper.row_index}/{lower.row_index}"
+                )
             boundary_delta = lower.bbox[1] - upper.bbox[3]
             if boundary_delta < -tolerance:
                 raise _PdfTableEvidenceUnavailable(
@@ -748,32 +817,23 @@ def _validate_pdf_table_geometry(
                     f"{upper.row_index}/{lower.row_index}"
                 )
 
-    for index, cell in enumerate(cells):
-        for following in cells[index + 1 :]:
-            overlap_x = max(
-                0.0,
-                min(cell.bbox[2], following.bbox[2])
-                - max(cell.bbox[0], following.bbox[0]),
-            )
-            overlap_y = max(
-                0.0,
-                min(cell.bbox[3], following.bbox[3])
-                - max(cell.bbox[1], following.bbox[1]),
-            )
-            adjusted_overlap_area = (
-                max(0.0, overlap_x - tolerance)
-                * max(0.0, overlap_y - tolerance)
-            )
-            if adjusted_overlap_area > PDF_TABLE_OVERLAP_AREA_EPSILON:
-                raise _PdfTableEvidenceUnavailable(
-                    "cell bboxes overlap in physical PDF space: "
-                    f"r{cell.row_index}c{cell.column_index}/"
-                    f"r{following.row_index}c{following.column_index}"
-                )
-
-
 def _pdf_geometry_close(left: float, right: float) -> bool:
     return abs(left - right) <= PDF_TABLE_GEOMETRY_TOLERANCE
+
+
+def _pdf_bbox_intersection_area(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> float:
+    intersection_width = max(
+        0.0,
+        min(left[2], right[2]) - max(left[0], right[0]),
+    )
+    intersection_height = max(
+        0.0,
+        min(left[3], right[3]) - max(left[1], right[1]),
+    )
+    return intersection_width * intersection_height
 
 
 def _table_page_block(table: _ProjectedPdfTable) -> _PageTextBlock:
@@ -797,17 +857,24 @@ def _text_block_belongs_to_table(
     block: _PageTextBlock,
     table: _ProjectedPdfTable,
 ) -> bool:
+    return _text_block_belongs_to_bbox(block, table.bbox)
+
+
+def _text_block_belongs_to_bbox(
+    block: _PageTextBlock,
+    bbox: BoundingBox,
+) -> bool:
     if block.bbox is None:
         return False
     intersection_x = max(
         0.0,
-        min(block.bbox.x1, table.bbox.x1)
-        - max(block.bbox.x0, table.bbox.x0),
+        min(block.bbox.x1, bbox.x1)
+        - max(block.bbox.x0, bbox.x0),
     )
     intersection_y = max(
         0.0,
-        min(block.bbox.y1, table.bbox.y1)
-        - max(block.bbox.y0, table.bbox.y0),
+        min(block.bbox.y1, bbox.y1)
+        - max(block.bbox.y0, bbox.y0),
     )
     block_area = (
         (block.bbox.x1 - block.bbox.x0)
@@ -1786,7 +1853,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.12",
+        parser_version="2.13",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -1811,7 +1878,12 @@ def _parser_identity() -> ParserIdentity:
             ),
             "repeat_header_rows": 1,
             "canonical_table_serializer": "escaped_cells_v1",
-            "unsupported_table_topology": "preserve_text_without_table_cell",
+            "unsupported_table_topology": (
+                "preserve_text_expected_table_cell_unavailable_v2"
+            ),
+            "rejected_table_region_projection": (
+                "fallback_blocks_by_80_percent_bbox_overlap_v1"
+            ),
         },
         runtime_dependencies={
             "PyMuPDF": pymupdf_version,

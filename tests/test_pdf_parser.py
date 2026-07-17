@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.12"
+    assert parsed.parser_identity.parser_version == "2.13"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -595,32 +595,153 @@ def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
         for warning in parsed.warnings
     )
     assert all(
-        block.expected_capabilities == ["text_range", "page_region"]
-        and "table_cell" not in block.available_capabilities
+        block.expected_capabilities
+        == ["text_range", "page_region", "table_cell"]
+        and block.available_capabilities == ["text_range", "page_region"]
         for block in index.blocks
+    )
+    source_block = next(
+        block for block in parsed.blocks if block.text == "Merged Header"
+    )
+    assert source_block.metadata["table_cell_expected"] is True
+    assert source_block.metadata["rejected_table_candidates"] == [1]
+
+    def prepare_requirement() -> tuple[RequirementIR, object]:
+        requirement = RequirementIR(
+            id="REQ-PDF-MERGED",
+            statement="Merged Header",
+            sources=[
+                SourceSpan(
+                    document_id=parsed.document_id,
+                    block_id=source_block.block_id,
+                    quote="Merged Header",
+                )
+            ],
+        )
+        registry = build_quote_match_registry(
+            [requirement],
+            parsed.blocks,
+            evidence_fingerprint=index.evidence_fingerprint,
+            evidence_index=index,
+        )
+        SourceEvidenceEnricher().enrich(
+            [requirement],
+            index,
+            registry,
+            parsed.blocks,
+        )
+        return requirement, registry
+
+    optional_requirement, optional_registry = prepare_requirement()
+    optional_validated, optional_report, optional_failures = (
+        SourceLocatorValidator().validate(
+            [optional_requirement],
+            index,
+            optional_registry,
+            policy="structured_if_available",
+            document_blocks=parsed.blocks,
+        )
+    )
+    optional_source = optional_requirement.sources[0]
+    assert optional_validated == [optional_requirement]
+    assert optional_report.valid is True
+    assert optional_failures == []
+    assert optional_source.locator_status == "WARNING_UNAVAILABLE"
+    assert {
+        result.capability: result.status
+        for result in optional_source.capability_results
+    } == {
+        "text_range": "PASS",
+        "page_region": "PASS",
+        "table_cell": "WARNING_UNAVAILABLE",
+    }
+
+    required_requirement, required_registry = prepare_requirement()
+    required_validated, required_report, required_failures = (
+        SourceLocatorValidator().validate(
+            [required_requirement],
+            index,
+            required_registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+    assert required_validated == []
+    assert required_report.valid is False
+    assert len(required_failures) == 1
+    assert any(
+        issue.code == "SOURCE_TABLE_CELL_UNAVAILABLE"
+        and issue.level == "error"
+        for issue in required_report.issues
     )
 
 
-def test_pdf_v2_rejects_overlapping_physical_cell_geometry(
+@pytest.mark.parametrize(
+    ("table_bbox", "cell_boxes", "expected_reason"),
+    [
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(40.0, 50.0, 150.0, 100.0), (150.0, 50.0, 300.0, 100.0)],
+                [(50.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
+            ],
+            "outside table bbox",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(60.0, 50.0, 150.0, 100.0), (150.0, 50.0, 300.0, 100.0)],
+                [(60.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
+            ],
+            "does not cover the detected table bbox",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(50.0, 50.0, 150.0, 100.0), (150.0, 55.0, 300.0, 100.0)],
+                [(50.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
+            ],
+            "row boundaries are not aligned",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(50.0, 50.0, 150.0, 100.0), (150.0, 50.0, 300.0, 100.0)],
+                [(50.0, 100.0, 160.0, 150.0), (160.0, 100.0, 300.0, 150.0)],
+            ],
+            "column boundaries are not aligned",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(50.0, 50.0, 145.0, 100.0), (155.0, 50.0, 300.0, 100.0)],
+                [(50.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
+            ],
+            "column boundaries contain a gap",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(50.0, 50.0, 160.0, 100.0), (150.0, 50.0, 300.0, 100.0)],
+                [(50.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
+            ],
+            "overlap in physical PDF space",
+        ),
+    ],
+)
+def test_pdf_v2_rejects_invalid_physical_cell_geometry(
     monkeypatch: pytest.MonkeyPatch,
+    table_bbox: tuple[float, float, float, float],
+    cell_boxes: list[list[tuple[float, float, float, float]]],
+    expected_reason: str,
 ):
     raw_table = SimpleNamespace(
         row_count=2,
         col_count=2,
-        bbox=(50.0, 50.0, 300.0, 150.0),
+        bbox=table_bbox,
         rows=[
-            SimpleNamespace(
-                cells=[
-                    (50.0, 50.0, 160.0, 100.0),
-                    (150.0, 50.0, 300.0, 100.0),
-                ]
-            ),
-            SimpleNamespace(
-                cells=[
-                    (50.0, 100.0, 150.0, 150.0),
-                    (150.0, 100.0, 300.0, 150.0),
-                ]
-            ),
+            SimpleNamespace(cells=row)
+            for row in cell_boxes
         ],
         extract=lambda: [["A", "B"], ["C", "D"]],
         header=SimpleNamespace(
@@ -635,7 +756,7 @@ def test_pdf_v2_rejects_overlapping_physical_cell_geometry(
     )
     document = fitz.open()
     page = document.new_page(width=400, height=300)
-    projected, warnings = _extract_page_tables(
+    projected, rejected, warnings = _extract_page_tables(
         page,
         page_width=400,
         page_height=300,
@@ -643,11 +764,14 @@ def test_pdf_v2_rejects_overlapping_physical_cell_geometry(
     document.close()
 
     assert projected == []
+    assert len(rejected) == 1
+    assert rejected[0].source_table_number == 1
+    assert rejected[0].reason in warnings[0]
     assert len(warnings) == 1
     assert warnings[0].startswith(
         "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: table=1"
     )
-    assert "overlap in physical PDF space" in warnings[0]
+    assert expected_reason in warnings[0]
 
 
 def test_pdf_v2_groups_large_table_and_projects_header(tmp_path: Path):

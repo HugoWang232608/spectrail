@@ -47,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.8"
+    assert parsed.parser_identity.parser_version == "2.9"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -646,7 +646,7 @@ def test_pdf_v2_bold_heading_can_be_confirmed_by_next_page_body(
     ].section_path == ["System Interfaces"]
 
 
-def test_pdf_v2_cross_page_heading_skips_unmarked_short_footer(
+def test_pdf_v2_cross_page_heading_skips_bold_page_number_footer(
     tmp_path: Path,
 ):
     path = tmp_path / "cross-page-heading-with-footer.pdf"
@@ -657,7 +657,7 @@ def test_pdf_v2_cross_page_heading_skips_unmarked_short_footer(
         "System Interfaces",
         fontname="hebo",
     )
-    page_one.insert_text((230, 790), "Page 1")
+    page_one.insert_text((230, 790), "PAGE 1", fontname="hebo")
     page_two = document.new_page(width=500, height=800)
     page_two.insert_text(
         (50, 50),
@@ -675,12 +675,35 @@ def test_pdf_v2_cross_page_heading_skips_unmarked_short_footer(
     assert by_text[
         "Interfaces are exposed through authenticated endpoints."
     ].section_path == ["System Interfaces"]
-    assert by_text["Page 1"].metadata["repeated_edge_candidate"] is False
-    assert by_text["Page 1"].type == "paragraph"
+    assert by_text["PAGE 1"].metadata["repeated_edge_candidate"] is False
+    assert by_text["PAGE 1"].type == "paragraph"
     assert any(
-        evidence.block_id == by_text["Page 1"].block_id
+        evidence.block_id == by_text["PAGE 1"].block_id
         for evidence in index.blocks
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "PAGE 1",
+        "Page 1 of 20",
+        "第 1 页",
+        "第 1 / 20 页",
+        "CONFIDENTIAL",
+        "机密",
+        "内部资料",
+        "Document ID: ABC-001",
+        "文档编号：ABC-001",
+    ],
+)
+def test_pdf_v2_recognizes_multilingual_edge_decoration_patterns(text: str):
+    assert pdf_parser_module.EDGE_DECORATION_RE.fullmatch(text) is not None
+
+
+@pytest.mark.parametrize("text", ["2 Architecture", "2.1 Interfaces", "架构设计"])
+def test_pdf_v2_edge_decoration_patterns_do_not_match_real_headings(text: str):
+    assert pdf_parser_module.EDGE_DECORATION_RE.fullmatch(text) is None
 
 
 def test_pdf_v2_cross_page_heading_stops_at_next_page_numbered_heading(

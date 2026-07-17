@@ -52,8 +52,11 @@ NORMATIVE_SENTENCE_RE = re.compile(r"\b(?:shall|must|should|will)\b", re.IGNOREC
 NUMBERED_HEADING_RE = re.compile(r"^\s*\d+(?:\.\d+)*(?:[.)]|\s)")
 EDGE_DECORATION_RE = re.compile(
     r"^(?:page\s+)?\d+\s*(?:(?:/|of)\s*\d+)?$"
+    r"|^第\s*\d+\s*(?:/\s*\d+\s*)?页$"
     r"|^(?:confidential|proprietary|internal use only)$"
-    r"|^document\s+(?:id|no\.?|number)\s*:\s*\S.*$",
+    r"|^(?:机密|内部资料|内部使用)$"
+    r"|^document\s+(?:id|no\.?|number)\s*:\s*\S.*$"
+    r"|^文档(?:编号|号)\s*[：:]\s*\S.*$",
     re.IGNORECASE,
 )
 BOLD_LABEL_RE = re.compile(
@@ -744,7 +747,7 @@ def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
 
     for index, (layout, block) in enumerate(reading_sequence):
         if (
-            block.edge_candidate
+            _is_heading_inference_edge_decoration(layout, block)
             or not block.bold_heading_candidate
             or not _bold_candidate_looks_like_heading(block.text)
         ):
@@ -783,6 +786,16 @@ def _is_heading_inference_edge_decoration(
     layout: _PageLayout,
     block: _PageTextBlock,
 ) -> bool:
+    normalized = " ".join(block.text.split())
+    is_patterned_edge_decoration = (
+        block.bbox is not None
+        and _edge_role(block.bbox, layout.height) is not None
+        and len(normalized) <= EDGE_DECORATION_MAX_CHARS
+        and len(normalized.split()) <= EDGE_DECORATION_MAX_WORDS
+        and EDGE_DECORATION_RE.fullmatch(normalized) is not None
+    )
+    if is_patterned_edge_decoration:
+        return True
     if (
         block.block_type == "heading"
         or block.bold_heading_candidate
@@ -791,14 +804,7 @@ def _is_heading_inference_edge_decoration(
         return False
     if block.edge_candidate:
         return True
-    if block.bbox is None or _edge_role(block.bbox, layout.height) is None:
-        return False
-    normalized = " ".join(block.text.split())
-    return (
-        len(normalized) <= EDGE_DECORATION_MAX_CHARS
-        and len(normalized.split()) <= EDGE_DECORATION_MAX_WORDS
-        and EDGE_DECORATION_RE.fullmatch(normalized) is not None
-    )
+    return False
 
 
 def _is_adjacent_heading_body(
@@ -1078,15 +1084,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.8",
+        parser_version="2.9",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v7",
-            "bold_heading_detection": "adjacent_body_patterned_edge_decorations_v6",
+            "section_hierarchy": "numeric_prefix_then_font_size_v8",
+            "bold_heading_detection": "adjacent_body_multilingual_edge_decorations_v7",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

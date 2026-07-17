@@ -53,6 +53,14 @@ from spectrail.evidence.quote_matcher import (
     source_evidence_key,
     validate_source_evidence_keys,
 )
+from spectrail.evidence.table_view import (
+    TableEvidenceCellView,
+    TableEvidenceOccurrenceView,
+    TableEvidenceRowView,
+    TableEvidenceView,
+    TableEvidenceViewNotFoundError,
+    build_table_evidence_view,
+)
 
 __all__ = [
     "PDF_PREVIEW_COORDINATE_SPACE",
@@ -81,6 +89,11 @@ __all__ = [
     "QuoteMatchResult",
     "QuoteMatcher",
     "TableCellRecord",
+    "TableEvidenceCellView",
+    "TableEvidenceOccurrenceView",
+    "TableEvidenceRowView",
+    "TableEvidenceView",
+    "TableEvidenceViewNotFoundError",
     "TableCellRef",
     "TableLocator",
     "TableRecord",
@@ -89,6 +102,7 @@ __all__ = [
     "aggregate_locator_status",
     "build_evidence_fingerprint",
     "build_quote_match_registry",
+    "build_table_evidence_view",
     "canonical_evidence_payload",
     "cell_id",
     "finalize_evidence_fingerprint",

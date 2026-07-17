@@ -14,6 +14,7 @@ import {
 } from '../evidence/sourceSelection'
 import type { SourceIdentitySelection } from '../evidence/sourceSelection'
 import { resolveTextHighlight } from '../evidence/textHighlight'
+import TableEvidenceView from './TableEvidenceView'
 
 type SourceViewerProps = {
   taskId: string | null
@@ -66,6 +67,9 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
     ])
     : ''
   const pageRegionStatus = source ? getPageRegionStatus(source) : undefined
+  const tableCellStatus = source
+    ? getCapabilityStatus(source, 'table_cell')
+    : undefined
   const pageRegionPassed = pageRegionStatus === 'PASS'
   const displayedPage = pageRegionPassed
     ? source?.page ?? block?.page ?? null
@@ -197,6 +201,15 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
                 setPreviewAttempt((current) => current + 1)
                 setPreviewFailed(false)
               }}
+            />
+          ) : null}
+
+          {taskId && (source.table_locator || tableCellStatus) ? (
+            <TableEvidenceView
+              key={`${taskId}:${sourcePreviewIdentity}`}
+              taskId={taskId}
+              source={source}
+              tableCellStatus={tableCellStatus}
             />
           ) : null}
 
@@ -350,8 +363,15 @@ function selectSource(
 function getPageRegionStatus(
   source: SourceSpan
 ): CapabilityValidationResult['status'] | undefined {
+  return getCapabilityStatus(source, 'page_region')
+}
+
+function getCapabilityStatus(
+  source: SourceSpan,
+  capability: CapabilityValidationResult['capability']
+): CapabilityValidationResult['status'] | undefined {
   return source.capability_results?.find(
-    (result) => result.capability === 'page_region'
+    (result) => result.capability === capability
   )?.status
 }
 

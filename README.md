@@ -365,19 +365,26 @@ The checked evaluation suite currently covers the original single-pass sample, a
 P5 begins consuming the typed locator artifacts produced by the DOCX/PDF V2
 pipeline. For PDF sources with a validated `page_locator`, the Review UI renders
 the corresponding page and overlays the source bounding box in the canonical
-rotated preview coordinate space.
+rotated preview coordinate space. For DOCX sources with a validated
+`table_locator`, it renders the block's occurrence-aware table grid and
+highlights the selected physical-row cells by canonical cell ID.
 
-The preview endpoint is task-scoped and read-only:
+The evidence endpoints are task-scoped and read-only:
 
 ```text
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
+GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
 ```
 
 Rendering is allowed only for completed PDF tasks, runs under the task
 transaction guard, and caps the preview to 2000 pixels per dimension. The UI
 continues to show quote and block text when a visual preview is unavailable.
-Locator status, score, structured cell identity, and per-capability validation
-results are displayed alongside the source.
+The table endpoint fingerprint-validates `evidence_v5` and returns a stable
+`table_evidence_view_v1` projection with logical cells, spans, physical rows and
+occurrence roles. The UI draws a page overlay or table-cell highlight only when
+the corresponding capability is `PASS`; locator status, score, structured cell
+identity, and per-capability validation results remain visible alongside the
+source.
 
 See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
 contract and next acceptance steps.

@@ -576,7 +576,8 @@ dd {
 .quote-box,
 .block-box,
 .capability-box,
-.page-evidence-box {
+.page-evidence-box,
+.table-evidence-box {
   display: grid;
   gap: 8px;
 }
@@ -604,6 +605,136 @@ mark {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+}
+
+.table-evidence-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.table-evidence-heading span,
+.table-evidence-meta {
+  color: #667085;
+  font-size: 11px;
+}
+
+.table-evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.table-evidence-scroll {
+  overflow-x: auto;
+  border: 1px solid #d7dce4;
+  border-radius: 8px;
+}
+
+.table-evidence-grid {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #ffffff;
+}
+
+.table-evidence-grid th,
+.table-evidence-grid td {
+  border: 1px solid #d7dce4;
+  padding: 8px;
+  vertical-align: top;
+}
+
+.table-evidence-grid tr:first-child > * {
+  border-top: 0;
+}
+
+.table-evidence-grid tr > *:first-child {
+  border-left: 0;
+}
+
+.table-evidence-grid tr > *:last-child {
+  border-right: 0;
+}
+
+.table-evidence-grid tr:last-child > * {
+  border-bottom: 0;
+}
+
+.table-evidence-grid th {
+  width: 86px;
+  color: #344054;
+  background: #f2f4f7;
+  font-size: 11px;
+  text-align: left;
+}
+
+.table-evidence-grid th span,
+.table-evidence-grid th small {
+  display: block;
+}
+
+.table-evidence-cell {
+  min-width: 130px;
+  background: #ffffff;
+}
+
+.table-evidence-cell.selected {
+  outline: 3px solid #d92d20;
+  outline-offset: -3px;
+  background: #fff1ed;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 85%);
+}
+
+.table-evidence-cell > span,
+.table-evidence-cell > small,
+.table-evidence-cell > code {
+  display: block;
+}
+
+.table-cell-text {
+  color: #1d2939;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.table-cell-text.empty {
+  color: #98a2b3;
+  font-style: italic;
+}
+
+.table-evidence-cell small {
+  margin-top: 6px;
+  color: #667085;
+  font-size: 10px;
+}
+
+.table-evidence-cell code {
+  margin-top: 4px;
+  color: #475467;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.table-evidence-gap {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      #f2f4f7,
+      #f2f4f7 6px,
+      #e4e7ec 6px,
+      #e4e7ec 12px
+    );
+}
+
+.table-evidence-warnings {
+  margin: 0;
+  padding-left: 20px;
+  color: #8a6a14;
+  font-size: 11px;
 }
 
 .page-evidence-heading span {

@@ -6,6 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.evidence import (
+    EvidenceIndex,
+    TableEvidenceView,
+    TableEvidenceViewNotFoundError,
+    build_table_evidence_view,
+    validate_evidence_fingerprint,
+)
 from spectrail.evidence.pdf_preview import (
     PdfPagePreviewNotFoundError,
     PdfPagePreviewUnavailableError,
@@ -50,6 +57,14 @@ class PagePreviewUnavailableError(TaskStoreError):
 
 
 class PagePreviewNotFoundError(TaskStoreError):
+    pass
+
+
+class TableEvidenceUnavailableError(TaskStoreError):
+    pass
+
+
+class TableEvidenceNotFoundError(TaskStoreError):
     pass
 
 
@@ -205,6 +220,41 @@ class LocalTaskStore:
                 if not blocks_path.exists():
                     raise BlocksNotFoundError(f"blocks not found: {task_id}")
                 return [_normalize_block(block) for block in read_json(blocks_path)]
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
+    def read_table_evidence(
+        self,
+        task_id: str,
+        *,
+        table_id: str,
+        block_id: str,
+    ) -> TableEvidenceView:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "table_evidence_read"):
+                self.require_readable_task(task_id)
+                evidence_path = task_dir / "parsed" / "evidence_index.json"
+                if not evidence_path.exists():
+                    raise TableEvidenceUnavailableError(
+                        f"EvidenceIndex not found: {task_id}"
+                    )
+                try:
+                    index = EvidenceIndex.model_validate(read_json(evidence_path))
+                    validate_evidence_fingerprint(index)
+                except (OSError, TypeError, ValueError) as exc:
+                    raise TableEvidenceUnavailableError(
+                        f"EvidenceIndex is invalid: {task_id}"
+                    ) from exc
+                try:
+                    return build_table_evidence_view(
+                        index,
+                        task_id=task_id,
+                        table_id=table_id,
+                        block_id=block_id,
+                    )
+                except TableEvidenceViewNotFoundError as exc:
+                    raise TableEvidenceNotFoundError(str(exc)) from exc
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 

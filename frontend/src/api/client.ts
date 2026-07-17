@@ -6,6 +6,7 @@ import type {
   ReqIRPackage,
   ReviewRequest,
   ReviewResponse,
+  TableEvidenceResponse,
   TaskResponse,
   TaskRunResponse,
   TaskStatusResponse
@@ -44,6 +45,20 @@ export async function getReqIR(taskId: string): Promise<ReqIRPackage> {
 
 export async function getBlocks(taskId: string): Promise<BlocksResponse> {
   return request<BlocksResponse>(`/tasks/${taskId}/blocks`)
+}
+
+export async function getTableEvidence(
+  taskId: string,
+  tableId: string,
+  blockId: string,
+  signal?: AbortSignal
+): Promise<TableEvidenceResponse> {
+  return request<TableEvidenceResponse>(
+    `/tasks/${encodeURIComponent(taskId)}` +
+      `/tables/${encodeURIComponent(tableId)}` +
+      `/blocks/${encodeURIComponent(blockId)}/evidence`,
+    { signal }
+  )
 }
 
 export async function getChunks(taskId: string): Promise<DocumentChunk[]> {

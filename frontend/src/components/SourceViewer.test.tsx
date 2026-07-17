@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   CapabilityValidationResult,
   DocumentBlock,
   PageLocator,
   RequirementIR,
-  SourceSpan
+  SourceSpan,
+  TableEvidenceResponse
 } from '../api/types'
 import SourceViewer from './SourceViewer'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('SourceViewer', () => {
   it('renders the occurrence selected by the final TextLocator', () => {
@@ -817,6 +821,115 @@ describe('SourceViewer', () => {
       ]).toEqual(expectedStyle)
     }
   )
+
+  it('renders a verified table grid and highlights only selected cells', async () => {
+    const block = {
+      ...makeBlock('blk_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(makeTableEvidenceResponse(block.block_id))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderViewer(makeRequirement('req_table', [source]), [block])
+
+    const grid = await screen.findByRole('table', {
+      name: 'Table evidence tbl_00000001'
+    })
+    expect(grid).toBeTruthy()
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/tasks/task-1/tables/tbl_00000001/blocks/blk_table/evidence',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(screen.getByText('repeated header')).toBeTruthy()
+
+    const selected = screen.getByRole('cell', {
+      name: /cell_00000001_r0002_c0002/
+    })
+    const unselected = screen.getByRole('cell', {
+      name: /cell_00000001_r0002_c0001/
+    })
+    expect(selected.getAttribute('aria-selected')).toBe('true')
+    expect(selected.className).toContain('selected')
+    expect(unselected.getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('cell', {
+      name: /cell_00000001_r0001_c0001/
+    }).getAttribute('colspan')).toBe('2')
+  })
+
+  it('withholds the table grid when table-cell validation failed', () => {
+    const block = {
+      ...makeBlock('blk_invalid_table', 'A | B'),
+      type: 'table' as const
+    }
+    const source = {
+      ...makeTableSource(block.block_id),
+      capability_results: [
+        tableCellResult('FAIL_INVALID_REFERENCE', 'SOURCE_TABLE_LOCATOR_INVALID')
+      ]
+    }
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderViewer(makeRequirement('req_invalid_table', [source]), [block])
+
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.getByText(
+      'Table locator invalid (FAIL_INVALID_REFERENCE). Grid withheld.'
+    )).toBeTruthy()
+    expect(screen.getByText(block.text, { selector: '.block-box p' })).toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed table evidence request', async () => {
+    const block = {
+      ...makeBlock('blk_retry_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce({
+        code: 'TABLE_EVIDENCE_UNAVAILABLE',
+        message: 'EvidenceIndex is invalid'
+      })
+      .mockResolvedValueOnce(jsonResponse(makeTableEvidenceResponse(block.block_id)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderViewer(makeRequirement('req_retry_table', [source]), [block])
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'TABLE_EVIDENCE_UNAVAILABLE'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry table evidence' }))
+
+    expect(await screen.findByRole('table', {
+      name: 'Table evidence tbl_00000001'
+    })).toBeTruthy()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('withholds a mismatched table evidence response', async () => {
+    const block = {
+      ...makeBlock('blk_mismatch_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({
+        ...makeTableEvidenceResponse(block.block_id),
+        block_id: 'blk_other'
+      })
+    ))
+
+    renderViewer(makeRequirement('req_mismatch_table', [source]), [block])
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'does not match the validated locator'
+    )
+    expect(screen.queryByRole('table')).toBeNull()
+  })
 })
 
 function renderViewer(requirement: RequirementIR, blocks: DocumentBlock[]) {
@@ -897,6 +1010,163 @@ function makePageLocator(sourceRotation: 0 | 90 | 180 | 270): PageLocator {
     coordinate_space: 'pdf_preview_rotated_points_top_left_v1',
     derivation: 'quote_span_union'
   }
+}
+
+function makeTableSource(blockId: string): SourceSpan {
+  return makeSource({
+    block_id: blockId,
+    quote: 'Approved',
+    canonical_source_cell_ids: ['cell_00000001_r0002_c0002'],
+    source_cell_ids_raw: ['cell_00000001_r0002_c0002'],
+    source_table_row_index: 2,
+    table_locator: {
+      table_id: 'tbl_00000001',
+      cell_ids: ['cell_00000001_r0002_c0002'],
+      row_indices: [2],
+      selected_row_index: 2,
+      column_indices: [2],
+      bbox: null
+    },
+    text_locator: {
+      block_id: blockId,
+      start: 24,
+      end: 32,
+      offset_encoding: 'unicode_code_point',
+      match_basis: 'exact'
+    },
+    locator_status: 'PASS_STRUCTURED',
+    capability_results: [tableCellResult('PASS')]
+  })
+}
+
+function makeTableEvidenceResponse(blockId: string): TableEvidenceResponse {
+  return {
+    schema_version: 'table_evidence_view_v1',
+    task_id: 'task-1',
+    evidence_fingerprint: 'a'.repeat(64),
+    table_id: 'tbl_00000001',
+    block_id: blockId,
+    row_count: 2,
+    column_count: 3,
+    topology_status: 'complete',
+    page: null,
+    bbox: null,
+    primary_row_start: 1,
+    primary_row_end: 2,
+    warnings: [],
+    rows: [
+      {
+        physical_row_index: 1,
+        rendered_start: 0,
+        rendered_end: 15,
+        repeated_header: true,
+        cells: [
+          {
+            cell_id: 'cell_00000001_r0001_c0001',
+            row_index: 1,
+            column_index: 1,
+            row_span: 1,
+            column_span: 2,
+            text: 'Header',
+            is_header: true,
+            page: null,
+            bbox: null,
+            occurrences: [
+              {
+                occurrence_id: 'occ_1',
+                occurrence_role: 'repeated_header',
+                canonical_start: 0,
+                canonical_end: 6
+              }
+            ]
+          },
+          {
+            cell_id: 'cell_00000001_r0001_c0003',
+            row_index: 1,
+            column_index: 3,
+            row_span: 1,
+            column_span: 1,
+            text: 'Status',
+            is_header: true,
+            page: null,
+            bbox: null,
+            occurrences: [
+              {
+                occurrence_id: 'occ_2',
+                occurrence_role: 'repeated_header',
+                canonical_start: 9,
+                canonical_end: 15
+              }
+            ]
+          }
+        ]
+      },
+      {
+        physical_row_index: 2,
+        rendered_start: 16,
+        rendered_end: 32,
+        repeated_header: false,
+        cells: [
+          {
+            cell_id: 'cell_00000001_r0002_c0001',
+            row_index: 2,
+            column_index: 1,
+            row_span: 1,
+            column_span: 1,
+            text: 'REQ-1',
+            is_header: false,
+            page: null,
+            bbox: null,
+            occurrences: [
+              {
+                occurrence_id: 'occ_3',
+                occurrence_role: 'original',
+                canonical_start: 16,
+                canonical_end: 21
+              }
+            ]
+          },
+          {
+            cell_id: 'cell_00000001_r0002_c0002',
+            row_index: 2,
+            column_index: 2,
+            row_span: 1,
+            column_span: 2,
+            text: 'Approved',
+            is_header: false,
+            page: null,
+            bbox: null,
+            occurrences: [
+              {
+                occurrence_id: 'occ_4',
+                occurrence_role: 'original',
+                canonical_start: 24,
+                canonical_end: 32
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+
+function tableCellResult(
+  status: CapabilityValidationResult['status'],
+  issueCode?: string
+): CapabilityValidationResult {
+  return {
+    capability: 'table_cell',
+    status,
+    issue_code: issueCode
+  }
+}
+
+function jsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  })
 }
 
 function pageRegionResult(

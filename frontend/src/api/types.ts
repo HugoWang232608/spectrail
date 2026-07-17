@@ -94,6 +94,55 @@ export type TableLocator = {
   bbox?: BoundingBox | null
 }
 
+export type TableEvidenceOccurrence = {
+  occurrence_id: string
+  occurrence_role:
+    | 'original'
+    | 'repeated_header'
+    | 'row_span_projection'
+    | 'duplicate_text_occurrence'
+  canonical_start: number
+  canonical_end: number
+}
+
+export type TableEvidenceCell = {
+  cell_id: string
+  row_index: number
+  column_index: number
+  row_span: number
+  column_span: number
+  text: string
+  is_header: boolean
+  page?: number | null
+  bbox?: BoundingBox | null
+  occurrences: TableEvidenceOccurrence[]
+}
+
+export type TableEvidenceRow = {
+  physical_row_index: number
+  rendered_start: number
+  rendered_end: number
+  repeated_header: boolean
+  cells: TableEvidenceCell[]
+}
+
+export type TableEvidenceResponse = {
+  schema_version: 'table_evidence_view_v1'
+  task_id: string
+  evidence_fingerprint: string
+  table_id: string
+  block_id: string
+  row_count: number
+  column_count: number
+  topology_status: 'complete' | 'sparse'
+  page?: number | null
+  bbox?: BoundingBox | null
+  primary_row_start: number
+  primary_row_end: number
+  warnings: string[]
+  rows: TableEvidenceRow[]
+}
+
 export type CapabilityValidationResult = {
   capability: 'text_range' | 'page_region' | 'table_cell'
   status:

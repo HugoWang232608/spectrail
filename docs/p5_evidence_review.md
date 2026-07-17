@@ -1,8 +1,8 @@
 # P5 Evidence Review
 
 P5 turns the typed Evidence locators into reviewer-visible source context. The
-first vertical slice covers validated PDF page regions while preserving the
-existing text-first review path.
+current vertical slices cover validated PDF page regions and DOCX table cells
+while preserving the existing text-first review path.
 
 ## Current flow
 
@@ -11,6 +11,12 @@ ReqIR SourceSpan.page_locator
   -> task-scoped PDF preview endpoint
   -> rotated page PNG
   -> proportional bbox overlay
+  -> locator and capability diagnostics
+
+ReqIR SourceSpan.table_locator
+  -> task-scoped, block-scoped table evidence endpoint
+  -> occurrence-aware HTML table grid
+  -> physical-row + canonical-cell highlight
   -> locator and capability diagnostics
 ```
 
@@ -57,6 +63,38 @@ TASK_TRANSACTION_LOCKED
 TASK_MIGRATION_INCOMPLETE
 ```
 
+The table evidence endpoint is:
+
+```text
+GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
+```
+
+It returns a versioned `table_evidence_view_v1` projection rather than exposing
+the complete `EvidenceIndex`. The response contains the table dimensions and
+topology status, the block's primary row range, rendered physical rows, logical
+cell coordinates and spans, stable cell IDs, occurrence roles and canonical
+ranges. It is derived only after loading and fingerprint-validating the task's
+`evidence_v5` artifact under the task transaction guard.
+
+Rows are ordered by their canonical occurrence ranges, so a repeated header
+projected into a later row-group remains before that group's primary rows.
+Occurrences for the same logical cell and physical row are grouped into one
+grid cell. This preserves the logical cell identity while still exposing
+`original`, `row_span_projection`, `repeated_header`, and
+`duplicate_text_occurrence` diagnostics.
+
+Successful table responses use `Cache-Control: private, no-store`; rerunning a
+task therefore cannot reuse a stale table projection. Table errors are
+structured:
+
+```text
+TABLE_EVIDENCE_NOT_FOUND
+TABLE_EVIDENCE_UNAVAILABLE
+```
+
+The former covers unknown or foreign table/block references. The latter covers
+a missing, invalid, or stale-fingerprint `EvidenceIndex`.
+
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn
 `PAGE_PREVIEW_NOT_FOUND` into `PAGE_PREVIEW_UNAVAILABLE`; a close failure is
@@ -71,7 +109,8 @@ For each source, the Review UI shows:
 - quote match status;
 - aggregate locator status and score;
 - PDF page preview and bbox derivation;
-- table and canonical cell IDs when present;
+- occurrence-aware table grid, row/column coordinates, spans, and canonical
+  cell IDs when present;
 - validation status for `text_range`, `page_region`, and `table_cell`;
 - highlighted canonical block text as the fallback evidence view.
 
@@ -145,6 +184,24 @@ WARNING_AMBIGUOUS    -> Page locator ambiguous
 FAIL_*               -> Page locator invalid
 ```
 
+The table grid follows the same trust boundary. It is fetched and rendered only
+when the `table_cell` capability status is `PASS` and a `TableLocator` exists.
+The UI then checks that the response belongs to the current task, table and
+block, contains the selected physical row, and maps each selected cell to the
+locator's canonical row and column anchors. Only the cells matching both
+`selected_row_index` and `cell_ids` receive the red selection highlight.
+
+Merged cells retain their logical `column_span`; row-span projections and
+repeated headers are displayed on the physical row represented in the source
+block. Stable cell IDs and logical coordinates remain visible to the reviewer.
+Sparse/unknown column gaps are rendered as unavailable grid slots rather than
+invented cells.
+
+For `UNVERIFIED`, warning, or failure statuses, the UI does not request table
+evidence and does not draw a grid. API failures are retryable without losing
+the canonical block text. A response that disagrees with the already validated
+locator is withheld instead of producing a plausible but untrusted highlight.
+
 Run the frontend evidence tests and production build with:
 
 ```bash
@@ -156,7 +213,9 @@ npm run build
 GitHub Actions runs `npm test` before the production frontend build. Component
 coverage verifies final locator highlighting, source and requirement changes,
 preview failure and retry, proportional overlay geometry, locator/block
-mismatch behavior, and all four supported page rotations.
+mismatch behavior, all four supported page rotations, table API failure and
+retry, merged-column rendering, repeated-header projection, and precise
+selected-cell highlighting.
 
 Backend geometry acceptance renders real PDFs at 0°, 90°, 180°, and 270°,
 derives each `PageLocator` through the parser and enricher, decodes the same PNG
@@ -168,9 +227,12 @@ from this deterministic cross-layer check.
 
 ## Next acceptance steps
 
-- add focused table-cell visualization for DOCX row-group blocks;
 - add pixel-based visual regression fixtures for 0°, 90°, 180°, and 270° PDF
   pages;
+- add browser screenshot regression for merged DOCX cells and large-table
+  row-groups;
+- reuse the table projection for checked-in PDF table fixtures once PDF table
+  detection reaches its M5 acceptance gate;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

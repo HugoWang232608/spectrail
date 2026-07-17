@@ -42,9 +42,9 @@ The endpoint:
 - participates in the task transaction guard;
 - uses RGB output without transparency;
 - caps scale at 2× and either output dimension at 2000 pixels;
-- permits a five-minute private browser cache so switching among sources on the
-  same page does not repeatedly render the PDF. Explicit Retry uses a new query
-  parameter and therefore bypasses the cached response.
+- permits a five-minute private browser cache so revisiting the same source
+  does not repeatedly render the PDF. Explicit Retry uses a new query parameter
+  and therefore bypasses the cached response.
 
 Errors remain structured:
 
@@ -76,7 +76,15 @@ the displayed canonical range is not byte-for-byte equal to `source.quote`.
 
 Preview loading occurs only after ReqIR and block reads complete, avoiding
 read-lock races. A failed image can be retried explicitly without losing the
-text evidence view.
+text evidence view. The preview URL includes `source_evidence_key`, whose
+identity includes the Evidence fingerprint, so the private browser cache cannot
+reuse a page image across pipeline runs with different source evidence.
+
+The page image remains available as document context when a legacy or edited
+source carries an unverified locator. The red bbox is rendered only when the
+`page_region` capability status is `PASS`; otherwise the preview explicitly
+reports the invalid or unverified locator instead of presenting it as trusted
+grounding.
 
 Run the frontend evidence tests and production build with:
 

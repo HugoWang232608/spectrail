@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import fitz
+import pytest
 from fastapi.testclient import TestClient
 
 from spectrail.core.io import read_json, write_json
@@ -90,21 +91,32 @@ def test_api_pdf_page_preview_rejects_missing_page(api_client: TestClient):
     assert response.json()["detail"]["code"] == "PAGE_PREVIEW_NOT_FOUND"
 
 
+@pytest.mark.parametrize(
+    ("rotation", "expected_size"),
+    [
+        (0, ("800", "600")),
+        (90, ("600", "800")),
+        (180, ("800", "600")),
+        (270, ("600", "800")),
+    ],
+)
 def test_api_pdf_page_preview_uses_rotated_page_dimensions(
     api_client: TestClient,
+    rotation: int,
+    expected_size: tuple[str, str],
 ):
     task_id = _create_completed_pdf_task(
         api_client,
         width=400,
         height=300,
-        rotation=90,
+        rotation=rotation,
     )
 
     response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
 
     assert response.status_code == 200
-    assert response.headers["x-spectrail-preview-width"] == "600"
-    assert response.headers["x-spectrail-preview-height"] == "800"
+    assert response.headers["x-spectrail-preview-width"] == expected_size[0]
+    assert response.headers["x-spectrail-preview-height"] == expected_size[1]
 
 
 def test_api_pdf_page_preview_maps_render_failure_to_structured_error(

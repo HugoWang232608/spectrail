@@ -122,7 +122,9 @@ describe('SourceViewer', () => {
       block_id: block.block_id,
       quote: block.text,
       page: 1,
+      source_evidence_key: 'src_111111111111111111111111',
       page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')],
       text_locator: {
         block_id: block.block_id,
         start: 0,
@@ -135,35 +137,110 @@ describe('SourceViewer', () => {
     renderViewer(makeRequirement('req_preview', [source]), [block])
 
     const image = screen.getByRole('img', { name: 'PDF page 1' })
-    expect(image.getAttribute('src')).toBe('/api/tasks/task-1/pages/1/preview.png?attempt=0')
+    expect(image.getAttribute('src')).toBe(
+      '/api/tasks/task-1/pages/1/preview.png' +
+      '?evidence=src_111111111111111111111111&attempt=0'
+    )
     fireEvent.error(image)
 
     expect(screen.getByText('PDF preview unavailable.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry preview' }))
 
     expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toBe(
-      '/api/tasks/task-1/pages/1/preview.png?attempt=1'
+      '/api/tasks/task-1/pages/1/preview.png' +
+      '?evidence=src_111111111111111111111111&attempt=1'
     )
   })
 
-  it.each([0, 90, 180, 270] as const)(
-    'applies proportional overlay geometry for %s° page locators',
-    (rotation) => {
+  it('changes the preview cache key when source evidence changes', () => {
+    const block = makeBlock('blk_cache', 'Cache evidence')
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      source_evidence_key: 'src_111111111111111111111111',
+      page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')]
+    })
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_cache', [source])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toContain(
+      'evidence=src_111111111111111111111111'
+    )
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_cache', [
+          {
+            ...source,
+            source_evidence_key: 'src_222222222222222222222222'
+          }
+        ])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toContain(
+      'evidence=src_222222222222222222222222'
+    )
+  })
+
+  it('shows page context without drawing an invalid locator', () => {
+    const block = makeBlock('blk_invalid_page', 'Invalid page locator')
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      page_locator: makePageLocator(0),
+      capability_results: [
+        pageRegionResult('FAIL_INVALID_REFERENCE', 'SOURCE_PAGE_LOCATOR_INVALID')
+      ]
+    })
+
+    renderViewer(makeRequirement('req_invalid_page', [source]), [block])
+
+    expect(screen.getByRole('img', { name: 'PDF page 1' })).toBeTruthy()
+    expect(screen.queryByLabelText('Source quote bounding box')).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe(
+      'Page locator invalid (FAIL_INVALID_REFERENCE).'
+    )
+  })
+
+  it.each([
+    [0, ['10%', '10%', '25%', '30%']],
+    [90, ['10%', '10%', '40%', '25%']],
+    [180, ['25%', '20%', '50%', '30%']],
+    [270, ['20%', '20%', '50%', '60%']]
+  ] as const)(
+    'uses canonical rotated preview dimensions for %s° page locators',
+    (rotation, expectedStyle) => {
       const block = makeBlock(`blk_rotation_${rotation}`, 'Rotated evidence')
       const source = makeSource({
         block_id: block.block_id,
         quote: block.text,
         page: 1,
-        page_locator: makePageLocator(rotation)
+        page_locator: makePageLocator(rotation),
+        capability_results: [pageRegionResult('PASS')]
       })
 
       renderViewer(makeRequirement(`req_rotation_${rotation}`, [source]), [block])
 
       const overlay = screen.getByLabelText('Source quote bounding box')
-      expect(overlay.style.left).toBe('10%')
-      expect(overlay.style.top).toBe('10%')
-      expect(overlay.style.width).toBe('25%')
-      expect(overlay.style.height).toBe('30%')
+      expect([
+        overlay.style.left,
+        overlay.style.top,
+        overlay.style.width,
+        overlay.style.height
+      ]).toEqual(expectedStyle)
     }
   )
 })
@@ -208,20 +285,54 @@ function makeSource(overrides: Partial<SourceSpan> = {}): SourceSpan {
 }
 
 function makePageLocator(sourceRotation: 0 | 90 | 180 | 270): PageLocator {
+  const geometry = {
+    0: {
+      pageWidth: 200,
+      pageHeight: 300,
+      bbox: [20, 30, 70, 120]
+    },
+    90: {
+      pageWidth: 300,
+      pageHeight: 200,
+      bbox: [30, 20, 150, 70]
+    },
+    180: {
+      pageWidth: 200,
+      pageHeight: 300,
+      bbox: [50, 60, 150, 150]
+    },
+    270: {
+      pageWidth: 300,
+      pageHeight: 200,
+      bbox: [60, 40, 210, 160]
+    }
+  }[sourceRotation]
+
   return {
     page: 1,
     bbox: {
-      x0: 20,
-      y0: 30,
-      x1: 70,
-      y1: 120,
+      x0: geometry.bbox[0],
+      y0: geometry.bbox[1],
+      x1: geometry.bbox[2],
+      y1: geometry.bbox[3],
       coordinate_space: 'pdf_preview_rotated_points_top_left_v1'
     },
-    page_width: 200,
-    page_height: 300,
+    page_width: geometry.pageWidth,
+    page_height: geometry.pageHeight,
     source_rotation: sourceRotation,
     coordinate_space: 'pdf_preview_rotated_points_top_left_v1',
     derivation: 'quote_span_union'
+  }
+}
+
+function pageRegionResult(
+  status: 'PASS' | 'FAIL_INVALID_REFERENCE',
+  issueCode: string | null = null
+) {
+  return {
+    capability: 'page_region' as const,
+    status,
+    issue_code: issueCode
   }
 }
 

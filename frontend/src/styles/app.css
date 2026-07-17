@@ -638,6 +638,20 @@ mark {
   pointer-events: none;
 }
 
+.page-locator-invalid {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  border: 1px solid rgb(180 35 24 / 45%);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: #912018;
+  background: rgb(255 244 242 / 92%);
+  box-shadow: 0 1px 3px rgb(16 24 40 / 12%);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .preview-unavailable {
   display: flex;
   align-items: center;

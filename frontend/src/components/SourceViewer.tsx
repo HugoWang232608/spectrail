@@ -156,6 +156,11 @@ function PageEvidencePreview({
     return null
   }
 
+  const evidenceVersion = source.source_evidence_key ?? 'legacy'
+  const pageRegionStatus = source.capability_results?.find(
+    (result) => result.capability === 'page_region'
+  )?.status
+  const pageLocatorValidated = pageRegionStatus === 'PASS'
   const { bbox } = locator
   const overlayStyle = {
     left: `${(bbox.x0 / locator.page_width) * 100}%`,
@@ -185,15 +190,25 @@ function PageEvidencePreview({
           style={{ aspectRatio: `${locator.page_width} / ${locator.page_height}` }}
         >
           <img
-            src={`${getPagePreviewUrl(taskId, locator.page)}?attempt=${attempt}`}
+            src={
+              `${getPagePreviewUrl(taskId, locator.page)}` +
+              `?evidence=${encodeURIComponent(evidenceVersion)}` +
+              `&attempt=${attempt}`
+            }
             alt={`PDF page ${locator.page}`}
             onError={onError}
           />
-          <span
-            className="page-locator-overlay"
-            style={overlayStyle}
-            aria-label="Source quote bounding box"
-          />
+          {pageLocatorValidated ? (
+            <span
+              className="page-locator-overlay"
+              style={overlayStyle}
+              aria-label="Source quote bounding box"
+            />
+          ) : (
+            <span className="page-locator-invalid" role="status">
+              Page locator invalid ({pageRegionStatus ?? 'UNVERIFIED'}).
+            </span>
+          )}
         </div>
       )}
     </div>

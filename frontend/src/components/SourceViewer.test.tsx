@@ -232,6 +232,59 @@ describe('SourceViewer', () => {
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('keeps a legacy table-cell source selected across reorder', () => {
+    const block = makeBlock('blk_legacy_table', 'Shared table quote')
+    const textSource = locatedSource(block, block.text)
+    const cellASource = makeSource({
+      ...textSource,
+      table_locator: {
+        table_id: 'tbl_00000001',
+        cell_ids: ['cell_00000001_r0001_c0001'],
+        row_indices: [1],
+        selected_row_index: 1,
+        column_indices: [1]
+      }
+    })
+    const cellBSource = makeSource({
+      ...textSource,
+      table_locator: {
+        table_id: 'tbl_00000001',
+        cell_ids: ['cell_00000001_r0001_c0002'],
+        row_indices: [1],
+        selected_row_index: 1,
+        column_indices: [2]
+      }
+    })
+    const requirementId = 'req_legacy_table'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, cellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Cells')).toBe(
+      'tbl_00000001: cell_00000001_r0001_c0002'
+    )
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellBSource, cellASource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Cells')).toBe(
+      'tbl_00000001: cell_00000001_r0001_c0002'
+    )
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

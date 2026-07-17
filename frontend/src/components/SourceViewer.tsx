@@ -372,7 +372,16 @@ function sourceSelectionIdentity(source: SourceSpan): string {
     source.block_id,
     source.text_locator?.start ?? null,
     source.text_locator?.end ?? null,
-    source.quote
+    source.quote,
+    source.table_locator
+      ? [
+        source.table_locator.table_id,
+        source.table_locator.selected_row_index,
+        source.table_locator.cell_ids,
+        source.table_locator.row_indices,
+        source.table_locator.column_indices
+      ]
+      : null
   ])
 }
 

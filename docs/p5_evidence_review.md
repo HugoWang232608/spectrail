@@ -96,6 +96,10 @@ committed to that selection state even before the reviewer navigates.
 Reordering therefore preserves the current source, exact duplicate sources
 remain individually selectable, and removal or replacement synchronously falls
 back to the first remaining source without an intermediate `No source` render.
+Legacy fallback identity includes block, text range, quote, table ID, selected
+physical row, canonical cell IDs, row indices, and column indices. Table
+sources with identical text but different structured cells therefore remain
+stable across reorder before table-cell visualization is introduced.
 
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or

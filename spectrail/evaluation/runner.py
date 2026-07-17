@@ -25,7 +25,15 @@ from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 RequirementList = TypeAdapter(list[RequirementIR])
 EVALUATION_OUTPUT_MARKER = ".spectrail-evaluation-output"
-EVALUATION_OUTPUT_MARKER_CONTENT = "spectrail-evaluation-output-v1\n"
+EVALUATION_OUTPUT_MARKER_PAYLOAD = {
+    "schema_version": "spectrail_evaluation_output_v1",
+    "managed_paths": [
+        "cases",
+        "evaluation_report.json",
+        "evaluation_report.md",
+    ],
+}
+LEGACY_EVALUATION_OUTPUT_MARKER_CONTENT = "spectrail-evaluation-output-v1\n"
 
 
 class EvaluationFixtureStaleError(Exception):
@@ -325,8 +333,8 @@ def _prepare_evaluation_output(
     else:
         output.mkdir(parents=True)
 
-    if not marker.exists():
-        marker.write_text(EVALUATION_OUTPUT_MARKER_CONTENT, encoding="utf-8")
+    if not _current_evaluation_output_marker(marker):
+        write_json(marker, EVALUATION_OUTPUT_MARKER_PAYLOAD)
 
     if cases_output.is_symlink() or (
         cases_output.exists() and not cases_output.is_dir()
@@ -341,8 +349,25 @@ def _valid_evaluation_output_marker(marker: Path) -> bool:
     if marker.is_symlink() or not marker.is_file():
         return False
     try:
-        return marker.read_text(encoding="utf-8") == EVALUATION_OUTPUT_MARKER_CONTENT
+        if read_json(marker) == EVALUATION_OUTPUT_MARKER_PAYLOAD:
+            return True
+    except (OSError, UnicodeError, JSONDecodeError):
+        pass
+    try:
+        return (
+            marker.read_text(encoding="utf-8")
+            == LEGACY_EVALUATION_OUTPUT_MARKER_CONTENT
+        )
     except (OSError, UnicodeError):
+        return False
+
+
+def _current_evaluation_output_marker(marker: Path) -> bool:
+    if marker.is_symlink() or not marker.is_file():
+        return False
+    try:
+        return read_json(marker) == EVALUATION_OUTPUT_MARKER_PAYLOAD
+    except (OSError, UnicodeError, JSONDecodeError):
         return False
 
 

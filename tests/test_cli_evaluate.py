@@ -14,6 +14,14 @@ def test_evaluate_cli_generates_passing_report(tmp_path: Path):
     assert main(["evaluate", "eval/cases/sample_srs/case.json", "--output", str(output)]) == 0
     report = read_json(output / "evaluation_report.json")
     assert report["passed"] is True
+    assert read_json(output / ".spectrail-evaluation-output") == {
+        "schema_version": "spectrail_evaluation_output_v1",
+        "managed_paths": [
+            "cases",
+            "evaluation_report.json",
+            "evaluation_report.md",
+        ],
+    }
     assert report["cases"][0]["requirement_exact_recall"] == 1.0
     assert report["cases"][0]["chunk_count"] == 1
     assert report["cases"][0]["model_call_count"] == 1
@@ -69,6 +77,27 @@ def test_evaluation_output_refuses_nonempty_unowned_directory(tmp_path: Path):
 
     assert sentinel.read_text(encoding="utf-8") == "keep"
     assert not (output / ".spectrail-evaluation-output").exists()
+
+
+def test_evaluation_output_upgrades_legacy_marker(tmp_path: Path):
+    output = tmp_path / "legacy-owned-output"
+    stale_cases = output / "cases" / "stale"
+    stale_cases.mkdir(parents=True)
+    (stale_cases / "old.txt").write_text("old", encoding="utf-8")
+    marker = output / ".spectrail-evaluation-output"
+    marker.write_text("spectrail-evaluation-output-v1\n", encoding="utf-8")
+
+    assert main(
+        [
+            "evaluate",
+            "eval/cases/sample_srs/case.json",
+            "--output",
+            str(output),
+        ]
+    ) == 0
+
+    assert read_json(marker)["schema_version"] == "spectrail_evaluation_output_v1"
+    assert not (stale_cases / "old.txt").exists()
 
 
 def test_nested_cases_with_same_parent_name_keep_distinct_artifacts(

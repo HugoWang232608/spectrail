@@ -125,7 +125,7 @@ export function makeMergedDocxVisualFixture(): VisualFixture {
       { capability: 'table_cell', status: 'PASS' }
     ]
   })
-  const tableEvidence: TableEvidenceResponse = {
+  const tableEvidence = validateVisualTableEvidence({
     schema_version: 'table_evidence_view_v1',
     task_id: VISUAL_TASK_ID,
     evidence_fingerprint: VISUAL_EVIDENCE_FINGERPRINT,
@@ -191,7 +191,7 @@ export function makeMergedDocxVisualFixture(): VisualFixture {
         ]
       }
     ]
-  }
+  })
   return {
     name: 'DOCX merged cell projection',
     requirement: requirement('req_docx_merged', source),
@@ -238,7 +238,7 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
       { capability: 'table_cell', status: 'PASS' }
     ]
   })
-  const tableEvidence: TableEvidenceResponse = {
+  const tableEvidence = validateVisualTableEvidence({
     schema_version: 'table_evidence_view_v1',
     task_id: VISUAL_TASK_ID,
     evidence_fingerprint: VISUAL_EVIDENCE_FINGERPRINT,
@@ -256,7 +256,7 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
       {
         physical_row_index: 1,
         rendered_start: 0,
-        rendered_end: 29,
+        rendered_end: 35,
         repeated_header: true,
         cells: [
           tableCell('cell_00000002_r0001_c0001', 1, 1, 'Requirement ID', {
@@ -276,7 +276,7 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
       {
         physical_row_index: 21,
         rendered_start: 36,
-        rendered_end: 70,
+        rendered_end: 65,
         repeated_header: false,
         cells: [
           tableCell('cell_00000002_r0021_c0001', 21, 1, 'REQ-021', {
@@ -308,7 +308,7 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
         ]
       }
     ]
-  }
+  })
   return {
     name: 'DOCX large-table second row-group',
     requirement: requirement('req_docx_row_group', source),
@@ -439,4 +439,34 @@ function tableCell(
       }
     ]
   }
+}
+
+export function validateVisualTableEvidence(
+  response: TableEvidenceResponse
+): TableEvidenceResponse {
+  for (const row of response.rows) {
+    const occurrences = row.cells.flatMap((cell) => cell.occurrences)
+    if (occurrences.length === 0) {
+      throw new Error(
+        `visual table row ${row.physical_row_index} has no cell occurrences`
+      )
+    }
+    const expectedStart = Math.min(
+      ...occurrences.map((occurrence) => occurrence.canonical_start)
+    )
+    const expectedEnd = Math.max(
+      ...occurrences.map((occurrence) => occurrence.canonical_end)
+    )
+    if (
+      row.rendered_start !== expectedStart
+      || row.rendered_end !== expectedEnd
+    ) {
+      throw new Error(
+        `visual table row ${row.physical_row_index} range ` +
+        `[${row.rendered_start}, ${row.rendered_end}) does not match ` +
+        `occurrence range [${expectedStart}, ${expectedEnd})`
+      )
+    }
+  }
+  return response
 }

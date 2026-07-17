@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Locator } from '@playwright/test'
 
 import {
   makeLargeRowGroupVisualFixture,
@@ -8,6 +9,10 @@ import {
 } from '../../src/visualFixtures'
 
 const ROTATIONS = [0, 90, 180, 270] as const
+
+test.beforeEach(({ page }) => {
+  expect(page.viewportSize()).toEqual({ width: 1180, height: 940 })
+})
 
 for (const rotation of ROTATIONS) {
   test(`PDF ${rotation}° preview aligns the validated locator`, async ({ page }) => {
@@ -70,7 +75,8 @@ for (const rotation of ROTATIONS) {
       )
     }
 
-    await expect(page.locator('.visual-harness')).toHaveScreenshot(
+    await expectLinuxScreenshot(
+      page.locator('.visual-harness'),
       `pdf-rotation-${rotation}.png`
     )
   })
@@ -85,7 +91,8 @@ test('DOCX merged cells render row-span projection and selected anchors', async 
   await expect(grid).toBeVisible()
   await expect(grid.getByText(/row_span_projection/)).toBeVisible()
   await expect(grid.locator('[aria-selected="true"]')).toHaveCount(2)
-  await expect(page.locator('.visual-harness')).toHaveScreenshot(
+  await expectLinuxScreenshot(
+    page.locator('.visual-harness'),
     'docx-merged-cells.png'
   )
 })
@@ -100,10 +107,21 @@ test('DOCX large-table row-group renders repeated header and selected primary ro
   await expect(grid.getByText('repeated header')).toBeVisible()
   await expect(grid.getByText('Row 22')).toBeVisible()
   await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1)
-  await expect(page.locator('.visual-harness')).toHaveScreenshot(
+  await expectLinuxScreenshot(
+    page.locator('.visual-harness'),
     'docx-large-row-group.png'
   )
 })
+
+async function expectLinuxScreenshot(
+  locator: Locator,
+  snapshotName: string
+): Promise<void> {
+  if (process.platform !== 'linux') {
+    return
+  }
+  await expect(locator).toHaveScreenshot(snapshotName)
+}
 
 function expectPixelClose(actual: number, expected: number): void {
   // The preview's one-pixel border participates in getBoundingClientRect(),

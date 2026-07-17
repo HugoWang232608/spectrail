@@ -296,6 +296,29 @@ npm run test:visual
 npm run build
 ```
 
+`npm run test:visual` always executes the DOM, capability, source-selection,
+and locator-geometry assertions. Pixel screenshot comparison is enabled only
+on Linux, which is the owned baseline environment used by GitHub Actions.
+Running the suite on macOS or Windows therefore remains useful for functional
+browser checks without comparing platform-specific font rasterization.
+
+Screenshot baselines must be updated on Linux:
+
+```bash
+cd frontend
+npm run test:visual:update
+```
+
+The update command rejects non-Linux hosts. Use an Ubuntu 24.04 CI runner or an
+equivalent Playwright Linux container; do not regenerate checked-in images
+directly on macOS. The baseline environment is fixed by `package-lock.json`,
+the Playwright Chromium revision, the checked-in Inter webfont, a 1180 × 940
+viewport, device scale factor 1, light color scheme, and reduced motion.
+The manually dispatched `Update frontend visual baselines` GitHub Actions
+workflow is the canonical update path: download its
+`frontend-visual-baselines-linux` artifact, inspect the images, and replace the
+checked-in baseline directory in a normal reviewed change.
+
 GitHub Actions runs both `npm test` and `npm run test:visual` before the
 production frontend build, and uploads Playwright reports and image diffs when
 the visual gate fails. Component
@@ -320,8 +343,11 @@ and compares checked-in Chromium screenshots for 0°, 90°, 180°, and 270°
 canonical preview spaces. Separate screenshots fix the table presentation
 contract for a vertically merged DOCX cell (`row_span_projection`) and for the
 second block of a large table, including its projected repeated header and
-selected primary row. These browser fixtures complement rather than replace
-the real-PDF parser/renderer pixel test.
+selected primary row. Table visual fixtures validate the same row-range
+invariant as `build_table_evidence_view()`: `rendered_start` is the minimum
+cell-occurrence start and `rendered_end` is the maximum occurrence end for the
+physical row. These browser fixtures complement rather than replace the
+real-PDF parser/renderer pixel test.
 
 ## Next acceptance steps
 

@@ -143,17 +143,18 @@ function App() {
     }
 
     const packagePayload = await getReqIR(loaded.task_id)
-    setReqir(packagePayload)
-    setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
-
+    let nextBlocks: DocumentBlock[] = []
+    let nextBlocksError: ApiError | null = null
     try {
       const blocksPayload = await getBlocks(loaded.task_id)
-      setBlocks(blocksPayload.items)
-      setBlocksError(null)
+      nextBlocks = blocksPayload.items
     } catch (caught) {
-      setBlocks([])
-      setBlocksError(toApiError(caught))
+      nextBlocksError = toApiError(caught)
     }
+    setBlocks(nextBlocks)
+    setBlocksError(nextBlocksError)
+    setReqir(packagePayload)
+    setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
   }
 
   async function perform(action: Exclude<BusyAction, null>, taskAction: () => Promise<void>) {
@@ -172,7 +173,7 @@ function App() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">P4</p>
+          <p className="eyebrow">P5 Evidence Review</p>
           <h1>SpecTrail Review UI</h1>
         </div>
         <span className="api-pill">{API_BASE_URL}</span>
@@ -230,6 +231,7 @@ function App() {
               />
               <ReqIRDetail requirement={selectedRequirement} />
               <SourceViewer
+                taskId={task?.task_id ?? null}
                 requirement={selectedRequirement}
                 blocks={blocks}
                 blocksError={blocksError}

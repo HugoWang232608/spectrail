@@ -40,7 +40,17 @@ class BlocksNotFoundError(TaskStoreError):
     pass
 
 
+class PagePreviewUnavailableError(TaskStoreError):
+    pass
+
+
+class PagePreviewNotFoundError(TaskStoreError):
+    pass
+
+
 READABLE_TASK_STATUSES = {"completed", "completed_with_warnings"}
+PAGE_PREVIEW_MAX_DIMENSION = 2000
+PAGE_PREVIEW_MAX_SCALE = 2.0
 
 
 class LocalTaskStore:
@@ -195,6 +205,44 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
+    def render_pdf_page_preview(
+        self,
+        task_id: str,
+        page_number: int,
+    ) -> tuple[bytes, int, int]:
+        if page_number < 1:
+            raise PagePreviewNotFoundError("page number must be 1-based")
+
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "page_preview_read"):
+                task = read_json(task_dir / "task.json")
+                if task.get("status") not in READABLE_TASK_STATUSES:
+                    raise TaskNotReadyError(f"task is not completed: {task_id}")
+                input_document = task.get("input_document")
+                if not isinstance(input_document, str) or not input_document:
+                    raise PagePreviewUnavailableError(
+                        f"task has no uploaded document: {task_id}"
+                    )
+                document_path = (task_dir / input_document).resolve(strict=False)
+                try:
+                    document_path.relative_to(task_dir.resolve(strict=False))
+                except ValueError as exc:
+                    raise PagePreviewUnavailableError(
+                        "task input document is outside the task directory"
+                    ) from exc
+                if document_path.suffix.lower() != ".pdf":
+                    raise PagePreviewUnavailableError(
+                        "page preview is available only for PDF tasks"
+                    )
+                if not document_path.is_file():
+                    raise PagePreviewUnavailableError(
+                        f"uploaded PDF is missing: {task_id}"
+                    )
+                return _render_pdf_page(document_path, page_number)
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
     def read_chunks(self, task_id: str) -> list[dict[str, Any]]:
         task_dir = self.get_task_dir(task_id)
         try:
@@ -280,3 +328,47 @@ def _input_format(suffix: str) -> str:
     if suffix in {".md", ".markdown"}:
         return "markdown"
     return suffix.lstrip(".")
+
+
+def _render_pdf_page(
+    document_path: Path,
+    page_number: int,
+) -> tuple[bytes, int, int]:
+    try:
+        import fitz
+    except ImportError as exc:  # pragma: no cover - parser uses the same dependency
+        raise PagePreviewUnavailableError(
+            "PyMuPDF is required for PDF page previews"
+        ) from exc
+
+    try:
+        document = fitz.open(document_path)
+    except Exception as exc:
+        raise PagePreviewUnavailableError(
+            f"failed to open PDF preview source: {document_path.name}"
+        ) from exc
+    try:
+        if page_number > document.page_count:
+            raise PagePreviewNotFoundError(
+                f"PDF page does not exist: {page_number}"
+            )
+        page = document[page_number - 1]
+        width = float(page.rect.width)
+        height = float(page.rect.height)
+        if width <= 0 or height <= 0:
+            raise PagePreviewUnavailableError(
+                f"PDF page has invalid dimensions: {page_number}"
+            )
+        scale = min(
+            PAGE_PREVIEW_MAX_SCALE,
+            PAGE_PREVIEW_MAX_DIMENSION / width,
+            PAGE_PREVIEW_MAX_DIMENSION / height,
+        )
+        pixmap = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale),
+            colorspace=fitz.csRGB,
+            alpha=False,
+        )
+        return pixmap.tobytes("png"), pixmap.width, pixmap.height
+    finally:
+        document.close()

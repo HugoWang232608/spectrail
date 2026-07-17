@@ -359,3 +359,25 @@ python -m spectrail evaluate eval/cases/sample_srs/case.json \
 The evaluation command exits non-zero when a checked threshold fails, making it suitable for CI. See [docs/p4_evaluation_chunking.md](docs/p4_evaluation_chunking.md) for artifact formats, statuses, API parameters, and validation behavior.
 
 The checked evaluation suite currently covers the original single-pass sample, a three-chunk long-document mock run, strict replay of the same long document from a request-fingerprint-bound Recorded bundle, and a selected-scope case over the included IEEE 29148 text PDF. All four gate source alignment recall, requirement exact recall, and export grounding at `1.0`.
+
+## P5 Evidence Review
+
+P5 begins consuming the typed locator artifacts produced by the DOCX/PDF V2
+pipeline. For PDF sources with a validated `page_locator`, the Review UI renders
+the corresponding page and overlays the source bounding box in the canonical
+rotated preview coordinate space.
+
+The preview endpoint is task-scoped and read-only:
+
+```text
+GET /api/tasks/{task_id}/pages/{page_number}/preview.png
+```
+
+Rendering is allowed only for completed PDF tasks, runs under the task
+transaction guard, and caps the preview to 2000 pixels per dimension. The UI
+continues to show quote and block text when a visual preview is unavailable.
+Locator status, score, structured cell identity, and per-capability validation
+results are displayed alongside the source.
+
+See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
+contract and next acceptance steps.

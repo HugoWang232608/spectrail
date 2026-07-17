@@ -68,6 +68,10 @@ export function getExportUrl(taskId: string, filename: 'reqir.json' | 'requireme
   return `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/exports/${filename}`
 }
 
+export function getPagePreviewUrl(taskId: string, page: number): string {
+  return `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/pages/${page}/preview.png`
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {

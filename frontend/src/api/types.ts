@@ -59,6 +59,54 @@ export type TaskRunResponse = {
   manifest: TaskManifest
 }
 
+export type BoundingBox = {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+  coordinate_space: 'pdf_preview_rotated_points_top_left_v1'
+}
+
+export type TextLocator = {
+  block_id: string
+  start: number
+  end: number
+  offset_encoding: 'unicode_code_point'
+  match_basis: 'exact' | 'normalized'
+}
+
+export type PageLocator = {
+  page: number
+  bbox: BoundingBox
+  page_width: number
+  page_height: number
+  source_rotation: 0 | 90 | 180 | 270
+  coordinate_space: 'pdf_preview_rotated_points_top_left_v1'
+  derivation: 'block_bbox' | 'quote_span_union' | 'table_cell_union'
+}
+
+export type TableLocator = {
+  table_id: string
+  cell_ids: string[]
+  row_indices: number[]
+  selected_row_index: number
+  column_indices: number[]
+  bbox?: BoundingBox | null
+}
+
+export type CapabilityValidationResult = {
+  capability: 'text_range' | 'page_region' | 'table_cell'
+  status:
+    | 'UNVERIFIED'
+    | 'PASS'
+    | 'WARNING_UNAVAILABLE'
+    | 'WARNING_AMBIGUOUS'
+    | 'FAIL_INVALID_REFERENCE'
+    | 'FAIL_DERIVATION'
+  issue_code?: string | null
+  message?: string | null
+}
+
 export type SourceSpan = {
   document_id: string
   document_name?: string | null
@@ -72,6 +120,21 @@ export type SourceSpan = {
   bbox?: number[] | null
   table_cell?: string | null
   image_region?: string | null
+  text_locator?: TextLocator | null
+  page_locator?: PageLocator | null
+  table_locator?: TableLocator | null
+  provisional_text_locator?: TextLocator | null
+  locator_status:
+    | 'UNVERIFIED'
+    | 'PASS_DERIVED'
+    | 'PASS_STRUCTURED'
+    | 'WARNING_UNAVAILABLE'
+    | 'WARNING_AMBIGUOUS'
+    | 'FAIL_INVALID_REFERENCE'
+    | 'FAIL_DERIVATION'
+  capability_results: CapabilityValidationResult[]
+  locator_score?: number | null
+  source_evidence_key?: string | null
 }
 
 export type ReviewRecord = {

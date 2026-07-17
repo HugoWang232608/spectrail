@@ -1,3 +1,4 @@
+import fitz
 from fastapi.testclient import TestClient
 
 from spectrail.core.io import read_json, write_json
@@ -59,3 +60,94 @@ def test_api_blocks_converts_order_index_to_order(api_client: TestClient, comple
     first = response.json()["items"][0]
     assert first["order"] == blocks[0]["order_index"]
     assert "order_index" not in first
+
+
+def test_api_pdf_page_preview_returns_bounded_png(api_client: TestClient):
+    task_id = _create_completed_pdf_task(
+        api_client,
+        width=4000,
+        height=1000,
+    )
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-spectrail-preview-width"] == "2000"
+    assert response.headers["x-spectrail-preview-height"] == "500"
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_api_pdf_page_preview_rejects_missing_page(api_client: TestClient):
+    task_id = _create_completed_pdf_task(api_client)
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/2/preview.png")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "PAGE_PREVIEW_NOT_FOUND"
+
+
+def test_api_pdf_page_preview_uses_rotated_page_dimensions(
+    api_client: TestClient,
+):
+    task_id = _create_completed_pdf_task(
+        api_client,
+        width=400,
+        height=300,
+        rotation=90,
+    )
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 200
+    assert response.headers["x-spectrail-preview-width"] == "600"
+    assert response.headers["x-spectrail-preview-height"] == "800"
+
+
+def test_api_page_preview_rejects_non_pdf_task(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PAGE_PREVIEW_UNAVAILABLE"
+
+
+def test_api_page_preview_before_completion_returns_409(api_client: TestClient):
+    created = api_client.post("/api/tasks", json={})
+    task_id = created.json()["task_id"]
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TASK_NOT_COMPLETED"
+
+
+def _create_completed_pdf_task(
+    api_client: TestClient,
+    *,
+    width: float = 400,
+    height: float = 300,
+    rotation: int = 0,
+) -> str:
+    created = api_client.post("/api/tasks", json={})
+    assert created.status_code == 200
+    task_id = created.json()["task_id"]
+
+    document = fitz.open()
+    page = document.new_page(width=width, height=height)
+    page.insert_text((30, 40), "Preview evidence")
+    page.set_rotation(rotation)
+    content = document.tobytes()
+    document.close()
+    uploaded = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={"file": ("preview.pdf", content, "application/pdf")},
+    )
+    assert uploaded.status_code == 200
+    api_client.app.state.task_store.update_task(task_id, status="completed")
+    return task_id

@@ -331,9 +331,21 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
 
     block_index = {block["block_id"]: block for block in blocks.json()["items"]}
     assert any(item["sources"][0]["page"] is not None for item in reqir.json()["items"])
+    located_sources = []
     for item in reqir.json()["items"]:
         source = item["sources"][0]
         assert source["page"] == block_index[source["block_id"]]["page"]
+        assert source["locator_status"] == "PASS_STRUCTURED"
+        assert source["page_locator"] is not None
+        located_sources.append(source)
+
+    preview_page = located_sources[0]["page_locator"]["page"]
+    preview = api_client.get(
+        f"/api/tasks/{task_id}/pages/{preview_page}/preview.png"
+    )
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_api_upload_rejects_unsupported_extension(api_client: TestClient):

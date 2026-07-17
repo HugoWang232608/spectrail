@@ -24,6 +24,30 @@ from spectrail.parsers.registry import parse_document
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
+def _mark_cjk_font_as_bold(
+    document: fitz.Document,
+    page: fitz.Page,
+    *,
+    resource_name: str,
+) -> None:
+    type_zero_xref = next(
+        font[0] for font in page.get_fonts(full=True) if font[4] == resource_name
+    )
+    descendant_value = document.xref_get_key(
+        type_zero_xref,
+        "DescendantFonts",
+    )[1]
+    descendant_xref = int(descendant_value.lstrip("[ ").split()[0])
+    descriptor_value = document.xref_get_key(
+        descendant_xref,
+        "FontDescriptor",
+    )[1]
+    descriptor_xref = int(descriptor_value.split()[0])
+    document.xref_set_key(type_zero_xref, "BaseFont", "/Heiti-Bold")
+    document.xref_set_key(descendant_xref, "BaseFont", "/Heiti-Bold")
+    document.xref_set_key(descriptor_xref, "FontName", "/Heiti-Bold")
+
+
 def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     path = tmp_path / "sample.pdf"
     document = fitz.open()
@@ -47,7 +71,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.9"
+    assert parsed.parser_identity.parser_version == "2.10"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -681,6 +705,101 @@ def test_pdf_v2_cross_page_heading_skips_bold_page_number_footer(
         evidence.block_id == by_text["PAGE 1"].block_id
         for evidence in index.blocks
     )
+
+
+def test_pdf_v2_cross_page_heading_skips_repeated_bold_header(
+    tmp_path: Path,
+):
+    path = tmp_path / "cross-page-heading-with-repeated-header.pdf"
+    document = fitz.open()
+    for page_number in range(1, 4):
+        page = document.new_page(width=500, height=800)
+        page.insert_text(
+            (50, 30),
+            "ACME SYSTEM SPECIFICATION",
+            fontname="hebo",
+        )
+        if page_number == 1:
+            page.insert_text(
+                (50, 680),
+                "System Interfaces",
+                fontname="hebo",
+            )
+        elif page_number == 2:
+            page.insert_text(
+                (50, 80),
+                "Interfaces are exposed through authenticated endpoints.",
+            )
+        else:
+            page.insert_text((50, 120), "Additional interface details.")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    headers = [
+        block
+        for block in parsed.blocks
+        if block.text.strip() == "ACME SYSTEM SPECIFICATION"
+    ]
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert len(headers) == 3
+    assert all(block.metadata["repeated_edge_candidate"] for block in headers)
+    assert all(block.type == "paragraph" for block in headers)
+    assert by_text["System Interfaces"].type == "heading"
+    assert by_text[
+        "Interfaces are exposed through authenticated endpoints."
+    ].section_path == ["System Interfaces"]
+
+
+def test_pdf_v2_cross_page_heading_skips_bold_chinese_page_number(
+    tmp_path: Path,
+):
+    path = tmp_path / "cross-page-heading-with-chinese-footer.pdf"
+    document = fitz.open()
+    page_one = document.new_page(width=500, height=800)
+    page_one.insert_text(
+        (50, 680),
+        "System Interfaces",
+        fontname="hebo",
+    )
+    page_one.insert_text(
+        (230, 790),
+        "第 1 页",
+        fontname="china-s",
+    )
+    _mark_cjk_font_as_bold(
+        document,
+        page_one,
+        resource_name="china-s",
+    )
+    page_two = document.new_page(width=500, height=800)
+    page_two.insert_text(
+        (50, 50),
+        "Interfaces are exposed through authenticated endpoints.",
+    )
+    document.save(path)
+    document.close()
+
+    raw_document = fitz.open(path)
+    chinese_span = next(
+        span
+        for block in raw_document[0].get_text("dict")["blocks"]
+        for line in block.get("lines", [])
+        for span in line.get("spans", [])
+        if span["text"] == "第 1 页"
+    )
+    assert chinese_span["flags"] & 16
+    raw_document.close()
+
+    parsed = PdfParserV2().parse(path)
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert by_text["第 1 页"].type == "paragraph"
+    assert by_text["System Interfaces"].type == "heading"
+    assert by_text[
+        "Interfaces are exposed through authenticated endpoints."
+    ].section_path == ["System Interfaces"]
 
 
 @pytest.mark.parametrize(

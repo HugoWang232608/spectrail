@@ -796,14 +796,14 @@ def _is_heading_inference_edge_decoration(
     )
     if is_patterned_edge_decoration:
         return True
+    if block.edge_candidate:
+        return True
     if (
         block.block_type == "heading"
         or block.bold_heading_candidate
         or NUMBERED_HEADING_RE.match(block.text)
     ):
         return False
-    if block.edge_candidate:
-        return True
     return False
 
 
@@ -1084,15 +1084,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.9",
+        parser_version="2.10",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v8",
-            "bold_heading_detection": "adjacent_body_multilingual_edge_decorations_v7",
+            "section_hierarchy": "numeric_prefix_then_font_size_v9",
+            "bold_heading_detection": "adjacent_body_repeated_edge_priority_v8",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

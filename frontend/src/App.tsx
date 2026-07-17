@@ -30,6 +30,7 @@ function App() {
   const [task, setTask] = useState<TaskStatusResponse | null>(null)
   const [reqir, setReqir] = useState<ReqIRPackage | null>(null)
   const [blocks, setBlocks] = useState<DocumentBlock[]>([])
+  const [blocksEvidenceFingerprint, setBlocksEvidenceFingerprint] = useState<string | null>(null)
   const [blocksError, setBlocksError] = useState<ApiError | null>(null)
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null)
   const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatusFilter>('all')
@@ -65,6 +66,7 @@ function App() {
       setTaskIdInput(created.task_id)
       setReqir(null)
       setBlocks([])
+      setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
     })
@@ -102,6 +104,7 @@ function App() {
       setTask(await getTask(task.task_id))
       setReqir(null)
       setBlocks([])
+      setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
     })
@@ -133,25 +136,57 @@ function App() {
     })
   }
 
+  async function handleReloadEvidence() {
+    if (!task) {
+      return
+    }
+    await perform('load', async () => {
+      const loaded = await getTask(task.task_id)
+      setTask(loaded)
+      await loadReqIRIfCompleted(loaded)
+    })
+  }
+
   async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
     if (!isReadableStatus(loaded.status)) {
       setReqir(null)
       setBlocks([])
+      setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
       return
     }
 
     const packagePayload = await getReqIR(loaded.task_id)
+    const evidenceFingerprint = reqirEvidenceFingerprint(packagePayload)
     let nextBlocks: DocumentBlock[] = []
+    let nextBlocksEvidenceFingerprint: string | null = null
     let nextBlocksError: ApiError | null = null
-    try {
-      const blocksPayload = await getBlocks(loaded.task_id)
-      nextBlocks = blocksPayload.items
-    } catch (caught) {
-      nextBlocksError = toApiError(caught)
+    if (!evidenceFingerprint) {
+      nextBlocksError = {
+        code: 'EVIDENCE_VERSION_UNAVAILABLE',
+        message: 'ReqIR package has no valid Evidence fingerprint'
+      }
+    } else {
+      try {
+        const blocksPayload = await getBlocks(
+          loaded.task_id,
+          evidenceFingerprint
+        )
+        if (blocksPayload.evidence_fingerprint !== evidenceFingerprint) {
+          throw {
+            code: 'EVIDENCE_VERSION_CHANGED',
+            message: 'blocks do not match the loaded ReqIR Evidence version'
+          } satisfies ApiError
+        }
+        nextBlocks = blocksPayload.items
+        nextBlocksEvidenceFingerprint = blocksPayload.evidence_fingerprint
+      } catch (caught) {
+        nextBlocksError = toApiError(caught)
+      }
     }
     setBlocks(nextBlocks)
+    setBlocksEvidenceFingerprint(nextBlocksEvidenceFingerprint)
     setBlocksError(nextBlocksError)
     setReqir(packagePayload)
     setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
@@ -236,6 +271,9 @@ function App() {
                 blocks={blocks}
                 blocksError={blocksError}
                 evidenceFingerprint={reqirEvidenceFingerprint(reqir)}
+                blocksEvidenceFingerprint={blocksEvidenceFingerprint}
+                reloadingEvidence={busyAction === 'load'}
+                onReloadEvidence={() => void handleReloadEvidence()}
               />
             </div>
           </div>

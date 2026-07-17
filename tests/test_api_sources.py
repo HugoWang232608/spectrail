@@ -1,4 +1,5 @@
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import fitz
@@ -8,18 +9,27 @@ from docx import Document
 from docx.oxml import OxmlElement
 
 from spectrail.core.io import read_json, write_json
-from spectrail.evidence import finalize_evidence_fingerprint
+from spectrail.evidence import (
+    EvidenceIndex,
+    finalize_evidence_fingerprint,
+    sha256_text,
+)
+from spectrail.api.app import create_app
 from spectrail.parsers.docx_parser import DocxParserV2
+from spectrail.tasks import LocalTaskStore
 
 
 def test_api_blocks_returns_completed_task_blocks(api_client: TestClient, completed_api_task: dict):
     task_id = completed_api_task["task_id"]
+    fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
 
-    response = api_client.get(f"/api/tasks/{task_id}/blocks")
+    response = api_client.get(_blocks_url(task_id, fingerprint))
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["task_id"] == task_id
+    assert payload["evidence_fingerprint"] == fingerprint
+    assert response.headers["cache-control"] == "private, no-store"
     assert len(payload["items"]) > 0
     first = payload["items"][0]
     assert {"block_id", "document_id", "type", "text", "section_path", "order", "metadata"} <= set(first)
@@ -30,14 +40,14 @@ def test_api_blocks_before_completion_returns_409(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
 
-    response = api_client.get(f"/api/tasks/{task_id}/blocks")
+    response = api_client.get(_blocks_url(task_id, "0" * 64))
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_NOT_COMPLETED"
 
 
 def test_api_blocks_missing_task_returns_404(api_client: TestClient):
-    response = api_client.get("/api/tasks/task_missing/blocks")
+    response = api_client.get(_blocks_url("task_missing", "0" * 64))
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "TASK_NOT_FOUND"
@@ -45,10 +55,11 @@ def test_api_blocks_missing_task_returns_404(api_client: TestClient):
 
 def test_api_blocks_missing_blocks_file_returns_404(api_client: TestClient, completed_api_task: dict):
     task_id = completed_api_task["task_id"]
+    fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
     (task_dir / "parsed" / "blocks.json").unlink()
 
-    response = api_client.get(f"/api/tasks/{task_id}/blocks")
+    response = api_client.get(_blocks_url(task_id, fingerprint))
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "BLOCKS_NOT_FOUND"
@@ -56,18 +67,90 @@ def test_api_blocks_missing_blocks_file_returns_404(api_client: TestClient, comp
 
 def test_api_blocks_converts_order_index_to_order(api_client: TestClient, completed_api_task: dict):
     task_id = completed_api_task["task_id"]
+    fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
     blocks_path = task_dir / "parsed" / "blocks.json"
     blocks = read_json(blocks_path)
     blocks[0]["order_index"] = blocks[0].pop("order")
     write_json(blocks_path, blocks)
 
-    response = api_client.get(f"/api/tasks/{task_id}/blocks")
+    response = api_client.get(_blocks_url(task_id, fingerprint))
 
     assert response.status_code == 200
     first = response.json()["items"][0]
     assert first["order"] == blocks[0]["order_index"]
     assert "order_index" not in first
+
+
+def test_api_blocks_rejects_reqir_from_another_evidence_version(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+
+    response = api_client.get(_blocks_url(task_id, "f" * 64))
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "EVIDENCE_VERSION_CHANGED"
+
+
+def test_api_blocks_rejects_content_from_another_evidence_generation(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    blocks_path = task_dir / "parsed" / "blocks.json"
+    blocks = read_json(blocks_path)
+    blocks[0]["text"] = f"{blocks[0]['text']} changed"
+    write_json(blocks_path, blocks)
+
+    response = api_client.get(_blocks_url(task_id, fingerprint))
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "BLOCKS_UNAVAILABLE"
+
+
+def test_api_blocks_rejects_cross_request_generation_race(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    fingerprint_a = _reqir_evidence_fingerprint(api_client, task_id)
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    blocks_path = task_dir / "parsed" / "blocks.json"
+    evidence_path = task_dir / "parsed" / "evidence_index.json"
+
+    blocks_b = read_json(blocks_path)
+    blocks_b[0]["text"] = f"{blocks_b[0]['text']} generation B"
+    write_json(blocks_path, blocks_b)
+    evidence_b = EvidenceIndex.model_validate(read_json(evidence_path))
+    first_evidence_block = evidence_b.blocks[0].model_copy(
+        update={
+            "text_length": len(blocks_b[0]["text"]),
+            "text_sha256": sha256_text(blocks_b[0]["text"]),
+        }
+    )
+    evidence_b = evidence_b.model_copy(
+        update={
+            "blocks": [first_evidence_block, *evidence_b.blocks[1:]],
+            "warnings": [*evidence_b.warnings, "generation B"],
+        }
+    )
+    evidence_b = finalize_evidence_fingerprint(evidence_b)
+    write_json(evidence_path, evidence_b.model_dump(mode="json"))
+
+    stale_reqir = api_client.get(_blocks_url(task_id, fingerprint_a))
+
+    assert stale_reqir.status_code == 409
+    assert stale_reqir.json()["detail"]["code"] == "EVIDENCE_VERSION_CHANGED"
+
+    refreshed_reqir = api_client.get(
+        _blocks_url(task_id, evidence_b.evidence_fingerprint)
+    )
+    assert refreshed_reqir.status_code == 200
+    assert refreshed_reqir.json()["items"][0]["text"].endswith("generation B")
 
 
 def test_api_table_evidence_returns_block_scoped_logical_grid(
@@ -257,6 +340,31 @@ def test_api_table_evidence_reuses_validated_index_for_unchanged_file(
         fail_if_revalidated,
     )
     assert api_client.get(endpoint).status_code == 200
+
+
+def test_table_evidence_cache_evicts_least_recently_used_task(
+    tmp_path: Path,
+):
+    store = LocalTaskStore(
+        tmp_path / "bounded-tasks",
+        evidence_cache_max_tasks=2,
+    )
+    client = TestClient(create_app(task_store=store))
+    task_ids: list[str] = []
+    for _ in range(3):
+        task_id, parsed = _create_completed_docx_table_task(client)
+        assert parsed.evidence_index is not None
+        table = parsed.evidence_index.tables[0]
+        response = client.get(
+            f"/api/tasks/{task_id}/tables/{table.table_id}"
+            f"/blocks/{table.block_ids[0]}/evidence"
+            "?expected_evidence_fingerprint="
+            f"{parsed.evidence_index.evidence_fingerprint}"
+        )
+        assert response.status_code == 200
+        task_ids.append(task_id)
+
+    assert list(store._evidence_cache) == task_ids[-2:]
 
 
 def test_api_pdf_page_preview_returns_bounded_png(api_client: TestClient):
@@ -515,3 +623,19 @@ def _mark_repeating_header(row) -> None:
         "true",
     )
     row.get_or_add_trPr().append(table_header)
+
+
+def _reqir_evidence_fingerprint(
+    api_client: TestClient,
+    task_id: str,
+) -> str:
+    response = api_client.get(f"/api/tasks/{task_id}/reqir")
+    assert response.status_code == 200
+    return response.json()["metadata"]["evidence_fingerprint"]
+
+
+def _blocks_url(task_id: str, evidence_fingerprint: str) -> str:
+    return (
+        f"/api/tasks/{task_id}/blocks"
+        f"?expected_evidence_fingerprint={evidence_fingerprint}"
+    )

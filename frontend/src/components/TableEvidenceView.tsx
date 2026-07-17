@@ -15,13 +15,17 @@ type TableEvidenceViewProps = {
   source: SourceSpan
   tableCellStatus: CapabilityValidationResult['status'] | undefined
   expectedEvidenceFingerprint: string | null
+  reloadingEvidence: boolean
+  onReloadEvidence?: () => void
 }
 
 function TableEvidenceView({
   taskId,
   source,
   tableCellStatus,
-  expectedEvidenceFingerprint
+  expectedEvidenceFingerprint,
+  reloadingEvidence,
+  onReloadEvidence
 }: TableEvidenceViewProps) {
   const locator = source.table_locator
   const validated = tableCellStatus === 'PASS'
@@ -78,6 +82,12 @@ function TableEvidenceView({
             ReqIR Evidence version is unavailable. Reload or migrate the ReqIR
             package before reviewing table evidence.
           </p>
+          {onReloadEvidence ? (
+            <ReloadEvidenceButton
+              reloading={reloadingEvidence}
+              onReload={onReloadEvidence}
+            />
+          ) : null}
         </div>
       </section>
     )
@@ -117,9 +127,17 @@ function TableEvidenceView({
       ) : error ? (
         <div className="preview-unavailable" role="alert">
           {error.code === 'EVIDENCE_VERSION_CHANGED' ? (
-            <p className="muted-text">
-              Evidence version changed. Reload ReqIR before reviewing table evidence.
-            </p>
+            <>
+              <p className="muted-text">
+                Evidence version changed. Reload ReqIR before reviewing table evidence.
+              </p>
+              {onReloadEvidence ? (
+                <ReloadEvidenceButton
+                  reloading={reloadingEvidence}
+                  onReload={onReloadEvidence}
+                />
+              ) : null}
+            </>
           ) : (
             <>
               <p className="muted-text">
@@ -138,6 +156,13 @@ function TableEvidenceView({
               ? 'Evidence version changed. Reload ReqIR before reviewing table evidence.'
               : 'Table evidence response does not match the validated locator. Grid withheld.'}
           </p>
+          {data.evidence_fingerprint !== expectedEvidenceFingerprint
+          && onReloadEvidence ? (
+              <ReloadEvidenceButton
+                reloading={reloadingEvidence}
+                onReload={onReloadEvidence}
+              />
+            ) : null}
         </div>
       ) : data ? (
         <>
@@ -182,6 +207,20 @@ function TableEvidenceView({
         </>
       ) : null}
     </section>
+  )
+}
+
+function ReloadEvidenceButton({
+  reloading,
+  onReload
+}: {
+  reloading: boolean
+  onReload: () => void
+}) {
+  return (
+    <button type="button" disabled={reloading} onClick={onReload}>
+      {reloading ? 'Reloading…' : 'Reload task evidence'}
+    </button>
   )
 }
 

@@ -43,8 +43,14 @@ export async function getReqIR(taskId: string): Promise<ReqIRPackage> {
   return request<ReqIRPackage>(`/tasks/${taskId}/reqir`)
 }
 
-export async function getBlocks(taskId: string): Promise<BlocksResponse> {
-  return request<BlocksResponse>(`/tasks/${taskId}/blocks`)
+export async function getBlocks(
+  taskId: string,
+  expectedEvidenceFingerprint: string
+): Promise<BlocksResponse> {
+  return request<BlocksResponse>(
+    `/tasks/${encodeURIComponent(taskId)}/blocks` +
+      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}`
+  )
 }
 
 export async function getTableEvidence(

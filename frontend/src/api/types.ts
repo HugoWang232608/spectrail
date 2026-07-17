@@ -240,6 +240,7 @@ export type DocumentBlock = {
 
 export type BlocksResponse = {
   task_id: string
+  evidence_fingerprint: string
   items: DocumentBlock[]
 }
 

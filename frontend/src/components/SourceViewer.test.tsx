@@ -948,12 +948,23 @@ describe('SourceViewer', () => {
       })
     ))
 
-    renderViewer(makeRequirement('req_version_table', [source]), [block])
+    const reload = vi.fn()
+    renderViewer(
+      makeRequirement('req_version_table', [source]),
+      [block],
+      'a'.repeat(64),
+      'a'.repeat(64),
+      reload
+    )
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Evidence version changed. Reload ReqIR'
     )
     expect(screen.queryByRole('grid')).toBeNull()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   it('requires ReqIR Evidence metadata before requesting table evidence', () => {
@@ -976,9 +987,9 @@ describe('SourceViewer', () => {
       />
     )
 
-    expect(screen.getByRole('alert').textContent).toContain(
-      'ReqIR Evidence version is unavailable'
-    )
+    expect(screen.getByText(
+      /ReqIR Evidence version is unavailable/
+    )).toBeTruthy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -1050,12 +1061,41 @@ describe('SourceViewer', () => {
       name: /cell_00000001_r0002_c0001, physical row 2/
     }).getAttribute('aria-selected')).toBe('false')
   })
+
+  it('withholds block text from a different Evidence version and reloads', () => {
+    const block = makeBlock(
+      'blk_stale_context',
+      'Current generation block text'
+    )
+    const source = locatedSource(block, 'Current generation')
+    const reload = vi.fn()
+
+    renderViewer(
+      makeRequirement('req_stale_context', [source]),
+      [block],
+      'a'.repeat(64),
+      'b'.repeat(64),
+      reload
+    )
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('EVIDENCE_VERSION_CHANGED')
+    expect(screen.queryByText('Current generation', {
+      selector: '.block-box mark'
+    })).toBeNull()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
 })
 
 function renderViewer(
   requirement: RequirementIR,
   blocks: DocumentBlock[],
-  evidenceFingerprint = 'a'.repeat(64)
+  evidenceFingerprint = 'a'.repeat(64),
+  blocksEvidenceFingerprint = evidenceFingerprint,
+  onReloadEvidence?: () => void
 ) {
   return render(
     <SourceViewer
@@ -1064,6 +1104,8 @@ function renderViewer(
       blocks={blocks}
       blocksError={null}
       evidenceFingerprint={evidenceFingerprint}
+      blocksEvidenceFingerprint={blocksEvidenceFingerprint}
+      onReloadEvidence={onReloadEvidence}
     />
   )
 }

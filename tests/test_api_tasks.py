@@ -323,7 +323,11 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
     assert run.json()["manifest"]["counts"]["validated_requirements"] >= 14
 
     reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
-    blocks = api_client.get(f"/api/tasks/{task_id}/blocks")
+    evidence_fingerprint = reqir.json()["metadata"]["evidence_fingerprint"]
+    blocks = api_client.get(
+        f"/api/tasks/{task_id}/blocks"
+        f"?expected_evidence_fingerprint={evidence_fingerprint}"
+    )
     xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
     assert reqir.status_code == 200
     assert blocks.status_code == 200

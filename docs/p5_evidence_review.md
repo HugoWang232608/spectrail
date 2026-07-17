@@ -18,6 +18,11 @@ ReqIR SourceSpan.table_locator
   -> occurrence-aware HTML table grid
   -> physical-row + canonical-cell highlight
   -> locator and capability diagnostics
+
+ReqIR metadata.evidence_fingerprint
+  -> task-scoped canonical blocks endpoint
+  -> fingerprint-bound block snapshot
+  -> TextLocator highlight or explicit evidence reload
 ```
 
 The page preview uses the same
@@ -99,6 +104,20 @@ a missing, invalid, or stale-fingerprint `EvidenceIndex`.
 `EVIDENCE_VERSION_CHANGED` means the ReqIR package and the current task
 EvidenceIndex are from different pipeline generations.
 
+Canonical block context uses the same conditional-read contract:
+
+```text
+GET /api/tasks/{task_id}/blocks
+  ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+```
+
+The response contains `task_id`, the validated `evidence_fingerprint`, and
+`items`. Before returning it, the service validates both the Evidence fingerprint
+and the complete blocks artifact against the current `EvidenceIndex`. A changed
+generation returns `EVIDENCE_VERSION_CHANGED`; an internally inconsistent
+blocks artifact returns `BLOCKS_UNAVAILABLE`. Successful responses use
+`Cache-Control: private, no-store`.
+
 Every pipeline ReqIR artifact now carries:
 
 ```text
@@ -107,19 +126,22 @@ metadata.evidence_fingerprint
 
 Review snapshots preserve it, validation outputs copy it when Evidence is
 available, and migration rewrites it to the migrated Evidence fingerprint.
-The frontend sends that exact value with each table request and independently
-checks it against `TableEvidenceResponse.evidence_fingerprint`. A task rerun
-between the ReqIR and table requests therefore produces an explicit reload
-message even if stable table, block and cell IDs happen to remain unchanged.
-Legacy packages without the metadata cannot request a trusted table grid and
-must be migrated or reloaded.
+The frontend sends that exact value with both blocks and table requests and
+independently checks each response fingerprint. A task rerun between the ReqIR
+and either evidence request therefore produces an explicit reload message even
+if stable block, table, and cell IDs happen to remain unchanged. Until reload
+succeeds, the UI withholds canonical block text as well as the table grid.
+Legacy packages without the metadata cannot request trusted evidence and must
+be migrated or reloaded.
 
-`LocalTaskStore` caches the fully validated `EvidenceIndex` and block-scoped
-table projections by task ID plus the Evidence file device, inode, size,
+`LocalTaskStore` caches the fully validated `EvidenceIndex`, validated blocks,
+and block-scoped table projections by task ID plus artifact device, inode, size,
 modification time and change time. Repeated source navigation therefore avoids
-re-reading, Pydantic-validating and re-hashing the whole index. Upload,
-pipeline reset, or any Evidence artifact signature change invalidates the
-cache before a projection can be returned.
+re-reading, Pydantic-validating and re-hashing the whole index. The cache is an
+access-ordered LRU limited to 16 tasks by default; the least recently used task
+is evicted when the limit is exceeded. Upload, pipeline reset, or any Evidence
+artifact signature change invalidates the affected entry before evidence can be
+returned.
 
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn
@@ -154,6 +176,11 @@ reuse a page image across pipeline runs with different source evidence.
 Preview failure state is also keyed by the selected source; legacy sources use
 their block, text range, and quote so a failed same-page source cannot poison
 the next source.
+
+If a blocks or table request reports a changed Evidence version, the Review UI
+does not offer the ordinary single-request retry. It shows **Reload task
+evidence**, which reloads task status, ReqIR, and canonical blocks as one client
+operation before visual evidence is shown again.
 
 Source selection itself uses the same stable identity plus its occurrence
 ordinal instead of a numeric list index, and the selection context is scoped by

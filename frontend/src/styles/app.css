@@ -794,6 +794,25 @@ mark {
   padding: 5px 9px;
 }
 
+.block-context-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px dashed #c9d0da;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.block-context-unavailable p {
+  margin: 0;
+}
+
+.block-context-unavailable button {
+  flex: 0 0 auto;
+}
+
 .capability-list {
   display: grid;
   gap: 7px;

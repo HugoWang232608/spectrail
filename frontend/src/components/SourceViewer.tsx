@@ -22,6 +22,9 @@ type SourceViewerProps = {
   blocks: DocumentBlock[]
   blocksError: ApiError | null
   evidenceFingerprint?: string | null
+  blocksEvidenceFingerprint?: string | null
+  reloadingEvidence?: boolean
+  onReloadEvidence?: () => void
 }
 
 type SourceSelection = {
@@ -36,7 +39,10 @@ function SourceViewer({
   requirement,
   blocks,
   blocksError,
-  evidenceFingerprint = null
+  evidenceFingerprint,
+  blocksEvidenceFingerprint,
+  reloadingEvidence = false,
+  onReloadEvidence
 }: SourceViewerProps) {
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
     taskId: null,
@@ -66,7 +72,32 @@ function SourceViewer({
   const effectiveSelection = sourceSelectionAt(sources, effectiveSourceIndex)
   const effectiveSourceIdentity = effectiveSelection?.sourceIdentity ?? null
   const effectiveSourceOccurrence = effectiveSelection?.sourceOccurrence ?? null
-  const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
+  const versionBindingProvided = (
+    evidenceFingerprint !== undefined
+    || blocksEvidenceFingerprint !== undefined
+  )
+  const blocksVersionMatches = (
+    !versionBindingProvided
+    || (
+      evidenceFingerprint != null
+      && blocksEvidenceFingerprint === evidenceFingerprint
+    )
+  )
+  const blockContextError = blocksError ?? (
+    blocksVersionMatches
+      ? null
+      : {
+        code: evidenceFingerprint
+          ? 'EVIDENCE_VERSION_CHANGED'
+          : 'EVIDENCE_VERSION_UNAVAILABLE',
+        message: evidenceFingerprint
+          ? 'blocks do not match the loaded ReqIR Evidence version'
+          : 'ReqIR package has no valid Evidence fingerprint'
+      }
+  )
+  const block = source && blocksVersionMatches && !blocksError
+    ? blocks.find((item) => item.block_id === source.block_id) ?? null
+    : null
   const sourcePreviewIdentity = effectiveSelection
     ? JSON.stringify([
       effectiveSelection.sourceIdentity,
@@ -217,7 +248,9 @@ function SourceViewer({
               taskId={taskId}
               source={source}
               tableCellStatus={tableCellStatus}
-              expectedEvidenceFingerprint={evidenceFingerprint}
+              expectedEvidenceFingerprint={evidenceFingerprint ?? null}
+              reloadingEvidence={reloadingEvidence}
+              onReloadEvidence={onReloadEvidence}
             />
           ) : null}
 
@@ -238,10 +271,22 @@ function SourceViewer({
 
           <div className="block-box">
             <h3>Block Text</h3>
-            {blocksError ? (
-              <p className="muted-text">
-                Block context unavailable: {blocksError.code} {blocksError.message}
-              </p>
+            {blockContextError ? (
+              <div className="block-context-unavailable" role="alert">
+                <p className="muted-text">
+                  Block context unavailable: {blockContextError.code}{' '}
+                  {blockContextError.message}
+                </p>
+                {onReloadEvidence ? (
+                  <button
+                    type="button"
+                    disabled={reloadingEvidence}
+                    onClick={onReloadEvidence}
+                  >
+                    {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
+                  </button>
+                ) : null}
+              </div>
             ) : block ? (
               <p>{renderHighlightedBlock(block.text, source)}</p>
             ) : (

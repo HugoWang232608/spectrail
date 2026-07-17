@@ -7,11 +7,12 @@ from spectrail.evidence import TableEvidenceView
 from spectrail.tasks import LocalTaskStore, TaskNotFoundError
 from spectrail.tasks.store import (
     BlocksNotFoundError,
+    BlocksUnavailableError,
+    EvidenceVersionChangedError,
     PagePreviewNotFoundError,
     PagePreviewUnavailableError,
     TableEvidenceNotFoundError,
     TableEvidenceUnavailableError,
-    TableEvidenceVersionChangedError,
     TaskNotReadyError,
 )
 
@@ -22,18 +23,34 @@ router = APIRouter(tags=["sources"])
 @router.get("/tasks/{task_id}/blocks")
 def get_blocks(
     task_id: str,
+    response: Response,
+    expected_evidence_fingerprint: str = Query(
+        pattern=r"^[0-9a-f]{64}$",
+    ),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        blocks = store.read_blocks(task_id)
+        evidence_fingerprint, blocks = store.read_blocks(
+            task_id,
+            expected_evidence_fingerprint=expected_evidence_fingerprint,
+        )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
     except BlocksNotFoundError as exc:
         raise _error(404, "BLOCKS_NOT_FOUND", str(exc)) from exc
+    except BlocksUnavailableError as exc:
+        raise _error(409, "BLOCKS_UNAVAILABLE", str(exc)) from exc
+    except EvidenceVersionChangedError as exc:
+        raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
-    return {"task_id": task_id, "items": blocks}
+    response.headers["Cache-Control"] = "private, no-store"
+    return {
+        "task_id": task_id,
+        "evidence_fingerprint": evidence_fingerprint,
+        "items": blocks,
+    }
 
 
 @router.get(
@@ -65,7 +82,7 @@ def get_table_evidence(
         raise _error(404, "TABLE_EVIDENCE_NOT_FOUND", str(exc)) from exc
     except TableEvidenceUnavailableError as exc:
         raise _error(409, "TABLE_EVIDENCE_UNAVAILABLE", str(exc)) from exc
-    except TableEvidenceVersionChangedError as exc:
+    except EvidenceVersionChangedError as exc:
         raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
     response.headers["Cache-Control"] = "private, no-store"

@@ -1,6 +1,9 @@
 from spectrail.tasks.ids import new_task_id
 from spectrail.tasks.store import (
     READABLE_TASK_STATUSES,
+    BlocksUnavailableError,
+    DEFAULT_EVIDENCE_CACHE_MAX_TASKS,
+    EvidenceVersionChangedError,
     LocalTaskStore,
     TaskNotFoundError,
     TaskStoreError,
@@ -12,6 +15,9 @@ from spectrail.tasks.store import (
 
 __all__ = [
     "LocalTaskStore",
+    "BlocksUnavailableError",
+    "DEFAULT_EVIDENCE_CACHE_MAX_TASKS",
+    "EvidenceVersionChangedError",
     "READABLE_TASK_STATUSES",
     "TaskNotFoundError",
     "TaskStoreError",

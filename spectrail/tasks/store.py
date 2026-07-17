@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,6 +9,7 @@ from threading import RLock
 from typing import Any
 
 from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.core.models import DocumentBlock
 from spectrail.evidence import (
     EvidenceIndex,
     TableEvidenceView,
@@ -20,7 +22,10 @@ from spectrail.evidence.pdf_preview import (
     PdfPagePreviewUnavailableError,
     render_pdf_page,
 )
-from spectrail.parsers import SUPPORTED_DOCUMENT_SUFFIXES
+from spectrail.evidence.index_builder import (
+    validate_evidence_index_against_parsed_document,
+)
+from spectrail.parsers import ParsedDocument, SUPPORTED_DOCUMENT_SUFFIXES
 from spectrail.task_transactions import TaskTransactionError, task_operation
 from spectrail.tasks.ids import new_task_id
 
@@ -54,6 +59,10 @@ class BlocksNotFoundError(TaskStoreError):
     pass
 
 
+class BlocksUnavailableError(TaskStoreError):
+    pass
+
+
 class PagePreviewUnavailableError(TaskStoreError):
     pass
 
@@ -70,27 +79,44 @@ class TableEvidenceNotFoundError(TaskStoreError):
     pass
 
 
-class TableEvidenceVersionChangedError(TaskStoreError):
+class EvidenceVersionChangedError(TaskStoreError):
     pass
 
 
+# Backward-compatible import name for callers of the first table-only API.
+TableEvidenceVersionChangedError = EvidenceVersionChangedError
+
+
 READABLE_TASK_STATUSES = {"completed", "completed_with_warnings"}
+DEFAULT_EVIDENCE_CACHE_MAX_TASKS = 16
 
 
 @dataclass
-class _TableEvidenceCacheEntry:
+class _TaskEvidenceCacheEntry:
     file_signature: tuple[int, int, int, int, int]
     index: EvidenceIndex
+    blocks_file_signature: tuple[int, int, int, int, int] | None = None
+    blocks: list[dict[str, Any]] | None = None
     projections: dict[tuple[str, str], TableEvidenceView] = field(
         default_factory=dict
     )
 
 
 class LocalTaskStore:
-    def __init__(self, root: str | Path = "outputs/tasks") -> None:
+    def __init__(
+        self,
+        root: str | Path = "outputs/tasks",
+        *,
+        evidence_cache_max_tasks: int = DEFAULT_EVIDENCE_CACHE_MAX_TASKS,
+    ) -> None:
+        if evidence_cache_max_tasks < 1:
+            raise ValueError("evidence_cache_max_tasks must be positive")
         self.root = Path(root)
-        self._table_evidence_cache: dict[str, _TableEvidenceCacheEntry] = {}
-        self._table_evidence_cache_lock = RLock()
+        self._evidence_cache_max_tasks = evidence_cache_max_tasks
+        self._evidence_cache: OrderedDict[str, _TaskEvidenceCacheEntry] = (
+            OrderedDict()
+        )
+        self._evidence_cache_lock = RLock()
 
     def create_task(
         self,
@@ -162,7 +188,7 @@ class LocalTaskStore:
                 input_dir = ensure_dir(task_dir / "input")
                 document_path = input_dir / f"original{suffix}"
                 document_path.write_bytes(content)
-                self._invalidate_table_evidence_cache(task_id)
+                self._invalidate_evidence_cache(task_id)
                 self.update_task(
                     task_id,
                     status="uploaded",
@@ -229,7 +255,12 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def read_blocks(self, task_id: str) -> list[dict[str, Any]]:
+    def read_blocks(
+        self,
+        task_id: str,
+        *,
+        expected_evidence_fingerprint: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "blocks_read"):
@@ -237,7 +268,60 @@ class LocalTaskStore:
                 blocks_path = task_dir / "parsed" / "blocks.json"
                 if not blocks_path.exists():
                     raise BlocksNotFoundError(f"blocks not found: {task_id}")
-                return [_normalize_block(block) for block in read_json(blocks_path)]
+                try:
+                    cache_entry = self._validated_evidence_cache_entry(
+                        task_id,
+                        task_dir,
+                    )
+                    self._require_evidence_version(
+                        cache_entry,
+                        expected_evidence_fingerprint,
+                    )
+                    blocks_signature = _file_signature(blocks_path)
+                    if (
+                        cache_entry.blocks is None
+                        or cache_entry.blocks_file_signature != blocks_signature
+                    ):
+                        blocks = [
+                            DocumentBlock.model_validate(_normalize_block(block))
+                            for block in read_json(blocks_path)
+                        ]
+                        parsed_document = ParsedDocument(
+                            document_id=cache_entry.index.document_id,
+                            document_name=cache_entry.index.document_name,
+                            source_format=cache_entry.index.source_format,
+                            parser_name=(
+                                cache_entry.index.parser_identity.parser_name
+                            ),
+                            text="\n\n".join(block.text for block in blocks),
+                            blocks=blocks,
+                            parser_identity=cache_entry.index.parser_identity,
+                        )
+                        validate_evidence_index_against_parsed_document(
+                            cache_entry.index,
+                            parsed_document,
+                        )
+                        cache_entry.blocks = [
+                            block.model_dump(mode="json") for block in blocks
+                        ]
+                        cache_entry.blocks_file_signature = blocks_signature
+                    cached_blocks = cache_entry.blocks
+                    if cached_blocks is None:
+                        raise BlocksUnavailableError(
+                            f"validated blocks are unavailable: {task_id}"
+                        )
+                    return (
+                        cache_entry.index.evidence_fingerprint,
+                        cached_blocks,
+                    )
+                except EvidenceVersionChangedError:
+                    raise
+                except BlocksUnavailableError:
+                    raise
+                except (OSError, TypeError, ValueError) as exc:
+                    raise BlocksUnavailableError(
+                        f"blocks do not match the task EvidenceIndex: {task_id}"
+                    ) from exc
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -253,46 +337,22 @@ class LocalTaskStore:
         try:
             with task_operation(task_dir, "table_evidence_read"):
                 self.require_readable_task(task_id)
-                evidence_path = task_dir / "parsed" / "evidence_index.json"
-                if not evidence_path.exists():
-                    self._invalidate_table_evidence_cache(task_id)
-                    raise TableEvidenceUnavailableError(
-                        f"EvidenceIndex not found: {task_id}"
-                    )
                 try:
-                    file_signature = _file_signature(evidence_path)
-                    with self._table_evidence_cache_lock:
-                        cache_entry = self._table_evidence_cache.get(task_id)
-                    if (
-                        cache_entry is None
-                        or cache_entry.file_signature != file_signature
-                    ):
-                        index = EvidenceIndex.model_validate(
-                            read_json(evidence_path)
-                        )
-                        validate_evidence_fingerprint(index)
-                        cache_entry = _TableEvidenceCacheEntry(
-                            file_signature=file_signature,
-                            index=index,
-                        )
-                        with self._table_evidence_cache_lock:
-                            self._table_evidence_cache[task_id] = cache_entry
+                    cache_entry = self._validated_evidence_cache_entry(
+                        task_id,
+                        task_dir,
+                    )
                 except (OSError, TypeError, ValueError) as exc:
-                    self._invalidate_table_evidence_cache(task_id)
                     raise TableEvidenceUnavailableError(
                         f"EvidenceIndex is invalid: {task_id}"
                     ) from exc
-                if (
-                    cache_entry.index.evidence_fingerprint
-                    != expected_evidence_fingerprint
-                ):
-                    raise TableEvidenceVersionChangedError(
-                        "ReqIR Evidence fingerprint does not match the current "
-                        "task EvidenceIndex"
-                    )
+                self._require_evidence_version(
+                    cache_entry,
+                    expected_evidence_fingerprint,
+                )
                 try:
                     projection_key = (table_id, block_id)
-                    with self._table_evidence_cache_lock:
+                    with self._evidence_cache_lock:
                         projection = cache_entry.projections.get(projection_key)
                     if projection is None:
                         projection = build_table_evidence_view(
@@ -301,7 +361,7 @@ class LocalTaskStore:
                             table_id=table_id,
                             block_id=block_id,
                         )
-                        with self._table_evidence_cache_lock:
+                        with self._evidence_cache_lock:
                             cache_entry.projections[projection_key] = projection
                     return projection
                 except TableEvidenceViewNotFoundError as exc:
@@ -413,7 +473,7 @@ class LocalTaskStore:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "pipeline_reset"):
-                self._invalidate_table_evidence_cache(task_id)
+                self._invalidate_evidence_cache(task_id)
                 for name in ["parsed", "extracted", "review", "exports"]:
                     target = task_dir / name
                     if target.exists():
@@ -421,9 +481,59 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def _invalidate_table_evidence_cache(self, task_id: str) -> None:
-        with self._table_evidence_cache_lock:
-            self._table_evidence_cache.pop(task_id, None)
+    def _validated_evidence_cache_entry(
+        self,
+        task_id: str,
+        task_dir: Path,
+    ) -> _TaskEvidenceCacheEntry:
+        evidence_path = task_dir / "parsed" / "evidence_index.json"
+        if not evidence_path.exists():
+            self._invalidate_evidence_cache(task_id)
+            raise ValueError(f"EvidenceIndex not found: {task_id}")
+        file_signature = _file_signature(evidence_path)
+        with self._evidence_cache_lock:
+            cache_entry = self._evidence_cache.get(task_id)
+            if (
+                cache_entry is not None
+                and cache_entry.file_signature == file_signature
+            ):
+                self._evidence_cache.move_to_end(task_id)
+                return cache_entry
+
+        try:
+            index = EvidenceIndex.model_validate(read_json(evidence_path))
+            validate_evidence_fingerprint(index)
+        except (OSError, TypeError, ValueError):
+            self._invalidate_evidence_cache(task_id)
+            raise
+        cache_entry = _TaskEvidenceCacheEntry(
+            file_signature=file_signature,
+            index=index,
+        )
+        with self._evidence_cache_lock:
+            self._evidence_cache[task_id] = cache_entry
+            self._evidence_cache.move_to_end(task_id)
+            while len(self._evidence_cache) > self._evidence_cache_max_tasks:
+                self._evidence_cache.popitem(last=False)
+        return cache_entry
+
+    @staticmethod
+    def _require_evidence_version(
+        cache_entry: _TaskEvidenceCacheEntry,
+        expected_evidence_fingerprint: str,
+    ) -> None:
+        if (
+            cache_entry.index.evidence_fingerprint
+            != expected_evidence_fingerprint
+        ):
+            raise EvidenceVersionChangedError(
+                "ReqIR Evidence fingerprint does not match the current task "
+                "EvidenceIndex"
+            )
+
+    def _invalidate_evidence_cache(self, task_id: str) -> None:
+        with self._evidence_cache_lock:
+            self._evidence_cache.pop(task_id, None)
 
 
 def _now_iso() -> str:

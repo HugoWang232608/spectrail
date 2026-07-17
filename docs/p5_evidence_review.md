@@ -159,6 +159,12 @@ returned. Blocks are cached as an immutable tuple of validated `DocumentBlock`
 models; each caller receives a fresh JSON projection, so an in-process consumer
 cannot mutate the trusted cache entry.
 
+The same cache entry retains the validated PDF source SHA-256 together with its
+device, inode, size, modification time, and change time. An unchanged source is
+not re-hashed for every page request. A signature change forces a new full hash,
+and a file whose signature changes during hashing is rejected as unavailable
+rather than cached.
+
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn
 `PAGE_PREVIEW_NOT_FOUND` into `PAGE_PREVIEW_UNAVAILABLE`; a close failure is
@@ -177,6 +183,11 @@ For each source, the Review UI shows:
   cell IDs when present;
 - validation status for `text_range`, `page_region`, and `table_cell`;
 - highlighted canonical block text as the fallback evidence view.
+
+`SourceViewer` requires both `evidenceFingerprint` and
+`blocksEvidenceFingerprint` props. Callers handling legacy data must pass
+`null` explicitly; omitting the version context is not a trusted compatibility
+mode and fails TypeScript compilation.
 
 Canonical block highlighting uses the final `TextLocator` before considering the
 legacy exact-quote fallback. Offsets are applied to `Array.from(text)` so the

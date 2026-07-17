@@ -468,6 +468,14 @@ def test_api_pdf_page_preview_rejects_pdf_not_bound_to_evidence(
     task_id = _create_completed_pdf_task(api_client)
     fingerprint = _current_evidence_fingerprint(api_client, task_id)
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    assert api_client.get(
+        _preview_url(
+            api_client,
+            task_id,
+            1,
+            expected_evidence_fingerprint=fingerprint,
+        )
+    ).status_code == 200
     (task_dir / "input" / "original.pdf").write_bytes(b"%PDF changed")
 
     response = api_client.get(
@@ -484,6 +492,24 @@ def test_api_pdf_page_preview_rejects_pdf_not_bound_to_evidence(
         "code": "EVIDENCE_VERSION_CHANGED",
         "message": "current PDF does not match the task EvidenceIndex",
     }
+
+
+def test_api_pdf_page_preview_reuses_hash_for_unchanged_source(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id = _create_completed_pdf_task(api_client)
+    preview_url = _preview_url(api_client, task_id, 1)
+
+    assert api_client.get(preview_url).status_code == 200
+
+    def fail_if_rehashed(path: Path) -> str:
+        del path
+        raise AssertionError("unchanged PDF should reuse its validated hash")
+
+    monkeypatch.setattr("spectrail.tasks.store.sha256_file", fail_if_rehashed)
+
+    assert api_client.get(preview_url).status_code == 200
 
 
 def test_api_pdf_page_preview_preserves_not_found_when_close_fails(

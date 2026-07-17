@@ -98,6 +98,8 @@ class _TaskEvidenceCacheEntry:
     index: EvidenceIndex
     blocks_file_signature: tuple[int, int, int, int, int] | None = None
     blocks: tuple[DocumentBlock, ...] | None = None
+    source_file_signature: tuple[int, int, int, int, int] | None = None
+    source_sha256: str | None = None
     projections: dict[tuple[str, str], TableEvidenceView] = field(
         default_factory=dict
     )
@@ -424,12 +426,11 @@ class LocalTaskStore:
                     raise PagePreviewUnavailableError(
                         "page preview EvidenceIndex is not for a PDF"
                     )
-                try:
-                    current_source_sha256 = sha256_file(document_path)
-                except OSError as exc:
-                    raise PagePreviewUnavailableError(
-                        f"failed to hash PDF preview source: {task_id}"
-                    ) from exc
+                current_source_sha256 = self._cached_source_sha256(
+                    cache_entry,
+                    document_path,
+                    task_id=task_id,
+                )
                 if current_source_sha256 != cache_entry.index.source_sha256:
                     raise EvidenceVersionChangedError(
                         "current PDF does not match the task EvidenceIndex"
@@ -574,6 +575,41 @@ class LocalTaskStore:
     def _invalidate_evidence_cache(self, task_id: str) -> None:
         with self._evidence_cache_lock:
             self._evidence_cache.pop(task_id, None)
+
+    def _cached_source_sha256(
+        self,
+        cache_entry: _TaskEvidenceCacheEntry,
+        document_path: Path,
+        *,
+        task_id: str,
+    ) -> str:
+        try:
+            signature_before = _file_signature(document_path)
+        except OSError as exc:
+            raise PagePreviewUnavailableError(
+                f"failed to inspect PDF preview source: {task_id}"
+            ) from exc
+        with self._evidence_cache_lock:
+            if (
+                cache_entry.source_file_signature == signature_before
+                and cache_entry.source_sha256 is not None
+            ):
+                return cache_entry.source_sha256
+        try:
+            source_sha256 = sha256_file(document_path)
+            signature_after = _file_signature(document_path)
+        except OSError as exc:
+            raise PagePreviewUnavailableError(
+                f"failed to hash PDF preview source: {task_id}"
+            ) from exc
+        if signature_after != signature_before:
+            raise PagePreviewUnavailableError(
+                f"PDF preview source changed while hashing: {task_id}"
+            )
+        with self._evidence_cache_lock:
+            cache_entry.source_file_signature = signature_after
+            cache_entry.source_sha256 = source_sha256
+        return source_sha256
 
 
 def _now_iso() -> str:

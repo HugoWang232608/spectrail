@@ -21,8 +21,8 @@ type SourceViewerProps = {
   requirement: RequirementIR | null
   blocks: DocumentBlock[]
   blocksError: ApiError | null
-  evidenceFingerprint?: string | null
-  blocksEvidenceFingerprint?: string | null
+  evidenceFingerprint: string | null
+  blocksEvidenceFingerprint: string | null
   reloadingEvidence?: boolean
   onReloadEvidence?: () => void
 }
@@ -70,16 +70,9 @@ function SourceViewer({
   const effectiveSelection = sourceSelectionAt(sources, effectiveSourceIndex)
   const effectiveSourceIdentity = effectiveSelection?.sourceIdentity ?? null
   const effectiveSourceOccurrence = effectiveSelection?.sourceOccurrence ?? null
-  const versionBindingProvided = (
-    evidenceFingerprint !== undefined
-    || blocksEvidenceFingerprint !== undefined
-  )
   const blocksVersionMatches = (
-    !versionBindingProvided
-    || (
-      evidenceFingerprint != null
-      && blocksEvidenceFingerprint === evidenceFingerprint
-    )
+    evidenceFingerprint != null
+    && blocksEvidenceFingerprint === evidenceFingerprint
   )
   const evidenceContextTrusted = blocksVersionMatches && blocksError === null
   const blockContextError = blocksError ?? (

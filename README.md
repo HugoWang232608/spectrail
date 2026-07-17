@@ -399,7 +399,9 @@ failure also suppresses the table request, so the UI withholds both the table
 grid and canonical block text until the task evidence is reloaded.
 Validated Evidence indexes, blocks, and table projections are cached by artifact
 file identity in a bounded 16-task LRU for responsive source navigation without
-unbounded process memory growth.
+unbounded process memory growth. PDF source hashes are also cached against the
+full file signature, so navigating across pages does not rescan an unchanged
+large PDF while any replacement still forces revalidation.
 
 See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
 contract and next acceptance steps.

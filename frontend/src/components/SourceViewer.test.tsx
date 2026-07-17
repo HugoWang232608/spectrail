@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,7 +12,7 @@ import type {
   SourceSpan,
   TableEvidenceResponse
 } from '../api/types'
-import SourceViewer from './SourceViewer'
+import SourceViewerComponent from './SourceViewer'
 
 let previewObjectUrl = 0
 
@@ -1195,6 +1196,24 @@ describe('SourceViewer', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 })
+
+type SourceViewerTestProps = Omit<
+  ComponentProps<typeof SourceViewerComponent>,
+  'evidenceFingerprint' | 'blocksEvidenceFingerprint'
+> & Partial<Pick<
+  ComponentProps<typeof SourceViewerComponent>,
+  'evidenceFingerprint' | 'blocksEvidenceFingerprint'
+>>
+
+function SourceViewer(props: SourceViewerTestProps) {
+  return (
+    <SourceViewerComponent
+      evidenceFingerprint={'a'.repeat(64)}
+      blocksEvidenceFingerprint={'a'.repeat(64)}
+      {...props}
+    />
+  )
+}
 
 function renderViewer(
   requirement: RequirementIR,

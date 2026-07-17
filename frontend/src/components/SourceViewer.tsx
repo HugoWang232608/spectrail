@@ -368,23 +368,48 @@ function sourceSelectionIdentity(source: SourceSpan): string {
   if (source.source_evidence_key) {
     return source.source_evidence_key
   }
-  return JSON.stringify([
+
+  const canonicalBase = [
+    source.document_id,
     source.block_id,
-    source.text_locator?.start ?? null,
-    source.text_locator?.end ?? null,
-    source.quote,
-    source.source_table_row_index ?? null,
-    source.canonical_source_cell_ids ?? [],
-    source.source_cell_ids_raw ?? [],
-    source.table_locator
-      ? [
+    source.quote
+  ]
+  const canonicalCellIds = source.canonical_source_cell_ids ?? []
+  const rawCellIds = source.source_cell_ids_raw ?? []
+  if (canonicalCellIds.length > 0) {
+    return JSON.stringify([
+      ...canonicalBase,
+      'canonical_cells',
+      source.source_table_row_index ?? null,
+      canonicalCellIds
+    ])
+  }
+  if (rawCellIds.length > 0) {
+    return JSON.stringify([
+      ...canonicalBase,
+      'raw_cells',
+      source.source_table_row_index ?? null,
+      rawCellIds
+    ])
+  }
+  if (source.table_locator) {
+    return JSON.stringify([
+      ...canonicalBase,
+      'table_locator',
+      [
         source.table_locator.table_id,
         source.table_locator.selected_row_index,
         source.table_locator.cell_ids,
         source.table_locator.row_indices,
         source.table_locator.column_indices
       ]
-      : null
+    ])
+  }
+  return JSON.stringify([
+    ...canonicalBase,
+    'text_occurrence',
+    source.text_locator?.start ?? null,
+    source.text_locator?.end ?? null
   ])
 }
 

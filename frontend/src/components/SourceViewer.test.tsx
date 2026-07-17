@@ -328,6 +328,106 @@ describe('SourceViewer', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy()
   })
 
+  it('keeps canonical source selection when TableLocator is derived later', () => {
+    const block = makeBlock('blk_locator_lifecycle', 'Table lifecycle quote')
+    const textSource = locatedSource(block, block.text)
+    const cellASource = makeSource({
+      ...textSource,
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0001'],
+      source_table_row_index: 1
+    })
+    const cellBSource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_alias_b'],
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0002'],
+      source_table_row_index: 1
+    })
+    const requirementId = 'req_locator_lifecycle'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, cellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+
+    const enrichedCellBSource = makeSource({
+      ...cellBSource,
+      table_locator: {
+        table_id: 'tbl_00000001',
+        cell_ids: ['cell_00000001_r0001_c0002'],
+        row_indices: [1],
+        selected_row_index: 1,
+        column_indices: [2]
+      }
+    })
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, enrichedCellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Cells')).toBe(
+      'tbl_00000001: cell_00000001_r0001_c0002'
+    )
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+  })
+
+  it('keeps canonical source selection when raw cell aliases are normalized', () => {
+    const block = makeBlock('blk_raw_lifecycle', 'Raw identity lifecycle quote')
+    const textSource = locatedSource(block, block.text)
+    const cellASource = makeSource({
+      ...textSource,
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0001'],
+      source_table_row_index: 1,
+      locator_score: 0.1
+    })
+    const cellBSource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_alias_b'],
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0002'],
+      source_table_row_index: 1,
+      locator_score: 0.2
+    })
+    const requirementId = 'req_raw_lifecycle'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [cellASource, cellBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [
+          cellASource,
+          {
+            ...cellBSource,
+            source_cell_ids_raw: ['cell_00000001_r0001_c0002']
+          }
+        ])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

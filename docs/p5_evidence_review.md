@@ -96,13 +96,22 @@ committed to that selection state even before the reviewer navigates.
 Reordering therefore preserves the current source, exact duplicate sources
 remain individually selectable, and removal or replacement synchronously falls
 back to the first remaining source without an intermediate `No source` render.
-Legacy fallback identity includes block, text range, quote,
-`source_table_row_index`, `canonical_source_cell_ids`, and
-`source_cell_ids_raw`, even before a `TableLocator` can be derived. When the
-locator exists, table ID, selected physical row, canonical locator cells, row
-indices, and column indices provide supplementary identity. Table sources with
-identical text but different structured cells therefore remain stable across
-reorder before table-cell visualization is introduced.
+Legacy fallback identity follows the same lifecycle priority as backend source
+identity:
+
+```text
+source_evidence_key
+  -> document + block + quote + canonical_source_cell_ids + source_table_row_index
+  -> document + block + quote + source_cell_ids_raw + source_table_row_index
+  -> document + block + quote + TableLocator identity
+  -> document + block + quote + text occurrence range
+```
+
+Raw aliases and derived `TableLocator` fields are excluded whenever canonical
+cell IDs exist. Adding a locator or normalizing raw aliases therefore cannot
+change the identity of an already canonicalized source. Table sources with
+identical text but different structured cells remain stable across both reorder
+and enrichment lifecycle transitions.
 
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or

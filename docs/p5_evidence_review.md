@@ -163,7 +163,10 @@ The same cache entry retains the validated PDF source SHA-256 together with its
 device, inode, size, modification time, and change time. An unchanged source is
 not re-hashed for every page request. A signature change forces a new full hash,
 and a file whose signature changes during hashing is rejected as unavailable
-rather than cached.
+rather than cached. The renderer checks the same validated signature again
+after producing the PNG; a change during rendering clears the cached source
+snapshot and discards the image instead of returning it with the earlier
+Evidence fingerprint.
 
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn

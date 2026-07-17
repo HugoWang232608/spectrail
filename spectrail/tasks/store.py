@@ -426,7 +426,10 @@ class LocalTaskStore:
                     raise PagePreviewUnavailableError(
                         "page preview EvidenceIndex is not for a PDF"
                     )
-                current_source_sha256 = self._cached_source_sha256(
+                (
+                    current_source_sha256,
+                    validated_source_signature,
+                ) = self._cached_source_sha256(
                     cache_entry,
                     document_path,
                     task_id=task_id,
@@ -440,6 +443,24 @@ class LocalTaskStore:
                         document_path,
                         page_number,
                     )
+                    try:
+                        rendered_source_signature = _file_signature(
+                            document_path
+                        )
+                    except OSError as exc:
+                        self._invalidate_cached_source(cache_entry)
+                        raise PagePreviewUnavailableError(
+                            f"failed to inspect rendered PDF source: {task_id}"
+                        ) from exc
+                    if (
+                        rendered_source_signature
+                        != validated_source_signature
+                    ):
+                        self._invalidate_cached_source(cache_entry)
+                        raise PagePreviewUnavailableError(
+                            f"PDF preview source changed while rendering: "
+                            f"{task_id}"
+                        )
                     return (
                         content,
                         width,
@@ -582,7 +603,7 @@ class LocalTaskStore:
         document_path: Path,
         *,
         task_id: str,
-    ) -> str:
+    ) -> tuple[str, tuple[int, int, int, int, int]]:
         try:
             signature_before = _file_signature(document_path)
         except OSError as exc:
@@ -594,7 +615,7 @@ class LocalTaskStore:
                 cache_entry.source_file_signature == signature_before
                 and cache_entry.source_sha256 is not None
             ):
-                return cache_entry.source_sha256
+                return cache_entry.source_sha256, signature_before
         try:
             source_sha256 = sha256_file(document_path)
             signature_after = _file_signature(document_path)
@@ -609,7 +630,15 @@ class LocalTaskStore:
         with self._evidence_cache_lock:
             cache_entry.source_file_signature = signature_after
             cache_entry.source_sha256 = source_sha256
-        return source_sha256
+        return source_sha256, signature_after
+
+    def _invalidate_cached_source(
+        self,
+        cache_entry: _TaskEvidenceCacheEntry,
+    ) -> None:
+        with self._evidence_cache_lock:
+            cache_entry.source_file_signature = None
+            cache_entry.source_sha256 = None
 
 
 def _now_iso() -> str:

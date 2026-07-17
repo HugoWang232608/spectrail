@@ -12,8 +12,10 @@ from spectrail.core.io import read_json, write_json
 from spectrail.evidence import (
     EvidenceIndex,
     finalize_evidence_fingerprint,
+    sha256_file,
     sha256_text,
 )
+from spectrail.evidence.pdf_preview import render_pdf_page
 from spectrail.api.app import create_app
 from spectrail.parsers.docx_parser import DocxParserV2
 from spectrail.parsers.pdf_parser import PdfParserV2
@@ -510,6 +512,67 @@ def test_api_pdf_page_preview_reuses_hash_for_unchanged_source(
     monkeypatch.setattr("spectrail.tasks.store.sha256_file", fail_if_rehashed)
 
     assert api_client.get(preview_url).status_code == 200
+
+
+def test_api_pdf_page_preview_rejects_source_changed_while_hashing(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id = _create_completed_pdf_task(api_client)
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    document_path = task_dir / "input" / "original.pdf"
+    original_sha256 = sha256_file(document_path)
+
+    def hash_then_change(path: Path) -> str:
+        Path(path).write_bytes(b"%PDF changed while hashing")
+        return original_sha256
+
+    monkeypatch.setattr(
+        "spectrail.tasks.store.sha256_file",
+        hash_then_change,
+    )
+
+    response = api_client.get(_preview_url(api_client, task_id, 1))
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "PAGE_PREVIEW_UNAVAILABLE",
+        "message": f"PDF preview source changed while hashing: {task_id}",
+    }
+    cache_entry = api_client.app.state.task_store._evidence_cache[task_id]
+    assert cache_entry.source_file_signature is None
+    assert cache_entry.source_sha256 is None
+
+
+def test_api_pdf_page_preview_discards_source_changed_while_rendering(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id = _create_completed_pdf_task(api_client)
+
+    def render_then_change(
+        document_path: Path,
+        page_number: int,
+    ) -> tuple[bytes, int, int]:
+        rendered = render_pdf_page(document_path, page_number)
+        document_path.write_bytes(b"%PDF changed while rendering")
+        return rendered
+
+    monkeypatch.setattr(
+        "spectrail.tasks.store.render_pdf_page",
+        render_then_change,
+    )
+
+    response = api_client.get(_preview_url(api_client, task_id, 1))
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "PAGE_PREVIEW_UNAVAILABLE",
+        "message": f"PDF preview source changed while rendering: {task_id}",
+    }
+    cache_entry = api_client.app.state.task_store._evidence_cache[task_id]
+    assert cache_entry.source_file_signature is None
+    assert cache_entry.source_sha256 is None
 
 
 def test_api_pdf_page_preview_preserves_not_found_when_close_fails(

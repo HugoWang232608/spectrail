@@ -61,6 +61,21 @@ jobs:
       - name: Run frontend tests
         working-directory: frontend
         run: npm test
+      - name: Install browser for visual acceptance
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run frontend visual acceptance
+        working-directory: frontend
+        run: npm run test:visual
+      - name: Upload frontend visual diffs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-visual-results
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          if-no-files-found: ignore
       - name: Build frontend
         working-directory: frontend
         run: npm run build

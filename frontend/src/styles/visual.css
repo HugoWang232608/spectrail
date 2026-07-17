@@ -1,0 +1,21 @@
+body {
+  background: #eef1f5;
+}
+
+.visual-harness {
+  width: 920px;
+  margin: 20px auto;
+}
+
+.visual-harness .source-panel {
+  box-shadow: 0 8px 28px rgb(16 24 40 / 10%);
+}
+
+.visual-case-label {
+  margin: 0 0 10px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

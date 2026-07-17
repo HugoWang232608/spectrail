@@ -8,3 +8,5 @@ docs/实施方案/*
 docs/技术方案/*
 outputs/*
 .vscode/*
+frontend/playwright-report/
+frontend/test-results/

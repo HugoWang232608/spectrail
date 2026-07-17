@@ -291,10 +291,14 @@ Run the frontend evidence tests and production build with:
 ```bash
 cd frontend
 npm test
+npx playwright install chromium
+npm run test:visual
 npm run build
 ```
 
-GitHub Actions runs `npm test` before the production frontend build. Component
+GitHub Actions runs both `npm test` and `npm run test:visual` before the
+production frontend build, and uploads Playwright reports and image diffs when
+the visual gate fails. Component
 coverage verifies final locator highlighting, source and requirement changes,
 preview failure and retry, proportional overlay geometry, locator/block
 mismatch behavior, all four supported page rotations, table API failure and
@@ -308,17 +312,25 @@ derives each `PageLocator` through the parser and enricher, decodes the same PNG
 renderer used by the preview API, and confirms that the locator's proportional
 pixel region contains the quoted glyphs. The renderer is the public, stateless
 `spectrail.evidence.pdf_preview.render_pdf_page` function shared by TaskStore
-and acceptance tests. Browser-level screenshot regression remains separate
-from this deterministic cross-layer check.
+and acceptance tests.
+
+The browser acceptance suite supplies those validated locators to the
+production `SourceViewer`, checks the overlay geometry to a 1.5-pixel tolerance,
+and compares checked-in Chromium screenshots for 0°, 90°, 180°, and 270°
+canonical preview spaces. Separate screenshots fix the table presentation
+contract for a vertically merged DOCX cell (`row_span_projection`) and for the
+second block of a large table, including its projected repeated header and
+selected primary row. These browser fixtures complement rather than replace
+the real-PDF parser/renderer pixel test.
 
 ## Next acceptance steps
 
-- add pixel-based visual regression fixtures for 0°, 90°, 180°, and 270° PDF
-  pages;
-- add browser screenshot regression for merged DOCX cells and large-table
-  row-groups;
-- reuse the table projection for checked-in PDF table fixtures once PDF table
-  detection reaches its M5 acceptance gate;
+- enter M5 PDF table detection and emit `TableRecord`, `TableCellRecord`, and
+  `CellBlockOccurrence` objects from checked-in PDF table fixtures;
+- reuse the existing `table_evidence_view_v1` endpoint and browser grid for
+  those PDF tables instead of introducing a second projection;
+- add checked-in PDF table screenshots to the same Playwright gate once the
+  M5 parser fixtures reach structured locator acceptance;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

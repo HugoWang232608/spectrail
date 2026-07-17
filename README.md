@@ -373,6 +373,7 @@ The evidence endpoints are task-scoped and read-only:
 
 ```text
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
+  ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
 GET /api/tasks/{task_id}/blocks
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
 GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
@@ -380,8 +381,11 @@ GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
 ```
 
 Rendering is allowed only for completed PDF tasks, runs under the task
-transaction guard, and caps the preview to 2000 pixels per dimension. The UI
-continues to show quote and block text when a visual preview is unavailable.
+transaction guard, verifies that the current PDF SHA-256 matches the current
+EvidenceIndex, and caps the preview to 2000 pixels per dimension. The response
+repeats the validated fingerprint in `X-Spectrail-Evidence-Fingerprint`, which
+the UI verifies before creating the browser image URL. The UI continues to show
+quote and block text when a visual preview is unavailable.
 The blocks and table endpoints fingerprint-validate `evidence_v5`. The blocks
 response repeats the validated fingerprint, while the table endpoint returns a stable
 `table_evidence_view_v1` projection with logical cells, spans, physical rows and
@@ -390,8 +394,9 @@ the corresponding capability is `PASS`; locator status, score, structured cell
 identity, and per-capability validation results remain visible alongside the
 source. ReqIR, canonical blocks, and table projections are bound to the same
 Evidence fingerprint; a task rerun between requests returns
-`EVIDENCE_VERSION_CHANGED` instead of mixing generations. The UI withholds both
-the table grid and canonical block text until the task evidence is reloaded.
+`EVIDENCE_VERSION_CHANGED` instead of mixing generations. A blocks integrity
+failure also suppresses the table request, so the UI withholds both the table
+grid and canonical block text until the task evidence is reloaded.
 Validated Evidence indexes, blocks, and table projections are cached by artifact
 file identity in a bounded 16-task LRU for responsive source navigation without
 unbounded process memory growth.

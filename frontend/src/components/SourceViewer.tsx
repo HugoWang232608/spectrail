@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { getPagePreviewUrl } from '../api/client'
+import { getPagePreview } from '../api/client'
 import type {
   ApiError,
   CapabilityValidationResult,
@@ -50,8 +50,6 @@ function SourceViewer({
     sourceIdentity: null,
     sourceOccurrence: null
   })
-  const [previewFailed, setPreviewFailed] = useState(false)
-  const [previewAttempt, setPreviewAttempt] = useState(0)
   const sources = requirement?.sources ?? []
   const requirementId = requirement?.id ?? null
   const selectionContextMatches = (
@@ -83,6 +81,7 @@ function SourceViewer({
       && blocksEvidenceFingerprint === evidenceFingerprint
     )
   )
+  const evidenceContextTrusted = blocksVersionMatches && blocksError === null
   const blockContextError = blocksError ?? (
     blocksVersionMatches
       ? null
@@ -95,7 +94,7 @@ function SourceViewer({
           : 'ReqIR package has no valid Evidence fingerprint'
       }
   )
-  const block = source && blocksVersionMatches && !blocksError
+  const block = source && evidenceContextTrusted
     ? blocks.find((item) => item.block_id === source.block_id) ?? null
     : null
   const sourcePreviewIdentity = effectiveSelection
@@ -142,11 +141,6 @@ function SourceViewer({
     sourceSelection.sourceIdentity,
     sourceSelection.sourceOccurrence
   ])
-
-  useEffect(() => {
-    setPreviewFailed(false)
-    setPreviewAttempt(0)
-  }, [source?.page_locator?.page, sourcePreviewIdentity, taskId])
 
   return (
     <section className="panel source-panel" aria-labelledby="source-heading">
@@ -229,20 +223,19 @@ function SourceViewer({
 
           {source.page_locator && taskId ? (
             <PageEvidencePreview
+              key={`${taskId}:${sourcePreviewIdentity}`}
               taskId={taskId}
               source={source}
               pageRegionStatus={pageRegionStatus}
-              failed={previewFailed}
-              attempt={previewAttempt}
-              onError={() => setPreviewFailed(true)}
-              onRetry={() => {
-                setPreviewAttempt((current) => current + 1)
-                setPreviewFailed(false)
-              }}
+              expectedEvidenceFingerprint={evidenceFingerprint ?? null}
+              reloadingEvidence={reloadingEvidence}
+              onReloadEvidence={onReloadEvidence}
             />
           ) : null}
 
-          {taskId && (source.table_locator || tableCellStatus) ? (
+          {taskId
+          && evidenceContextTrusted
+          && (source.table_locator || tableCellStatus) ? (
             <TableEvidenceView
               key={`${taskId}:${sourcePreviewIdentity}`}
               taskId={taskId}
@@ -305,26 +298,81 @@ function PageEvidencePreview({
   taskId,
   source,
   pageRegionStatus,
-  failed,
-  attempt,
-  onError,
-  onRetry
+  expectedEvidenceFingerprint,
+  reloadingEvidence,
+  onReloadEvidence
 }: {
   taskId: string
   source: SourceSpan
   pageRegionStatus: CapabilityValidationResult['status'] | undefined
-  failed: boolean
-  attempt: number
-  onError: () => void
-  onRetry: () => void
+  expectedEvidenceFingerprint: string | null
+  reloadingEvidence: boolean
+  onReloadEvidence?: () => void
 }) {
   const locator = source.page_locator
+  const [attempt, setAttempt] = useState(0)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<ApiError | null>(null)
+  const [loading, setLoading] = useState(false)
+  const pageLocatorValidated = pageRegionStatus === 'PASS'
+
+  useEffect(() => {
+    if (
+      !locator
+      || !pageLocatorValidated
+      || !expectedEvidenceFingerprint
+    ) {
+      setPreviewUrl(null)
+      setPreviewError(null)
+      setLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    let objectUrl: string | null = null
+    setPreviewUrl(null)
+    setPreviewError(null)
+    setLoading(true)
+    void getPagePreview(
+      taskId,
+      locator.page,
+      expectedEvidenceFingerprint,
+      attempt,
+      controller.signal
+    ).then((blob) => {
+      if (controller.signal.aborted) {
+        return
+      }
+      objectUrl = URL.createObjectURL(blob)
+      setPreviewUrl(objectUrl)
+    }).catch((caught: unknown) => {
+      if (!controller.signal.aborted) {
+        setPreviewError(pagePreviewError(caught))
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) {
+        setLoading(false)
+      }
+    })
+
+    return () => {
+      controller.abort()
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [
+    attempt,
+    expectedEvidenceFingerprint,
+    locator,
+    pageLocatorValidated,
+    taskId
+  ])
+
   if (!locator) {
     return null
   }
 
-  const evidenceVersion = source.source_evidence_key ?? 'legacy'
-  const pageLocatorValidated = pageRegionStatus === 'PASS'
   if (!pageLocatorValidated) {
     return (
       <div className="page-evidence-box">
@@ -333,6 +381,29 @@ function PageEvidencePreview({
         </div>
         <div className="preview-unavailable" role="status">
           <p className="muted-text">{pageLocatorNotice(pageRegionStatus)} Preview withheld.</p>
+        </div>
+      </div>
+    )
+  }
+  if (!expectedEvidenceFingerprint) {
+    return (
+      <div className="page-evidence-box">
+        <div className="page-evidence-heading">
+          <h3>Page evidence</h3>
+        </div>
+        <div className="preview-unavailable" role="alert">
+          <p className="muted-text">
+            ReqIR Evidence version is unavailable. Preview withheld.
+          </p>
+          {onReloadEvidence ? (
+            <button
+              type="button"
+              disabled={reloadingEvidence}
+              onClick={onReloadEvidence}
+            >
+              {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
+            </button>
+          ) : null}
         </div>
       </div>
     )
@@ -354,26 +425,46 @@ function PageEvidencePreview({
           Page {locator.page} · {locator.derivation}
         </span>
       </div>
-      {failed ? (
-        <div className="preview-unavailable">
-          <p className="muted-text">PDF preview unavailable.</p>
-          <button type="button" onClick={onRetry}>
-            Retry preview
-          </button>
+      {loading ? (
+        <p className="muted-text" role="status">Loading PDF preview…</p>
+      ) : previewError ? (
+        <div className="preview-unavailable" role="alert">
+          <p className="muted-text">
+            {previewError.code === 'EVIDENCE_VERSION_CHANGED'
+              ? 'Evidence version changed. Reload task evidence before reviewing this page.'
+              : `PDF preview unavailable: ${previewError.code} ${previewError.message}`}
+          </p>
+          {previewError.code === 'EVIDENCE_VERSION_CHANGED'
+            ? onReloadEvidence ? (
+                <button
+                  type="button"
+                  disabled={reloadingEvidence}
+                  onClick={onReloadEvidence}
+                >
+                  {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
+                </button>
+              ) : null
+            : (
+              <button
+                type="button"
+                onClick={() => setAttempt((current) => current + 1)}
+              >
+                Retry preview
+              </button>
+            )}
         </div>
-      ) : (
+      ) : previewUrl ? (
         <div
           className="page-preview"
           style={{ aspectRatio: `${locator.page_width} / ${locator.page_height}` }}
         >
           <img
-            src={
-              `${getPagePreviewUrl(taskId, locator.page)}` +
-              `?evidence=${encodeURIComponent(evidenceVersion)}` +
-              `&attempt=${attempt}`
-            }
+            src={previewUrl}
             alt={`PDF page ${locator.page}`}
-            onError={onError}
+            onError={() => setPreviewError({
+              code: 'PAGE_PREVIEW_UNAVAILABLE',
+              message: 'browser could not decode the PDF page preview'
+            })}
           />
           <span
             className="page-locator-overlay"
@@ -381,9 +472,26 @@ function PageEvidencePreview({
             aria-label="Source quote bounding box"
           />
         </div>
-      )}
+      ) : null}
     </div>
   )
+}
+
+function pagePreviewError(value: unknown): ApiError {
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'code' in value
+    && 'message' in value
+    && typeof value.code === 'string'
+    && typeof value.message === 'string'
+  ) {
+    return { code: value.code, message: value.message }
+  }
+  return {
+    code: 'PAGE_PREVIEW_UNAVAILABLE',
+    message: value instanceof Error ? value.message : 'Unexpected preview error'
+  }
 }
 
 function SourceItem({ label, value }: { label: string; value: string }) {

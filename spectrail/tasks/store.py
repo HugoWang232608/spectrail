@@ -15,6 +15,7 @@ from spectrail.evidence import (
     TableEvidenceView,
     TableEvidenceViewNotFoundError,
     build_table_evidence_view,
+    sha256_file,
     validate_evidence_fingerprint,
 )
 from spectrail.evidence.pdf_preview import (
@@ -96,7 +97,7 @@ class _TaskEvidenceCacheEntry:
     file_signature: tuple[int, int, int, int, int]
     index: EvidenceIndex
     blocks_file_signature: tuple[int, int, int, int, int] | None = None
-    blocks: list[dict[str, Any]] | None = None
+    blocks: tuple[DocumentBlock, ...] | None = None
     projections: dict[tuple[str, str], TableEvidenceView] = field(
         default_factory=dict
     )
@@ -301,9 +302,7 @@ class LocalTaskStore:
                             cache_entry.index,
                             parsed_document,
                         )
-                        cache_entry.blocks = [
-                            block.model_dump(mode="json") for block in blocks
-                        ]
+                        cache_entry.blocks = tuple(blocks)
                         cache_entry.blocks_file_signature = blocks_signature
                     cached_blocks = cache_entry.blocks
                     if cached_blocks is None:
@@ -312,7 +311,10 @@ class LocalTaskStore:
                         )
                     return (
                         cache_entry.index.evidence_fingerprint,
-                        cached_blocks,
+                        [
+                            block.model_dump(mode="json")
+                            for block in cached_blocks
+                        ],
                     )
                 except EvidenceVersionChangedError:
                     raise
@@ -373,7 +375,9 @@ class LocalTaskStore:
         self,
         task_id: str,
         page_number: int,
-    ) -> tuple[bytes, int, int]:
+        *,
+        expected_evidence_fingerprint: str,
+    ) -> tuple[bytes, int, int, str]:
         if page_number < 1:
             raise PagePreviewNotFoundError("page number must be 1-based")
 
@@ -404,7 +408,43 @@ class LocalTaskStore:
                         f"uploaded PDF is missing: {task_id}"
                     )
                 try:
-                    return render_pdf_page(document_path, page_number)
+                    cache_entry = self._validated_evidence_cache_entry(
+                        task_id,
+                        task_dir,
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    raise PagePreviewUnavailableError(
+                        f"EvidenceIndex is invalid: {task_id}"
+                    ) from exc
+                self._require_evidence_version(
+                    cache_entry,
+                    expected_evidence_fingerprint,
+                )
+                if cache_entry.index.source_format != "pdf":
+                    raise PagePreviewUnavailableError(
+                        "page preview EvidenceIndex is not for a PDF"
+                    )
+                try:
+                    current_source_sha256 = sha256_file(document_path)
+                except OSError as exc:
+                    raise PagePreviewUnavailableError(
+                        f"failed to hash PDF preview source: {task_id}"
+                    ) from exc
+                if current_source_sha256 != cache_entry.index.source_sha256:
+                    raise EvidenceVersionChangedError(
+                        "current PDF does not match the task EvidenceIndex"
+                    )
+                try:
+                    content, width, height = render_pdf_page(
+                        document_path,
+                        page_number,
+                    )
+                    return (
+                        content,
+                        width,
+                        height,
+                        cache_entry.index.evidence_fingerprint,
+                    )
                 except PdfPagePreviewNotFoundError as exc:
                     raise PagePreviewNotFoundError(str(exc)) from exc
                 except PdfPagePreviewUnavailableError as exc:

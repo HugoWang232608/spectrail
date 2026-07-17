@@ -16,6 +16,7 @@ from spectrail.evidence import (
 )
 from spectrail.api.app import create_app
 from spectrail.parsers.docx_parser import DocxParserV2
+from spectrail.parsers.pdf_parser import PdfParserV2
 from spectrail.tasks import LocalTaskStore
 
 
@@ -151,6 +152,29 @@ def test_api_blocks_rejects_cross_request_generation_race(
     )
     assert refreshed_reqir.status_code == 200
     assert refreshed_reqir.json()["items"][0]["text"].endswith("generation B")
+
+
+def test_task_store_returns_fresh_block_projections_from_immutable_cache(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
+    store = api_client.app.state.task_store
+
+    _, first = store.read_blocks(
+        task_id,
+        expected_evidence_fingerprint=fingerprint,
+    )
+    original_text = first[0]["text"]
+    first[0]["text"] = "caller mutation"
+
+    _, second = store.read_blocks(
+        task_id,
+        expected_evidence_fingerprint=fingerprint,
+    )
+
+    assert second[0]["text"] == original_text
 
 
 def test_api_table_evidence_returns_block_scoped_logical_grid(
@@ -374,23 +398,92 @@ def test_api_pdf_page_preview_returns_bounded_png(api_client: TestClient):
         height=1000,
     )
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(
+        _preview_url(api_client, task_id, 1),
+        headers={"Origin": "http://localhost:5173"},
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.headers["cache-control"] == "private, max-age=300"
     assert response.headers["x-spectrail-preview-width"] == "2000"
     assert response.headers["x-spectrail-preview-height"] == "500"
+    assert response.headers["x-spectrail-evidence-fingerprint"] == (
+        _current_evidence_fingerprint(api_client, task_id)
+    )
+    assert "X-Spectrail-Evidence-Fingerprint" in (
+        response.headers["access-control-expose-headers"]
+    )
     assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_api_pdf_page_preview_rejects_missing_page(api_client: TestClient):
     task_id = _create_completed_pdf_task(api_client)
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/2/preview.png")
+    response = api_client.get(_preview_url(api_client, task_id, 2))
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "PAGE_PREVIEW_NOT_FOUND"
+
+
+def test_api_pdf_page_preview_rejects_reqir_from_previous_generation(
+    api_client: TestClient,
+):
+    task_id = _create_completed_pdf_task(api_client)
+    fingerprint_a = _current_evidence_fingerprint(api_client, task_id)
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+
+    document_b = fitz.open()
+    page_b = document_b.new_page(width=500, height=320)
+    page_b.insert_text((40, 60), "Generation B preview evidence")
+    (task_dir / "input" / "original.pdf").write_bytes(document_b.tobytes())
+    document_b.close()
+    parsed_b = PdfParserV2().parse(task_dir / "input" / "original.pdf")
+    assert parsed_b.evidence_index is not None
+    write_json(
+        task_dir / "parsed" / "blocks.json",
+        [block.model_dump(mode="json") for block in parsed_b.blocks],
+    )
+    write_json(
+        task_dir / "parsed" / "evidence_index.json",
+        parsed_b.evidence_index.model_dump(mode="json"),
+    )
+
+    response = api_client.get(
+        _preview_url(
+            api_client,
+            task_id,
+            1,
+            expected_evidence_fingerprint=fingerprint_a,
+        )
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "EVIDENCE_VERSION_CHANGED"
+
+
+def test_api_pdf_page_preview_rejects_pdf_not_bound_to_evidence(
+    api_client: TestClient,
+):
+    task_id = _create_completed_pdf_task(api_client)
+    fingerprint = _current_evidence_fingerprint(api_client, task_id)
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    (task_dir / "input" / "original.pdf").write_bytes(b"%PDF changed")
+
+    response = api_client.get(
+        _preview_url(
+            api_client,
+            task_id,
+            1,
+            expected_evidence_fingerprint=fingerprint,
+        )
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "EVIDENCE_VERSION_CHANGED",
+        "message": "current PDF does not match the task EvidenceIndex",
+    }
 
 
 def test_api_pdf_page_preview_preserves_not_found_when_close_fails(
@@ -407,7 +500,7 @@ def test_api_pdf_page_preview_preserves_not_found_when_close_fails(
 
     monkeypatch.setattr(fitz, "open", lambda path: MissingPageDocument())
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(_preview_url(api_client, task_id, 1))
 
     assert response.status_code == 404
     assert response.json()["detail"] == {
@@ -437,7 +530,7 @@ def test_api_pdf_page_preview_uses_rotated_page_dimensions(
         rotation=rotation,
     )
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(_preview_url(api_client, task_id, 1))
 
     assert response.status_code == 200
     assert response.headers["x-spectrail-preview-width"] == expected_size[0]
@@ -469,7 +562,7 @@ def test_api_pdf_page_preview_maps_render_failure_to_structured_error(
 
     monkeypatch.setattr(fitz, "open", lambda path: BrokenDocument())
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(_preview_url(api_client, task_id, 1))
 
     assert response.status_code == 409
     assert response.json()["detail"] == {
@@ -505,7 +598,7 @@ def test_api_pdf_page_preview_preserves_render_error_when_close_fails(
     monkeypatch.setattr(fitz, "open", lambda path: BrokenDocument())
     caplog.set_level("WARNING", logger="spectrail.evidence.pdf_preview")
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(_preview_url(api_client, task_id, 1))
 
     assert response.status_code == 409
     assert response.json()["detail"] == {
@@ -521,7 +614,10 @@ def test_api_page_preview_rejects_non_pdf_task(
 ):
     task_id = completed_api_task["task_id"]
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(
+        f"/api/tasks/{task_id}/pages/1/preview.png"
+        f"?expected_evidence_fingerprint={_reqir_evidence_fingerprint(api_client, task_id)}"
+    )
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "PAGE_PREVIEW_UNAVAILABLE"
@@ -531,7 +627,10 @@ def test_api_page_preview_before_completion_returns_409(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
 
-    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+    response = api_client.get(
+        f"/api/tasks/{task_id}/pages/1/preview.png"
+        f"?expected_evidence_fingerprint={'0' * 64}"
+    )
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_NOT_COMPLETED"
@@ -559,6 +658,17 @@ def _create_completed_pdf_task(
         files={"file": ("preview.pdf", content, "application/pdf")},
     )
     assert uploaded.status_code == 200
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    parsed = PdfParserV2().parse(task_dir / "input" / "original.pdf")
+    assert parsed.evidence_index is not None
+    write_json(
+        task_dir / "parsed" / "blocks.json",
+        [block.model_dump(mode="json") for block in parsed.blocks],
+    )
+    write_json(
+        task_dir / "parsed" / "evidence_index.json",
+        parsed.evidence_index.model_dump(mode="json"),
+    )
     api_client.app.state.task_store.update_task(task_id, status="completed")
     return task_id
 
@@ -638,4 +748,31 @@ def _blocks_url(task_id: str, evidence_fingerprint: str) -> str:
     return (
         f"/api/tasks/{task_id}/blocks"
         f"?expected_evidence_fingerprint={evidence_fingerprint}"
+    )
+
+
+def _current_evidence_fingerprint(
+    api_client: TestClient,
+    task_id: str,
+) -> str:
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    return read_json(
+        task_dir / "parsed" / "evidence_index.json"
+    )["evidence_fingerprint"]
+
+
+def _preview_url(
+    api_client: TestClient,
+    task_id: str,
+    page: int,
+    *,
+    expected_evidence_fingerprint: str | None = None,
+) -> str:
+    fingerprint = (
+        expected_evidence_fingerprint
+        or _current_evidence_fingerprint(api_client, task_id)
+    )
+    return (
+        f"/api/tasks/{task_id}/pages/{page}/preview.png"
+        f"?expected_evidence_fingerprint={fingerprint}"
     )

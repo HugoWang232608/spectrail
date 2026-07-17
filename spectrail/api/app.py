@@ -18,6 +18,11 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "X-Spectrail-Evidence-Fingerprint",
+            "X-Spectrail-Preview-Height",
+            "X-Spectrail-Preview-Width",
+        ],
     )
 
     @app.exception_handler(TaskTransactionError)

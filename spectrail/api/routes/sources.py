@@ -93,12 +93,18 @@ def get_table_evidence(
 def get_page_preview(
     task_id: str,
     page_number: int,
+    expected_evidence_fingerprint: str = Query(
+        pattern=r"^[0-9a-f]{64}$",
+    ),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> Response:
     try:
-        content, width, height = store.render_pdf_page_preview(
-            task_id,
-            page_number,
+        content, width, height, evidence_fingerprint = (
+            store.render_pdf_page_preview(
+                task_id,
+                page_number,
+                expected_evidence_fingerprint=expected_evidence_fingerprint,
+            )
         )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
@@ -108,6 +114,8 @@ def get_page_preview(
         raise _error(404, "PAGE_PREVIEW_NOT_FOUND", str(exc)) from exc
     except PagePreviewUnavailableError as exc:
         raise _error(409, "PAGE_PREVIEW_UNAVAILABLE", str(exc)) from exc
+    except EvidenceVersionChangedError as exc:
+        raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
     return Response(
         content=content,
@@ -116,6 +124,7 @@ def get_page_preview(
             "Cache-Control": "private, max-age=300",
             "X-Spectrail-Preview-Width": str(width),
             "X-Spectrail-Preview-Height": str(height),
+            "X-Spectrail-Evidence-Fingerprint": evidence_fingerprint,
         },
     )
 

@@ -34,6 +34,7 @@ the browser converts the bbox to percentages of `page_width` and `page_height`.
 
 ```text
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
+  ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
 ```
 
 Successful responses include:
@@ -43,6 +44,7 @@ Content-Type: image/png
 Cache-Control: private, max-age=300
 X-Spectrail-Preview-Width: <rendered pixels>
 X-Spectrail-Preview-Height: <rendered pixels>
+X-Spectrail-Evidence-Fingerprint: <validated Evidence fingerprint>
 ```
 
 The endpoint:
@@ -51,6 +53,10 @@ The endpoint:
 - renders only the task's uploaded PDF;
 - resolves and contains the document path within the task directory;
 - participates in the task transaction guard;
+- validates the current `EvidenceIndex` and compares the caller's expected
+  fingerprint before rendering;
+- hashes the current PDF and requires it to equal
+  `EvidenceIndex.source_sha256`;
 - uses RGB output without transparency;
 - caps scale at 2× and either output dimension at 2000 pixels;
 - permits a five-minute private browser cache so revisiting the same source
@@ -64,9 +70,15 @@ TASK_NOT_FOUND
 TASK_NOT_COMPLETED
 PAGE_PREVIEW_NOT_FOUND
 PAGE_PREVIEW_UNAVAILABLE
+EVIDENCE_VERSION_CHANGED
 TASK_TRANSACTION_LOCKED
 TASK_MIGRATION_INCOMPLETE
 ```
+
+`EVIDENCE_VERSION_CHANGED` covers both a stale ReqIR fingerprint and a current
+PDF whose bytes no longer match the validated EvidenceIndex. The frontend
+fetches the PNG as a blob, verifies the response fingerprint header, and only
+then creates the image URL and draws the bbox overlay.
 
 The table evidence endpoint is:
 
@@ -130,7 +142,9 @@ The frontend sends that exact value with both blocks and table requests and
 independently checks each response fingerprint. A task rerun between the ReqIR
 and either evidence request therefore produces an explicit reload message even
 if stable block, table, and cell IDs happen to remain unchanged. Until reload
-succeeds, the UI withholds canonical block text as well as the table grid.
+succeeds, the UI withholds canonical block text as well as the table grid. A
+`BLOCKS_UNAVAILABLE` response also suppresses the table endpoint request
+entirely; only the single block-context reload action is shown.
 Legacy packages without the metadata cannot request trusted evidence and must
 be migrated or reloaded.
 
@@ -141,7 +155,9 @@ re-reading, Pydantic-validating and re-hashing the whole index. The cache is an
 access-ordered LRU limited to 16 tasks by default; the least recently used task
 is evicted when the limit is exceeded. Upload, pipeline reset, or any Evidence
 artifact signature change invalidates the affected entry before evidence can be
-returned.
+returned. Blocks are cached as an immutable tuple of validated `DocumentBlock`
+models; each caller receives a fresh JSON projection, so an in-process consumer
+cannot mutate the trusted cache entry.
 
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn
@@ -169,13 +185,11 @@ characters. A normalized match with a valid locator is highlighted even when
 the displayed canonical range is not byte-for-byte equal to `source.quote`.
 
 Preview loading occurs only after ReqIR and block reads complete, avoiding
-read-lock races. A failed image can be retried explicitly without losing the
-text evidence view. The preview URL includes `source_evidence_key`, whose
-identity includes the Evidence fingerprint, so the private browser cache cannot
-reuse a page image across pipeline runs with different source evidence.
-Preview failure state is also keyed by the selected source; legacy sources use
-their block, text range, and quote so a failed same-page source cannot poison
-the next source.
+read-lock races. The browser requests the page with the ReqIR Evidence
+fingerprint, checks the response header, and uses a short-lived blob URL only
+after both checks pass. A failed image can be retried explicitly without losing
+the text evidence view. Preview state is keyed by the selected source, so a
+failed same-page source cannot poison the next source.
 
 If a blocks or table request reports a changed Evidence version, the Review UI
 does not offer the ordinary single-request retry. It shows **Reload task

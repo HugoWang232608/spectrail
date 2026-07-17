@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   CapabilityValidationResult,
@@ -12,6 +12,20 @@ import type {
   TableEvidenceResponse
 } from '../api/types'
 import SourceViewer from './SourceViewer'
+
+let previewObjectUrl = 0
+
+beforeEach(() => {
+  previewObjectUrl = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => pagePreviewResponse())
+  )
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn(() => `blob:preview-${previewObjectUrl += 1}`),
+    revokeObjectURL: vi.fn()
+  })
+})
 
 afterEach(() => {
   cleanup()
@@ -637,7 +651,7 @@ describe('SourceViewer', () => {
     expect(screen.getByText(block.text)).toBeTruthy()
   })
 
-  it('shows preview failure and retries with a cache-busting URL', () => {
+  it('shows preview failure and retries with a cache-busting URL', async () => {
     const block = makeBlock('blk_preview', 'Preview evidence')
     const source = makeSource({
       block_id: block.block_id,
@@ -657,20 +671,28 @@ describe('SourceViewer', () => {
 
     renderViewer(makeRequirement('req_preview', [source]), [block])
 
-    const image = screen.getByRole('img', { name: 'PDF page 1' })
-    expect(image.getAttribute('src')).toBe(
+    const image = await screen.findByRole('img', { name: 'PDF page 1' })
+    expect(image.getAttribute('src')).toBe('blob:preview-1')
+    expect(fetch).toHaveBeenCalledWith(
       '/api/tasks/task-1/pages/1/preview.png' +
-      '?evidence=src_111111111111111111111111&attempt=0'
+      `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=0`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     fireEvent.error(image)
 
-    expect(screen.getByText('PDF preview unavailable.')).toBeTruthy()
+    expect(screen.getByText(/PDF preview unavailable:/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry preview' }))
 
-    expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toBe(
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
       '/api/tasks/task-1/pages/1/preview.png' +
-      '?evidence=src_111111111111111111111111&attempt=1'
-    )
+        `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=1`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+    expect(await screen.findByRole('img', {
+      name: 'PDF page 1'
+    })).toBeTruthy()
   })
 
   it('resets a failed preview when switching between legacy sources on the same page', async () => {
@@ -688,8 +710,8 @@ describe('SourceViewer', () => {
 
     renderViewer(makeRequirement('req_legacy', sources), blocks)
 
-    fireEvent.error(screen.getByRole('img', { name: 'PDF page 1' }))
-    expect(screen.getByText('PDF preview unavailable.')).toBeTruthy()
+    fireEvent.error(await screen.findByRole('img', { name: 'PDF page 1' }))
+    expect(screen.getByText(/PDF preview unavailable:/)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
 
@@ -699,7 +721,7 @@ describe('SourceViewer', () => {
     expect(screen.queryByText('PDF preview unavailable.')).toBeNull()
   })
 
-  it('changes the preview cache key when source evidence changes', () => {
+  it('binds preview requests to the ReqIR Evidence fingerprint', async () => {
     const block = makeBlock('blk_cache', 'Cache evidence')
     const source = makeSource({
       block_id: block.block_id,
@@ -715,11 +737,16 @@ describe('SourceViewer', () => {
         requirement={makeRequirement('req_cache', [source])}
         blocks={[block]}
         blocksError={null}
+        evidenceFingerprint={'a'.repeat(64)}
+        blocksEvidenceFingerprint={'a'.repeat(64)}
       />
     )
 
-    expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toContain(
-      'evidence=src_111111111111111111111111'
+    await screen.findByRole('img', { name: 'PDF page 1' })
+    expect(fetch).toHaveBeenLastCalledWith(
+      '/api/tasks/task-1/pages/1/preview.png' +
+        `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=0`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
 
     rerender(
@@ -733,12 +760,18 @@ describe('SourceViewer', () => {
         ])}
         blocks={[block]}
         blocksError={null}
+        evidenceFingerprint={'b'.repeat(64)}
+        blocksEvidenceFingerprint={'b'.repeat(64)}
       />
     )
 
-    expect(screen.getByRole('img', { name: 'PDF page 1' }).getAttribute('src')).toContain(
-      'evidence=src_222222222222222222222222'
-    )
+    await waitFor(() => {
+      expect(fetch).toHaveBeenLastCalledWith(
+        '/api/tasks/task-1/pages/1/preview.png' +
+          `?expected_evidence_fingerprint=${'b'.repeat(64)}&attempt=0`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
   })
 
   it('withholds page context when the locator is invalid', () => {
@@ -800,7 +833,7 @@ describe('SourceViewer', () => {
     [270, ['20%', '20%', '50%', '60%']]
   ] as const)(
     'uses canonical rotated preview dimensions for %s° page locators',
-    (rotation, expectedStyle) => {
+    async (rotation, expectedStyle) => {
       const block = makeBlock(`blk_rotation_${rotation}`, 'Rotated evidence')
       const source = makeSource({
         block_id: block.block_id,
@@ -812,7 +845,7 @@ describe('SourceViewer', () => {
 
       renderViewer(makeRequirement(`req_rotation_${rotation}`, [source]), [block])
 
-      const overlay = screen.getByLabelText('Source quote bounding box')
+      const overlay = await screen.findByLabelText('Source quote bounding box')
       expect([
         overlay.style.left,
         overlay.style.top,
@@ -988,7 +1021,7 @@ describe('SourceViewer', () => {
     )
 
     expect(screen.getByText(
-      /ReqIR Evidence version is unavailable/
+      /EVIDENCE_VERSION_UNAVAILABLE/
     )).toBeTruthy()
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -1060,6 +1093,79 @@ describe('SourceViewer', () => {
     expect(screen.getByRole('gridcell', {
       name: /cell_00000001_r0002_c0001, physical row 2/
     }).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('withholds the table grid when canonical blocks are unavailable', async () => {
+    const block = {
+      ...makeBlock('blk_untrusted_table', 'Header\nRequirement'),
+      type: 'table' as const
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(makeTableEvidenceResponse(block.block_id))
+    )
+    const reload = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_untrusted_table', [
+          makeTableSource(block.block_id)
+        ])}
+        blocks={[block]}
+        blocksError={{
+          code: 'BLOCKS_UNAVAILABLE',
+          message: 'blocks do not match EvidenceIndex'
+        }}
+        evidenceFingerprint={'a'.repeat(64)}
+        blocksEvidenceFingerprint={null}
+        onReloadEvidence={reload}
+      />
+    )
+
+    await Promise.resolve()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('grid')).toBeNull()
+    expect(screen.getAllByRole('button', {
+      name: 'Reload task evidence'
+    })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('withholds a preview whose response fingerprint does not match ReqIR', async () => {
+    const block = makeBlock('blk_stale_preview', 'Stale preview evidence')
+    const reload = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(pagePreviewResponse('b'.repeat(64)))
+    )
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')]
+    })
+
+    renderViewer(
+      makeRequirement('req_stale_preview', [source]),
+      [block],
+      'a'.repeat(64),
+      'a'.repeat(64),
+      reload
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Evidence version changed')
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByLabelText('Source quote bounding box')).toBeNull()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   it('withholds block text from a different Evidence version and reloads', () => {
@@ -1333,6 +1439,18 @@ function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
+  })
+}
+
+function pagePreviewResponse(
+  evidenceFingerprint = 'a'.repeat(64)
+): Response {
+  return new Response(new Blob(['preview'], { type: 'image/png' }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/png',
+      'X-Spectrail-Evidence-Fingerprint': evidenceFingerprint
+    }
   })
 }
 

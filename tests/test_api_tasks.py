@@ -346,6 +346,7 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
     preview_page = located_sources[0]["page_locator"]["page"]
     preview = api_client.get(
         f"/api/tasks/{task_id}/pages/{preview_page}/preview.png"
+        f"?expected_evidence_fingerprint={evidence_fingerprint}"
     )
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/png"

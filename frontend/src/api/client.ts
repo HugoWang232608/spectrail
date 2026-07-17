@@ -95,6 +95,34 @@ export function getPagePreviewUrl(taskId: string, page: number): string {
   return `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/pages/${page}/preview.png`
 }
 
+export async function getPagePreview(
+  taskId: string,
+  page: number,
+  expectedEvidenceFingerprint: string,
+  attempt: number,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const response = await fetch(
+    `${getPagePreviewUrl(encodeURIComponent(taskId), page)}` +
+      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}` +
+      `&attempt=${attempt}`,
+    { signal }
+  )
+  if (!response.ok) {
+    throw await readApiError(response)
+  }
+  const actualFingerprint = response.headers.get(
+    'X-Spectrail-Evidence-Fingerprint'
+  )
+  if (actualFingerprint !== expectedEvidenceFingerprint) {
+    throw {
+      code: 'EVIDENCE_VERSION_CHANGED',
+      message: 'PDF preview does not match the loaded ReqIR Evidence version'
+    } satisfies ApiError
+  }
+  return response.blob()
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {

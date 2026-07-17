@@ -80,11 +80,11 @@ text evidence view. The preview URL includes `source_evidence_key`, whose
 identity includes the Evidence fingerprint, so the private browser cache cannot
 reuse a page image across pipeline runs with different source evidence.
 
-The page image remains available as document context when a legacy or edited
-source carries an unverified locator. The red bbox is rendered only when the
-`page_region` capability status is `PASS`; otherwise the preview explicitly
-reports the invalid or unverified locator instead of presenting it as trusted
-grounding.
+The page image and red bbox are rendered only when the `page_region` capability
+status is `PASS`. A legacy, edited, or migrated source with an invalid or
+unverified locator cannot choose the preview page or aspect ratio; the UI
+withholds the image, reports the locator status, and retains canonical block
+text as the review evidence.
 
 Run the frontend evidence tests and production build with:
 
@@ -98,6 +98,12 @@ GitHub Actions runs `npm test` before the production frontend build. Component
 coverage verifies final locator highlighting, source and requirement changes,
 preview failure and retry, proportional overlay geometry, locator/block
 mismatch behavior, and all four supported page rotations.
+
+Backend geometry acceptance renders real PDFs at 0°, 90°, 180°, and 270°,
+derives each `PageLocator` through the parser and enricher, decodes the same PNG
+renderer used by the preview API, and confirms that the locator's proportional
+pixel region contains the quoted glyphs. Browser-level screenshot regression
+remains separate from this deterministic cross-layer check.
 
 ## Next acceptance steps
 

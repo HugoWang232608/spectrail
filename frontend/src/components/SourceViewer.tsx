@@ -161,6 +161,21 @@ function PageEvidencePreview({
     (result) => result.capability === 'page_region'
   )?.status
   const pageLocatorValidated = pageRegionStatus === 'PASS'
+  if (!pageLocatorValidated) {
+    return (
+      <div className="page-evidence-box">
+        <div className="page-evidence-heading">
+          <h3>Page evidence</h3>
+        </div>
+        <div className="preview-unavailable" role="status">
+          <p className="muted-text">
+            Page locator invalid ({pageRegionStatus ?? 'UNVERIFIED'}). Preview withheld.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const { bbox } = locator
   const overlayStyle = {
     left: `${(bbox.x0 / locator.page_width) * 100}%`,
@@ -198,17 +213,11 @@ function PageEvidencePreview({
             alt={`PDF page ${locator.page}`}
             onError={onError}
           />
-          {pageLocatorValidated ? (
-            <span
-              className="page-locator-overlay"
-              style={overlayStyle}
-              aria-label="Source quote bounding box"
-            />
-          ) : (
-            <span className="page-locator-invalid" role="status">
-              Page locator invalid ({pageRegionStatus ?? 'UNVERIFIED'}).
-            </span>
-          )}
+          <span
+            className="page-locator-overlay"
+            style={overlayStyle}
+            aria-label="Source quote bounding box"
+          />
         </div>
       )}
     </div>

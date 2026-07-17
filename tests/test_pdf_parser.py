@@ -21,6 +21,7 @@ from spectrail.parsers.pdf_parser import (
     _project_text_block,
 )
 from spectrail.parsers.registry import parse_document
+from spectrail.tasks.store import _render_pdf_page
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
@@ -949,35 +950,61 @@ def test_pdf_v2_uses_cropbox_preview_dimensions(tmp_path: Path):
     )
 
 
-def test_pdf_v2_fragment_bbox_overlays_rendered_preview_pixels(tmp_path: Path):
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_v2_page_locator_overlays_rendered_preview_pixels(
+    tmp_path: Path,
+    rotation: int,
+):
     path = tmp_path / "overlay.pdf"
     document = fitz.open()
     page = document.new_page(width=300, height=200)
     page.insert_text((40, 80), "Overlay target", fontsize=18)
+    page.set_rotation(rotation)
     document.save(path)
     document.close()
 
     parsed = PdfParserV2().parse(path)
-    assert parsed.evidence_index is not None
-    bbox = parsed.evidence_index.fragments[0].bbox
-
-    document = fitz.open(path)
-    pixmap = document[0].get_pixmap(
-        matrix=fitz.Matrix(2, 2),
-        colorspace=fitz.csGRAY,
-        alpha=False,
+    index = parsed.evidence_index
+    assert index is not None
+    requirement = RequirementIR(
+        id="REQ-OVERLAY",
+        statement="Overlay target",
+        sources=[
+            SourceSpan(
+                document_id=parsed.document_id,
+                block_id=parsed.blocks[0].block_id,
+                quote="Overlay target",
+            )
+        ],
     )
-    document.close()
-    scale = 2
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+    )
+    SourceEvidenceEnricher().enrich([requirement], index, registry, parsed.blocks)
+    locator = requirement.sources[0].page_locator
+    assert locator is not None
+    assert locator.source_rotation == rotation
+
+    preview_png, preview_width, preview_height = _render_pdf_page(path, 1)
+    pixmap = fitz.Pixmap(preview_png)
+    assert (pixmap.width, pixmap.height) == (preview_width, preview_height)
+    scale_x = preview_width / locator.page_width
+    scale_y = preview_height / locator.page_height
+    assert scale_x == pytest.approx(scale_y)
+
+    bbox = locator.bbox
     tolerance = 2
-    x0 = max(0, int(bbox.x0 * scale) - tolerance)
-    y0 = max(0, int(bbox.y0 * scale) - tolerance)
-    x1 = min(pixmap.width, int(bbox.x1 * scale) + tolerance + 1)
-    y1 = min(pixmap.height, int(bbox.y1 * scale) + tolerance + 1)
+    x0 = max(0, int(bbox.x0 * scale_x) - tolerance)
+    y0 = max(0, int(bbox.y0 * scale_y) - tolerance)
+    x1 = min(pixmap.width, int(bbox.x1 * scale_x) + tolerance + 1)
+    y1 = min(pixmap.height, int(bbox.y1 * scale_y) + tolerance + 1)
     darkest = min(
-        pixmap.samples[y * pixmap.stride + x]
+        pixmap.samples[y * pixmap.stride + x * pixmap.n + channel]
         for y in range(y0, y1)
         for x in range(x0, x1)
+        for channel in range(min(3, pixmap.n))
     )
     assert darkest < 128
 

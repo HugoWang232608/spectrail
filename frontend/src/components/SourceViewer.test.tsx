@@ -194,7 +194,7 @@ describe('SourceViewer', () => {
     )
   })
 
-  it('shows page context without drawing an invalid locator', () => {
+  it('withholds page context when the locator is invalid', () => {
     const block = makeBlock('blk_invalid_page', 'Invalid page locator')
     const source = makeSource({
       block_id: block.block_id,
@@ -208,11 +208,12 @@ describe('SourceViewer', () => {
 
     renderViewer(makeRequirement('req_invalid_page', [source]), [block])
 
-    expect(screen.getByRole('img', { name: 'PDF page 1' })).toBeTruthy()
+    expect(screen.queryByRole('img')).toBeNull()
     expect(screen.queryByLabelText('Source quote bounding box')).toBeNull()
     expect(screen.getByRole('status').textContent).toBe(
-      'Page locator invalid (FAIL_INVALID_REFERENCE).'
+      'Page locator invalid (FAIL_INVALID_REFERENCE). Preview withheld.'
     )
+    expect(screen.getByText(block.text, { selector: 'mark' })).toBeTruthy()
   })
 
   it.each([

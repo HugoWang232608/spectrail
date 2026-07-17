@@ -349,14 +349,40 @@ cell-occurrence start and `rendered_end` is the maximum occurrence end for the
 physical row. These browser fixtures complement rather than replace the
 real-PDF parser/renderer pixel test.
 
+## M5 PDF table detection
+
+PDF V2 now runs PyMuPDF `find_tables(strategy="lines_strict")` and treats a
+result as structured evidence only when every detected physical row exposes a
+complete, non-overlapping cell grid with valid canonical preview geometry. A
+trusted table produces:
+
+- `TableRecord(parser_method="pymupdf_find_tables", topology_status="complete")`;
+- stable canonical `TableCellRecord` IDs with page-space bounding boxes;
+- occurrence-aware canonical row text using the same escaped-cell serializer as
+  DOCX;
+- row-group blocks capped at 20 primary rows, with the first detected header row
+  projected into later groups using the original logical cell IDs; and
+- `text_range`, `page_region`, and `table_cell` as both expected and available
+  capabilities.
+
+Merged or incomplete PDF grids are not guessed. Their ordinary PDF text blocks
+remain available, a `PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the
+reason, and no `table_cell` capability is exposed.
+
+The checked-in `pdf_table_requirements.pdf` fixture runs through prompt cell
+mapping, source identity canonicalization, quote matching, enrichment, quote
+validation, and `structured_required` locator validation. All three
+capabilities pass, and the page locator is independently derived from the
+selected cell bbox union. The browser fixture is generated from that backend
+projection, reuses `table_evidence_view_v1`, and fixes both the real PDF page
+overlay and selected grid cells in the Playwright screenshot gate.
+
 ## Next acceptance steps
 
-- enter M5 PDF table detection and emit `TableRecord`, `TableCellRecord`, and
-  `CellBlockOccurrence` objects from checked-in PDF table fixtures;
-- reuse the existing `table_evidence_view_v1` endpoint and browser grid for
-  those PDF tables instead of introducing a second projection;
-- add checked-in PDF table screenshots to the same Playwright gate once the
-  M5 parser fixtures reach structured locator acceptance;
+- expand PDF table support to explicitly represented merged cells once
+  PyMuPDF topology can prove their anchor and occupied spans;
+- add multi-page PDF table/header continuation fixtures without weakening
+  per-page table identity;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

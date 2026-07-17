@@ -5,9 +5,11 @@ import type {
   SourceSpan,
   TableEvidenceResponse
 } from './api/types'
+import generatedPdfTableFixture from './fixtures/pdf-table-evidence.json' with {
+  type: 'json'
+}
 
 export const VISUAL_TASK_ID = 'visual-task'
-export const VISUAL_EVIDENCE_FINGERPRINT = 'a'.repeat(64)
 
 export type VisualFixture = {
   name: string
@@ -15,6 +17,19 @@ export type VisualFixture = {
   blocks: DocumentBlock[]
   tableEvidence?: TableEvidenceResponse
 }
+
+type GeneratedVisualFixture = VisualFixture & {
+  evidenceFingerprint: string
+  tableEvidence: TableEvidenceResponse
+}
+
+const PDF_TABLE_VISUAL_FIXTURE = (
+  generatedPdfTableFixture as unknown as GeneratedVisualFixture
+)
+
+export const VISUAL_EVIDENCE_FINGERPRINT = (
+  PDF_TABLE_VISUAL_FIXTURE.evidenceFingerprint
+)
 
 const PDF_GEOMETRY: Record<0 | 90 | 180 | 270, {
   pageWidth: number
@@ -325,6 +340,17 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
   }
 }
 
+export function makePdfTableVisualFixture(): VisualFixture {
+  return {
+    name: PDF_TABLE_VISUAL_FIXTURE.name,
+    requirement: PDF_TABLE_VISUAL_FIXTURE.requirement,
+    blocks: PDF_TABLE_VISUAL_FIXTURE.blocks,
+    tableEvidence: validateVisualTableEvidence(
+      PDF_TABLE_VISUAL_FIXTURE.tableEvidence
+    )
+  }
+}
+
 export function visualFixture(name: string): VisualFixture {
   switch (name) {
     case 'pdf-0':
@@ -335,6 +361,8 @@ export function visualFixture(name: string): VisualFixture {
       return makePdfVisualFixture(180)
     case 'pdf-270':
       return makePdfVisualFixture(270)
+    case 'pdf-table':
+      return makePdfTableVisualFixture()
     case 'docx-merged':
       return makeMergedDocxVisualFixture()
     case 'docx-row-group':

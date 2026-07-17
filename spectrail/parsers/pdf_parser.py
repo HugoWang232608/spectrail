@@ -15,13 +15,22 @@ from spectrail.evidence.fingerprint import (
     sha256_file,
     sha256_text,
 )
-from spectrail.evidence.ids import fragment_id, page_id
+from spectrail.evidence.ids import (
+    cell_id,
+    fragment_id,
+    occurrence_id,
+    page_id,
+    table_id,
+)
 from spectrail.evidence.models import (
     BlockEvidenceRecord,
     BoundingBox,
+    CellBlockOccurrence,
     EvidenceIndex,
     PageRecord,
     ParserIdentity,
+    TableCellRecord,
+    TableRecord,
     TextFragmentRecord,
 )
 from spectrail.parsers.base import DocumentParseError, ParsedDocument
@@ -64,6 +73,15 @@ BOLD_LABEL_RE = re.compile(
     r"rationale|priority|dependencies)\s*:?$",
     re.IGNORECASE,
 )
+MAX_PRIMARY_ROWS_PER_PDF_TABLE_BLOCK = 20
+PDF_TABLE_CELL_SEPARATOR = " | "
+PDF_TABLE_ROW_SEPARATOR = "\n"
+PDF_TABLE_TEXT_BLOCK_OVERLAP_RATIO = 0.80
+PDF_TABLE_DETECTION_STRATEGY = "lines_strict"
+
+
+class _PdfTableEvidenceUnavailable(ValueError):
+    """The detected region cannot be trusted as logical table-cell evidence."""
 
 
 class PdfParserV2:
@@ -76,6 +94,13 @@ class PdfParserV2:
             import fitz
         except ImportError as exc:
             raise DocumentParseError("PyMuPDF is required to parse PDF documents") from exc
+        disable_layout_recommendation = getattr(
+            fitz,
+            "no_recommend_layout",
+            None,
+        )
+        if callable(disable_layout_recommendation):
+            disable_layout_recommendation()
 
         try:
             document = fitz.open(source_path)
@@ -103,11 +128,17 @@ class PdfParserV2:
         blocks: list[DocumentBlock] = []
         evidence_blocks: list[BlockEvidenceRecord] = []
         fragments: list[TextFragmentRecord] = []
+        tables: list[TableRecord] = []
+        cells: list[TableCellRecord] = []
+        occurrences: list[CellBlockOccurrence] = []
         pages: list[PageRecord] = []
         repeated_edge_candidate_blocks = 0
+        table_index = 0
+        occurrence_index = 0
 
         for layout in page_layouts:
             page_block_ids: list[str] = []
+            page_table_ids: list[str] = []
             candidates = list(layout.blocks)
             repeated_edge_candidate_blocks += sum(
                 item.edge_candidate for item in candidates
@@ -123,6 +154,30 @@ class PdfParserV2:
                 )
 
             for source_index, candidate in enumerate(ordered, start=1):
+                if candidate.table is not None:
+                    table_index += 1
+                    built = _build_pdf_table_evidence(
+                        candidate.table,
+                        document_id=document_id,
+                        page=layout.page,
+                        section_path=candidate.section_path,
+                        source_index=source_index,
+                        layout_column_index=candidate.column_index,
+                        layout_column_count=column_count,
+                        first_block_order=len(blocks) + 1,
+                        table_index=table_index,
+                        first_occurrence_index=occurrence_index + 1,
+                    )
+                    blocks.extend(built.blocks)
+                    evidence_blocks.extend(built.evidence_blocks)
+                    tables.append(built.table)
+                    cells.extend(built.cells)
+                    occurrences.extend(built.occurrences)
+                    occurrence_index += len(built.occurrences)
+                    page_block_ids.extend(block.block_id for block in built.blocks)
+                    page_table_ids.append(built.table.table_id)
+                    continue
+
                 order = len(blocks) + 1
                 block_identifier = block_id(order)
                 block = DocumentBlock(
@@ -205,7 +260,7 @@ class PdfParserV2:
                     height=layout.height,
                     source_rotation=layout.rotation,  # type: ignore[arg-type]
                     block_ids=page_block_ids,
-                    table_ids=[],
+                    table_ids=page_table_ids,
                     warnings=list(dict.fromkeys(layout.warnings)),
                 )
             )
@@ -227,6 +282,9 @@ class PdfParserV2:
                 pages=pages,
                 blocks=evidence_blocks,
                 fragments=fragments,
+                tables=tables,
+                cells=cells,
+                cell_occurrences=occurrences,
                 warnings=warnings,
             )
         )
@@ -241,6 +299,8 @@ class PdfParserV2:
             metadata={
                 "source_path": source_path.as_posix(),
                 "page_count": len(page_layouts),
+                "table_count": len(tables),
+                "table_cell_count": len(cells),
                 "suppressed_repeated_edge_blocks": 0,
                 "repeated_edge_candidate_blocks": repeated_edge_candidate_blocks,
             },
@@ -265,6 +325,24 @@ class _ProjectedFragment:
     separator_before: str
 
 
+@dataclass(frozen=True)
+class _ProjectedPdfTableCell:
+    row_index: int
+    column_index: int
+    text: str
+    bbox: BoundingBox
+    is_header: bool
+
+
+@dataclass(frozen=True)
+class _ProjectedPdfTable:
+    source_table_number: int
+    bbox: BoundingBox
+    row_count: int
+    column_count: int
+    cells: tuple[_ProjectedPdfTableCell, ...]
+
+
 @dataclass
 class _PageTextBlock:
     text: str
@@ -280,6 +358,25 @@ class _PageTextBlock:
     column_index: int = 1
     edge_candidate: bool = False
     edge_role: str | None = None
+    table: _ProjectedPdfTable | None = None
+
+
+@dataclass(frozen=True)
+class _RenderedPdfTableCell:
+    cell: _ProjectedPdfTableCell
+    physical_row_index: int
+    start: int
+    end: int
+    role: str
+
+
+@dataclass(frozen=True)
+class _BuiltPdfTableEvidence:
+    blocks: list[DocumentBlock]
+    evidence_blocks: list[BlockEvidenceRecord]
+    table: TableRecord
+    cells: list[TableCellRecord]
+    occurrences: list[CellBlockOccurrence]
 
 
 @dataclass
@@ -339,6 +436,25 @@ def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
         for block in blocks
         if block.bbox is None
     ]
+    projected_tables, table_warnings = _extract_page_tables(
+        page,
+        page_width=width,
+        page_height=height,
+    )
+    warnings.extend(table_warnings)
+    if projected_tables:
+        blocks = [
+            block
+            for block in blocks
+            if not any(
+                _text_block_belongs_to_table(block, table)
+                for table in projected_tables
+            )
+        ]
+        blocks.extend(
+            _table_page_block(table)
+            for table in projected_tables
+        )
     return _PageLayout(
         page=page_index,
         width=width,
@@ -346,6 +462,426 @@ def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
         rotation=rotation,
         blocks=blocks,
         warnings=warnings,
+    )
+
+
+def _extract_page_tables(
+    page: object,
+    *,
+    page_width: float,
+    page_height: float,
+) -> tuple[list[_ProjectedPdfTable], list[str]]:
+    try:
+        finder = page.find_tables(strategy=PDF_TABLE_DETECTION_STRATEGY)
+    except Exception as exc:
+        return [], [
+            "PDF_TABLE_DETECTION_UNAVAILABLE: "
+            f"{type(exc).__name__}"
+        ]
+
+    projected: list[_ProjectedPdfTable] = []
+    warnings: list[str] = []
+    raw_tables = list(getattr(finder, "tables", []))
+    for source_table_number, raw_table in enumerate(raw_tables, start=1):
+        try:
+            table = _project_pdf_table(
+                page,
+                raw_table,
+                source_table_number=source_table_number,
+                page_width=page_width,
+                page_height=page_height,
+            )
+        except _PdfTableEvidenceUnavailable as exc:
+            warnings.append(
+                "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: "
+                f"table={source_table_number}, reason={exc}"
+            )
+            continue
+        projected.append(table)
+
+    projected.sort(
+        key=lambda item: (
+            item.bbox.y0,
+            item.bbox.x0,
+            item.bbox.y1,
+            item.bbox.x1,
+            item.source_table_number,
+        )
+    )
+    return projected, warnings
+
+
+def _project_pdf_table(
+    page: object,
+    raw_table: object,
+    *,
+    source_table_number: int,
+    page_width: float,
+    page_height: float,
+) -> _ProjectedPdfTable:
+    try:
+        row_count = int(getattr(raw_table, "row_count"))
+        column_count = int(getattr(raw_table, "col_count"))
+        rows = list(getattr(raw_table, "rows"))
+        extracted = list(raw_table.extract())
+    except Exception as exc:
+        raise _PdfTableEvidenceUnavailable(
+            f"table extraction failed ({type(exc).__name__})"
+        ) from exc
+    if row_count < 1 or column_count < 1:
+        raise _PdfTableEvidenceUnavailable("table dimensions are invalid")
+    if len(rows) != row_count or len(extracted) != row_count:
+        raise _PdfTableEvidenceUnavailable("table row count is inconsistent")
+
+    table_bbox = _rotated_bbox(
+        page,
+        getattr(raw_table, "bbox", None),
+        page_width=page_width,
+        page_height=page_height,
+    )
+    if table_bbox is None:
+        raise _PdfTableEvidenceUnavailable("table bbox is unavailable")
+
+    header = getattr(raw_table, "header", None)
+    header_names = [
+        _canonicalize_pdf_table_cell_text(value or "")
+        for value in list(getattr(header, "names", []) or [])
+    ]
+    first_row_text = [
+        _canonicalize_pdf_table_cell_text(value or "")
+        for value in list(extracted[0])
+    ]
+    first_row_is_header = (
+        header is not None
+        and not bool(getattr(header, "external", True))
+        and len(header_names) == column_count
+        and header_names == first_row_text
+    )
+
+    cells: list[_ProjectedPdfTableCell] = []
+    raw_cell_boxes: set[tuple[float, float, float, float]] = set()
+    for row_index, (row, values) in enumerate(zip(rows, extracted), start=1):
+        row_cells = list(getattr(row, "cells", []))
+        row_values = list(values)
+        if len(row_cells) != column_count or len(row_values) != column_count:
+            raise _PdfTableEvidenceUnavailable(
+                f"row {row_index} does not cover the complete grid"
+            )
+        for column_index, (raw_bbox, raw_text) in enumerate(
+            zip(row_cells, row_values),
+            start=1,
+        ):
+            normalized_raw_bbox = _raw_bbox(raw_bbox)
+            bbox = _rotated_bbox(
+                page,
+                raw_bbox,
+                page_width=page_width,
+                page_height=page_height,
+            )
+            if normalized_raw_bbox is None or bbox is None:
+                raise _PdfTableEvidenceUnavailable(
+                    f"cell r{row_index}c{column_index} bbox is unavailable"
+                )
+            if normalized_raw_bbox in raw_cell_boxes:
+                raise _PdfTableEvidenceUnavailable(
+                    "merged or duplicated cell geometry is not yet supported"
+                )
+            raw_cell_boxes.add(normalized_raw_bbox)
+            cells.append(
+                _ProjectedPdfTableCell(
+                    row_index=row_index,
+                    column_index=column_index,
+                    text=_canonicalize_pdf_table_cell_text(raw_text or ""),
+                    bbox=bbox,
+                    is_header=first_row_is_header and row_index == 1,
+                )
+            )
+
+    if len(cells) != row_count * column_count:
+        raise _PdfTableEvidenceUnavailable("table grid is incomplete")
+    if not any(cell.text.strip() for cell in cells):
+        raise _PdfTableEvidenceUnavailable("table has no extractable cell text")
+    return _ProjectedPdfTable(
+        source_table_number=source_table_number,
+        bbox=table_bbox,
+        row_count=row_count,
+        column_count=column_count,
+        cells=tuple(cells),
+    )
+
+
+def _table_page_block(table: _ProjectedPdfTable) -> _PageTextBlock:
+    text, _ = _render_pdf_table_row_group(
+        table,
+        row_start=1,
+        row_end=table.row_count,
+        repeated_header=False,
+    )
+    return _PageTextBlock(
+        text=text,
+        bbox=table.bbox,
+        fragments=[],
+        source_block_number=1_000_000 + table.source_table_number,
+        block_type="table",
+        table=table,
+    )
+
+
+def _text_block_belongs_to_table(
+    block: _PageTextBlock,
+    table: _ProjectedPdfTable,
+) -> bool:
+    if block.bbox is None:
+        return False
+    intersection_x = max(
+        0.0,
+        min(block.bbox.x1, table.bbox.x1)
+        - max(block.bbox.x0, table.bbox.x0),
+    )
+    intersection_y = max(
+        0.0,
+        min(block.bbox.y1, table.bbox.y1)
+        - max(block.bbox.y0, table.bbox.y0),
+    )
+    block_area = (
+        (block.bbox.x1 - block.bbox.x0)
+        * (block.bbox.y1 - block.bbox.y0)
+    )
+    if block_area <= 0:
+        return False
+    return (
+        intersection_x * intersection_y / block_area
+        >= PDF_TABLE_TEXT_BLOCK_OVERLAP_RATIO
+    )
+
+
+def _build_pdf_table_evidence(
+    table: _ProjectedPdfTable,
+    *,
+    document_id: str,
+    page: int,
+    section_path: list[str],
+    source_index: int,
+    layout_column_index: int,
+    layout_column_count: int,
+    first_block_order: int,
+    table_index: int,
+    first_occurrence_index: int,
+) -> _BuiltPdfTableEvidence:
+    table_identifier = table_id(table_index)
+    cell_identifiers = {
+        (cell.row_index, cell.column_index): cell_id(
+            table_index,
+            cell.row_index,
+            cell.column_index,
+        )
+        for cell in table.cells
+    }
+    cell_records = [
+        TableCellRecord(
+            cell_id=cell_identifiers[(cell.row_index, cell.column_index)],
+            table_id=table_identifier,
+            row_index=cell.row_index,
+            column_index=cell.column_index,
+            text=cell.text,
+            text_sha256=sha256_text(cell.text),
+            is_header=cell.is_header,
+            page=page,
+            bbox=cell.bbox,
+        )
+        for cell in table.cells
+    ]
+
+    blocks: list[DocumentBlock] = []
+    evidence_blocks: list[BlockEvidenceRecord] = []
+    occurrences: list[CellBlockOccurrence] = []
+    table_occurrence_ids: list[str] = []
+    header_available = all(
+        cell.is_header for cell in table.cells if cell.row_index == 1
+    )
+    row_groups = [
+        (
+            start,
+            min(
+                start + MAX_PRIMARY_ROWS_PER_PDF_TABLE_BLOCK - 1,
+                table.row_count,
+            ),
+        )
+        for start in range(
+            1,
+            table.row_count + 1,
+            MAX_PRIMARY_ROWS_PER_PDF_TABLE_BLOCK,
+        )
+    ]
+
+    for group_index, (row_start, row_end) in enumerate(row_groups):
+        repeated_header = group_index > 0 and header_available
+        text, rendered_cells = _render_pdf_table_row_group(
+            table,
+            row_start=row_start,
+            row_end=row_end,
+            repeated_header=repeated_header,
+        )
+        order = first_block_order + group_index
+        block_identifier = block_id(order)
+        block_cell_ids = list(
+            dict.fromkeys(
+                cell_identifiers[
+                    (rendered.cell.row_index, rendered.cell.column_index)
+                ]
+                for rendered in rendered_cells
+            )
+        )
+        primary_cells = [
+            cell
+            for cell in table.cells
+            if row_start <= cell.row_index <= row_end
+        ]
+        block_bbox = _bbox_union([cell.bbox for cell in primary_cells])
+        block = DocumentBlock(
+            block_id=block_identifier,
+            document_id=document_id,
+            type="table",
+            text=text,
+            page=page,
+            section_path=list(section_path),
+            order=order,
+            metadata={
+                "source_format": PdfParserV2.source_format,
+                "parser": PdfParserV2.parser_name,
+                "page": page,
+                "source_index": source_index,
+                "source_table_number": table.source_table_number,
+                "layout_column_index": layout_column_index,
+                "layout_column_count": layout_column_count,
+                "page_region_available": True,
+                "structured_table_evidence": True,
+                "table_id": table_identifier,
+                "table_index": table_index,
+                "table_row_start": row_start,
+                "table_row_end": row_end,
+                "repeated_header_rows": [1] if repeated_header else [],
+            },
+        )
+        blocks.append(block)
+        evidence_blocks.append(
+            BlockEvidenceRecord(
+                block_id=block_identifier,
+                text_length=len(text),
+                text_sha256=sha256_text(text),
+                page=page,
+                bbox=block_bbox,
+                table_id=table_identifier,
+                table_row_start=row_start,
+                table_row_end=row_end,
+                cell_ids=block_cell_ids,
+                expected_capabilities=[
+                    "text_range",
+                    "page_region",
+                    "table_cell",
+                ],
+                available_capabilities=[
+                    "text_range",
+                    "page_region",
+                    "table_cell",
+                ],
+            )
+        )
+        for rendered in rendered_cells:
+            occurrence_identifier = occurrence_id(
+                first_occurrence_index + len(occurrences)
+            )
+            occurrences.append(
+                CellBlockOccurrence(
+                    occurrence_id=occurrence_identifier,
+                    cell_id=cell_identifiers[
+                        (rendered.cell.row_index, rendered.cell.column_index)
+                    ],
+                    block_id=block_identifier,
+                    physical_row_index=rendered.physical_row_index,
+                    canonical_start=rendered.start,
+                    canonical_end=rendered.end,
+                    occurrence_role=rendered.role,  # type: ignore[arg-type]
+                )
+            )
+            table_occurrence_ids.append(occurrence_identifier)
+
+    table_record = TableRecord(
+        table_id=table_identifier,
+        block_ids=[block.block_id for block in blocks],
+        page=page,
+        bbox=table.bbox,
+        row_count=table.row_count,
+        column_count=table.column_count,
+        cell_ids=[cell.cell_id for cell in cell_records],
+        occurrence_ids=table_occurrence_ids,
+        parser_method="pymupdf_find_tables",
+        topology_status="complete",
+        warnings=(
+            ["PDF_REPEATED_HEADER_PROJECTED"]
+            if len(row_groups) > 1 and header_available
+            else []
+        ),
+    )
+    return _BuiltPdfTableEvidence(
+        blocks=blocks,
+        evidence_blocks=evidence_blocks,
+        table=table_record,
+        cells=cell_records,
+        occurrences=occurrences,
+    )
+
+
+def _render_pdf_table_row_group(
+    table: _ProjectedPdfTable,
+    *,
+    row_start: int,
+    row_end: int,
+    repeated_header: bool,
+) -> tuple[str, list[_RenderedPdfTableCell]]:
+    rendered_rows = (
+        ([(1, True)] if repeated_header else [])
+        + [
+            (row_index, False)
+            for row_index in range(row_start, row_end + 1)
+        ]
+    )
+    parts: list[str] = []
+    rendered_cells: list[_RenderedPdfTableCell] = []
+    cursor = 0
+    for rendered_row_index, (row_index, repeated) in enumerate(rendered_rows):
+        if rendered_row_index:
+            parts.append(PDF_TABLE_ROW_SEPARATOR)
+            cursor += len(PDF_TABLE_ROW_SEPARATOR)
+        row_cells = sorted(
+            (cell for cell in table.cells if cell.row_index == row_index),
+            key=lambda cell: cell.column_index,
+        )
+        for cell_index, cell in enumerate(row_cells):
+            start = cursor
+            parts.append(cell.text)
+            cursor += len(cell.text)
+            rendered_cells.append(
+                _RenderedPdfTableCell(
+                    cell=cell,
+                    physical_row_index=row_index,
+                    start=start,
+                    end=cursor,
+                    role="repeated_header" if repeated else "original",
+                )
+            )
+            if cell_index < len(row_cells) - 1:
+                parts.append(PDF_TABLE_CELL_SEPARATOR)
+                cursor += len(PDF_TABLE_CELL_SEPARATOR)
+    return "".join(parts), rendered_cells
+
+
+def _canonicalize_pdf_table_cell_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return (
+        normalized.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\n", "\\n")
     )
 
 
@@ -1084,7 +1620,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.10",
+        parser_version="2.11",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -1097,7 +1633,16 @@ def _parser_identity() -> ParserIdentity:
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",
             "geometry_failure_policy": "text_only_block_v1",
-            "table_detection": "deferred_text_only",
+            "table_detection": (
+                "pymupdf_find_tables_lines_strict_complete_grid_v1"
+            ),
+            "table_block_mode": "complete_row_groups",
+            "max_primary_rows_per_table_block": (
+                MAX_PRIMARY_ROWS_PER_PDF_TABLE_BLOCK
+            ),
+            "repeat_header_rows": 1,
+            "canonical_table_serializer": "escaped_cells_v1",
+            "unsupported_table_topology": "preserve_text_without_table_cell",
         },
         runtime_dependencies={
             "PyMuPDF": pymupdf_version,

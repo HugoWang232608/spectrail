@@ -215,6 +215,35 @@ def test_api_table_evidence_returns_block_scoped_logical_grid(
     assert header["occurrences"][0]["occurrence_role"] == "original"
 
 
+def test_api_table_evidence_reuses_projection_for_pdf_table(
+    api_client: TestClient,
+):
+    task_id, parsed = _create_completed_pdf_table_task(api_client)
+    assert parsed.evidence_index is not None
+    table = parsed.evidence_index.tables[0]
+    block_id = table.block_ids[0]
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/tables/{table.table_id}"
+        f"/blocks/{block_id}/evidence"
+        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "table_evidence_view_v1"
+    assert payload["page"] == 1
+    assert payload["bbox"] == table.bbox.model_dump(mode="json")
+    assert payload["row_count"] == 3
+    assert payload["column_count"] == 3
+    assert payload["rows"][0]["cells"][0]["is_header"] is True
+    assert [cell["text"] for cell in payload["rows"][1]["cells"]] == [
+        "REQ-001",
+        "Approved within 2 seconds",
+        "Safety",
+    ]
+
+
 def test_api_table_evidence_preserves_repeated_header_projection(
     api_client: TestClient,
 ):
@@ -809,6 +838,37 @@ def _create_completed_docx_table_task(
 
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
     parsed = DocxParserV2().parse(task_dir / "input" / "original.docx")
+    assert parsed.evidence_index is not None
+    write_json(
+        task_dir / "parsed" / "blocks.json",
+        [block.model_dump(mode="json") for block in parsed.blocks],
+    )
+    write_json(
+        task_dir / "parsed" / "evidence_index.json",
+        parsed.evidence_index.model_dump(mode="json"),
+    )
+    api_client.app.state.task_store.update_task(task_id, status="completed")
+    return task_id, parsed
+
+
+def _create_completed_pdf_table_task(api_client: TestClient):
+    source = Path("tests/fixtures/pdf_table_requirements.pdf")
+    created = api_client.post("/api/tasks", json={})
+    task_id = created.json()["task_id"]
+    uploaded = api_client.post(
+        f"/api/tasks/{task_id}/documents",
+        files={
+            "file": (
+                source.name,
+                source.read_bytes(),
+                "application/pdf",
+            )
+        },
+    )
+    assert uploaded.status_code == 200
+
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    parsed = PdfParserV2().parse(task_dir / "input" / "original.pdf")
     assert parsed.evidence_index is not None
     write_json(
         task_dir / "parsed" / "blocks.json",

@@ -6,14 +6,22 @@ import fitz
 import pytest
 
 from spectrail.chunking import SectionAwareChunker
+from spectrail.core.io import read_json
 from spectrail.core.models import RequirementIR, SourceSpan
-from spectrail.evidence import build_quote_match_registry
+from spectrail.evidence import (
+    build_quote_match_registry,
+    build_table_evidence_view,
+)
 from spectrail.evidence.enricher import SourceEvidenceEnricher
 from spectrail.evidence.index_builder import (
     ensure_evidence_index,
     validate_evidence_index_against_parsed_document,
 )
 from spectrail.evidence.pdf_preview import render_pdf_page
+from spectrail.evidence.source_identity import canonicalize_source_cell_ids
+from spectrail.extractors.reqir_extractor import ReqIRExtractor
+from spectrail.llm.base import ModelRequest
+from spectrail.llm.prompt_builder import build_reqir_prompt
 from spectrail.parsers.base import DocumentParseError
 from spectrail.parsers import pdf_parser as pdf_parser_module
 from spectrail.parsers.pdf_parser import (
@@ -23,6 +31,7 @@ from spectrail.parsers.pdf_parser import (
 )
 from spectrail.parsers.registry import parse_document
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
+from spectrail.validators.source_quote_validator import SourceQuoteValidator
 
 
 def _mark_cjk_font_as_bold(
@@ -72,7 +81,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.10"
+    assert parsed.parser_identity.parser_version == "2.11"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -380,23 +389,183 @@ def test_pdf_v2_does_not_mark_two_page_repeated_edge_text(tmp_path: Path):
     assert not any("REPEATED_HEADER" in warning for warning in parsed.warnings)
 
 
-def test_pdf_v2_does_not_claim_table_cell_without_proven_sparse_topology(
+def test_pdf_v2_checked_in_table_fixture_builds_structured_evidence():
+    path = Path("tests/fixtures/pdf_table_requirements.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    table_block = next(block for block in parsed.blocks if block.type == "table")
+    table_evidence = next(
+        block for block in index.blocks if block.block_id == table_block.block_id
+    )
+    assert table_block.text == (
+        "Requirement ID | Acceptance criterion | Owner\n"
+        "REQ-001 | Approved within 2 seconds | Safety\n"
+        "REQ-002 | Audit source evidence | QA"
+    )
+    assert table_evidence.expected_capabilities == [
+        "text_range",
+        "page_region",
+        "table_cell",
+    ]
+    assert table_evidence.available_capabilities == [
+        "text_range",
+        "page_region",
+        "table_cell",
+    ]
+    assert table_evidence.fragment_ids == []
+    assert len(index.tables) == 1
+    table = index.tables[0]
+    assert table.parser_method == "pymupdf_find_tables"
+    assert table.topology_status == "complete"
+    assert (table.row_count, table.column_count) == (3, 3)
+    assert table.block_ids == [table_block.block_id]
+    assert index.pages[0].table_ids == [table.table_id]
+    assert len(index.cells) == 9
+    assert len(index.cell_occurrences) == 9
+    assert parsed.metadata["table_count"] == 1
+    assert parsed.metadata["table_cell_count"] == 9
+    assert parsed.warnings == []
+    assert [cell.is_header for cell in index.cells[:3]] == [True, True, True]
+    assert all(cell.page == 1 and cell.bbox is not None for cell in index.cells)
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+    projection = build_table_evidence_view(
+        index,
+        task_id="fixture-task",
+        table_id=table.table_id,
+        block_id=table_block.block_id,
+    )
+    assert projection.schema_version == "table_evidence_view_v1"
+    assert [row.physical_row_index for row in projection.rows] == [1, 2, 3]
+    assert [cell.text for cell in projection.rows[1].cells] == [
+        "REQ-001",
+        "Approved within 2 seconds",
+        "Safety",
+    ]
+    visual_fixture = read_json(
+        "frontend/src/fixtures/pdf-table-evidence.json"
+    )
+    assert visual_fixture["evidenceFingerprint"] == index.evidence_fingerprint
+    assert visual_fixture["blocks"] == [table_block.model_dump(mode="json")]
+    expected_visual_projection = build_table_evidence_view(
+        index,
+        task_id="visual-task",
+        table_id=table.table_id,
+        block_id=table_block.block_id,
+    )
+    assert visual_fixture["tableEvidence"] == (
+        expected_visual_projection.model_dump(mode="json")
+    )
+
+
+def test_pdf_v2_table_source_passes_structured_locator_validation():
+    path = Path("tests/fixtures/pdf_table_requirements.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    table_block = next(block for block in parsed.blocks if block.type == "table")
+    source_cell_ids = [
+        "cell_00000001_r0002_c0001",
+        "cell_00000001_r0002_c0002",
+    ]
+    prompt = build_reqir_prompt(
+        ModelRequest(
+            document_text=parsed.text,
+            document_name=parsed.document_name,
+            source_format=parsed.source_format,
+            parser_name=parsed.parser_name,
+            model_mode="mock",
+            blocks=parsed.blocks,
+            evidence_index=index,
+            metadata={"evidence_policy": "structured_required"},
+        )
+    )
+    assert "row 2:" in prompt
+    assert all(cell_identifier in prompt for cell_identifier in source_cell_ids)
+
+    requirement = ReqIRExtractor().extract(
+        {
+            "items": [
+                {
+                    "statement": (
+                        "The system shall approve the request within 2 seconds."
+                    ),
+                    "source_block_id": table_block.block_id,
+                    "source_quote": "REQ-001 | Approved within 2 seconds",
+                    "source_cell_ids": source_cell_ids,
+                    "source_table_row_index": 2,
+                }
+            ]
+        },
+        parsed.blocks,
+        document_name=parsed.document_name,
+    )[0]
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    quote_validated, quote_report = SourceQuoteValidator().validate(
+        [requirement],
+        parsed.blocks,
+        registry,
+    )
+    locator_validated, locator_report, failures = (
+        SourceLocatorValidator().validate(
+            quote_validated,
+            index,
+            registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+
+    source = requirement.sources[0]
+    assert quote_report.valid is True
+    assert locator_report.valid is True
+    assert failures == []
+    assert locator_validated == [requirement]
+    assert source.locator_status == "PASS_STRUCTURED"
+    assert {
+        result.capability: result.status
+        for result in source.capability_results
+    } == {
+        "text_range": "PASS",
+        "page_region": "PASS",
+        "table_cell": "PASS",
+    }
+    assert source.table_locator is not None
+    assert source.table_locator.cell_ids == source_cell_ids
+    assert source.table_locator.selected_row_index == 2
+    assert source.table_locator.bbox is not None
+    assert source.page_locator is not None
+    assert source.page_locator.derivation == "table_cell_union"
+    assert source.page_locator.bbox == source.table_locator.bbox
+
+
+def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
     tmp_path: Path,
 ):
-    path = tmp_path / "table.pdf"
+    path = tmp_path / "merged-table.pdf"
     document = fitz.open()
     page = document.new_page(width=400, height=300)
-    for x in (50, 150, 300):
+    for x in (50, 300):
         page.draw_line((x, 50), (x, 150))
+    page.draw_line((150, 100), (150, 150))
     for y in (50, 100, 150):
         page.draw_line((50, y), (300, y))
-    for point, text in [
-        ((60, 80), "A"),
-        ((160, 80), "B"),
-        ((60, 130), "C"),
-        ((160, 130), "D"),
-    ]:
-        page.insert_text(point, text)
+    page.insert_text((60, 80), "Merged Header")
+    page.insert_text((60, 130), "C")
+    page.insert_text((160, 130), "D")
     document.save(path)
     document.close()
 
@@ -406,11 +575,67 @@ def test_pdf_v2_does_not_claim_table_cell_without_proven_sparse_topology(
     assert index.tables == []
     assert index.cells == []
     assert index.cell_occurrences == []
+    assert "Merged Header" in parsed.text
+    assert "C" in parsed.text
+    assert "D" in parsed.text
+    assert any(
+        warning.startswith(
+            "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: page=1, table=1"
+        )
+        for warning in parsed.warnings
+    )
     assert all(
         block.expected_capabilities == ["text_range", "page_region"]
-        and block.available_capabilities == ["text_range", "page_region"]
+        and "table_cell" not in block.available_capabilities
         for block in index.blocks
     )
+
+
+def test_pdf_v2_groups_large_table_and_projects_header(tmp_path: Path):
+    path = tmp_path / "large-table.pdf"
+    document = fitz.open()
+    page = document.new_page(width=400, height=800)
+    row_count = 22
+    row_height = 30
+    table_top = 40
+    for x in (40, 140, 360):
+        page.draw_line((x, table_top), (x, table_top + row_count * row_height))
+    for row_index in range(row_count + 1):
+        y = table_top + row_index * row_height
+        page.draw_line((40, y), (360, y))
+    page.insert_text((50, 60), "ID")
+    page.insert_text((150, 60), "Value")
+    for row_index in range(1, row_count):
+        baseline = table_top + row_index * row_height + 20
+        page.insert_text((50, baseline), f"R{row_index:02d}")
+        page.insert_text((150, baseline), f"Value {row_index:02d}")
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert len(index.tables) == 1
+    table = index.tables[0]
+    assert table.row_count == 22
+    assert table.block_ids == ["blk_0001", "blk_0002"]
+    assert table.warnings == ["PDF_REPEATED_HEADER_PROJECTED"]
+    assert [
+        (block.table_row_start, block.table_row_end)
+        for block in index.blocks
+    ] == [(1, 20), (21, 22)]
+    assert parsed.blocks[1].text.startswith("ID | Value\nR20 | Value 20")
+    repeated = [
+        occurrence
+        for occurrence in index.cell_occurrences
+        if occurrence.block_id == "blk_0002"
+        and occurrence.occurrence_role == "repeated_header"
+    ]
+    assert [occurrence.cell_id for occurrence in repeated] == [
+        "cell_00000001_r0001_c0001",
+        "cell_00000001_r0001_c0002",
+    ]
+    validate_evidence_index_against_parsed_document(index, parsed)
 
 
 def test_pdf_v2_keeps_text_and_downgrades_page_region_for_bad_span_bbox(

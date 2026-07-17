@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   makeLargeRowGroupVisualFixture,
+  makePdfTableVisualFixture,
+  VISUAL_EVIDENCE_FINGERPRINT,
   validateVisualTableEvidence
 } from './visualFixtures'
 
@@ -32,6 +34,23 @@ describe('visual table evidence fixtures', () => {
 
     expect(() => validateVisualTableEvidence(response)).toThrow(
       'visual table row 1 range [0, 29) does not match occurrence range [0, 35)'
+    )
+  })
+
+  it('loads the checked backend PDF table projection', () => {
+    const fixture = makePdfTableVisualFixture()
+    const source = fixture.requirement.sources[0]
+
+    expect(VISUAL_EVIDENCE_FINGERPRINT).toMatch(/^[0-9a-f]{64}$/)
+    expect(source.locator_status).toBe('PASS_STRUCTURED')
+    expect(source.page_locator?.derivation).toBe('table_cell_union')
+    expect(source.table_locator?.cell_ids).toEqual([
+      'cell_00000001_r0002_c0001',
+      'cell_00000001_r0002_c0002'
+    ])
+    expect(fixture.tableEvidence?.rows).toHaveLength(3)
+    expect(fixture.tableEvidence?.rows[1].cells[1].text).toBe(
+      'Approved within 2 seconds'
     )
   })
 })

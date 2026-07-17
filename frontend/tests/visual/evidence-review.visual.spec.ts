@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
 import type { Locator } from '@playwright/test'
+import path from 'node:path'
 
 import {
   makeLargeRowGroupVisualFixture,
   makeMergedDocxVisualFixture,
+  makePdfTableVisualFixture,
   makePdfVisualFixture,
   VISUAL_EVIDENCE_FINGERPRINT
 } from '../../src/visualFixtures'
@@ -110,6 +112,39 @@ test('DOCX large-table row-group renders repeated header and selected primary ro
   await expectLinuxScreenshot(
     page.locator('.visual-harness'),
     'docx-large-row-group.png'
+  )
+})
+
+test('PDF table renders validated page region and structured cell grid', async ({ page }) => {
+  const fixture = makePdfTableVisualFixture()
+  const locator = fixture.requirement.sources[0].page_locator
+  if (!locator) {
+    throw new Error('PDF table visual fixture must provide a page locator')
+  }
+  await page.route('**/api/tasks/**/pages/**/preview.png**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: {
+        'X-Spectrail-Evidence-Fingerprint': VISUAL_EVIDENCE_FINGERPRINT
+      },
+      path: path.resolve('tests/visual/fixtures/pdf-table-page.png')
+    })
+  })
+  await routeTableEvidence(page, fixture.tableEvidence)
+  await page.goto('/visual.html?fixture=pdf-table')
+
+  const preview = page.locator('.page-preview')
+  await expect(preview.locator('img')).toBeVisible()
+  await expect(preview.locator('.page-locator-overlay')).toBeVisible()
+  const grid = page.getByRole('grid', { name: /Table evidence/ })
+  await expect(grid).toBeVisible()
+  await expect(grid.getByRole('columnheader')).toHaveCount(3)
+  await expect(grid.getByText('Approved within 2 seconds')).toBeVisible()
+  await expect(grid.locator('[aria-selected="true"]')).toHaveCount(2)
+  await expectLinuxScreenshot(
+    page.locator('.visual-harness'),
+    'pdf-table-structured-evidence.png'
   )
 })
 

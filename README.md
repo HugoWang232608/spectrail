@@ -362,12 +362,17 @@ The checked evaluation suite currently covers the original single-pass sample, a
 
 ## P5 Evidence Review
 
-P5 begins consuming the typed locator artifacts produced by the DOCX/PDF V2
+P5 consumes the typed locator artifacts produced by the DOCX/PDF V2
 pipeline. For PDF sources with a validated `page_locator`, the Review UI renders
 the corresponding page and overlays the source bounding box in the canonical
 rotated preview coordinate space. For DOCX sources with a validated
 `table_locator`, it renders the block's occurrence-aware table grid and
 highlights the selected physical-row cells by canonical cell ID.
+M5 extends the same table path to complete grids detected in PDF files:
+`PdfParserV2` emits stable logical cells, cell occurrences, page geometry, and
+all three structured capabilities, while the existing table API and Review grid
+remain unchanged. Incomplete or merged detections retain readable PDF text but
+do not claim `table_cell`.
 
 The evidence endpoints are task-scoped and read-only:
 

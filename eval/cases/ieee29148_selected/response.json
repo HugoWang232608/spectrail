@@ -1,7 +1,7 @@
 {
   "metadata": {
     "model_name": "recorded-ieee29148-selected",
-    "evidence_fingerprint": "09ffec167840e403b981b49433d01a68d5be1d9c61ca28a8c9e21013844e75d7"
+    "evidence_fingerprint": "55803b7ff84ab5074263c2cdfd598599abbce96a499c610def1941a63cd3f3c6"
   },
   "items": [
     {
@@ -11,7 +11,7 @@
       "statement": "The application shall allow users to create a new empty document.",
       "subject": "The application",
       "response": "allow users to create a new empty document",
-      "source_block_id": "blk_0081",
+      "source_block_id": "blk_0077",
       "source_quote": "The application shall allow users to create a new empty document.",
       "confidence": 0.99,
       "tags": ["file-operations"]

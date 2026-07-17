@@ -91,6 +91,29 @@ def test_api_pdf_page_preview_rejects_missing_page(api_client: TestClient):
     assert response.json()["detail"]["code"] == "PAGE_PREVIEW_NOT_FOUND"
 
 
+def test_api_pdf_page_preview_preserves_not_found_when_close_fails(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id = _create_completed_pdf_task(api_client)
+
+    class MissingPageDocument:
+        page_count = 0
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr(fitz, "open", lambda path: MissingPageDocument())
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": "PAGE_PREVIEW_NOT_FOUND",
+        "message": "PDF page does not exist: 1",
+    }
+
+
 @pytest.mark.parametrize(
     ("rotation", "expected_size"),
     [

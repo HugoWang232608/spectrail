@@ -24,6 +24,12 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   const sources = requirement?.sources ?? []
   const source = sources[sourceIndex] ?? null
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
+  const sourcePreviewIdentity = source?.source_evidence_key ?? [
+    sourceIndex,
+    source?.block_id ?? '',
+    source?.text_locator?.start ?? '',
+    source?.text_locator?.end ?? ''
+  ].join(':')
   const pageRegionStatus = source ? getPageRegionStatus(source) : undefined
   const pageRegionPassed = pageRegionStatus === 'PASS'
   const displayedPage = pageRegionPassed
@@ -40,9 +46,13 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   }, [requirement?.id])
 
   useEffect(() => {
+    setSourceIndex((current) => Math.min(current, Math.max(0, sources.length - 1)))
+  }, [sources.length])
+
+  useEffect(() => {
     setPreviewFailed(false)
     setPreviewAttempt(0)
-  }, [source?.page_locator?.page, source?.source_evidence_key, taskId])
+  }, [source?.page_locator?.page, sourcePreviewIdentity, taskId])
 
   return (
     <section className="panel source-panel" aria-labelledby="source-heading">

@@ -97,6 +97,43 @@ describe('SourceViewer', () => {
     expect(screen.getByText('1 / 1')).toBeTruthy()
   })
 
+  it('clamps the selected source when sources shrink under the same requirement', async () => {
+    const blocks = [
+      makeBlock('blk_kept', 'Kept evidence'),
+      makeBlock('blk_removed', 'Removed evidence')
+    ]
+    const firstSource = locatedSource(blocks[0], 'Kept')
+    const requirement = makeRequirement('req_edited', [
+      firstSource,
+      locatedSource(blocks[1], 'Removed')
+    ])
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={requirement}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('Removed', { selector: 'mark' })).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirement.id, [firstSource])}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Kept', { selector: 'mark' })).toBeTruthy()
+    })
+    expect(screen.getByText('1 / 1')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({
@@ -151,6 +188,32 @@ describe('SourceViewer', () => {
       '/api/tasks/task-1/pages/1/preview.png' +
       '?evidence=src_111111111111111111111111&attempt=1'
     )
+  })
+
+  it('resets a failed preview when switching between legacy sources on the same page', async () => {
+    const blocks = [
+      makeBlock('blk_legacy_a', 'Legacy evidence A'),
+      makeBlock('blk_legacy_b', 'Legacy evidence B')
+    ]
+    const sources = blocks.map((block) => makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')]
+    }))
+
+    renderViewer(makeRequirement('req_legacy', sources), blocks)
+
+    fireEvent.error(screen.getByRole('img', { name: 'PDF page 1' }))
+    expect(screen.getByText('PDF preview unavailable.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: 'PDF page 1' })).toBeTruthy()
+    })
+    expect(screen.queryByText('PDF preview unavailable.')).toBeNull()
   })
 
   it('changes the preview cache key when source evidence changes', () => {

@@ -57,6 +57,11 @@ TASK_TRANSACTION_LOCKED
 TASK_MIGRATION_INCOMPLETE
 ```
 
+The public renderer preserves the primary page lookup or render exception if
+closing the PDF also fails. Cleanup errors therefore cannot turn
+`PAGE_PREVIEW_NOT_FOUND` into `PAGE_PREVIEW_UNAVAILABLE`; a close failure is
+reported only when no earlier operation failed.
+
 ## UI behavior
 
 For each source, the Review UI shows:
@@ -79,6 +84,10 @@ read-lock races. A failed image can be retried explicitly without losing the
 text evidence view. The preview URL includes `source_evidence_key`, whose
 identity includes the Evidence fingerprint, so the private browser cache cannot
 reuse a page image across pipeline runs with different source evidence.
+Preview failure state is also keyed by the selected source; legacy sources use
+their block, text range, and source index so a failed same-page source cannot
+poison the next source. If review edits shorten a requirement's source list,
+the selected index is clamped to the last remaining source.
 
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or

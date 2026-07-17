@@ -39,6 +39,7 @@ def render_pdf_page(
         raise PdfPagePreviewUnavailableError(
             f"failed to open PDF preview source: {document_path.name}"
         ) from exc
+    primary_error: BaseException | None = None
     try:
         if page_number > document.page_count:
             raise PdfPagePreviewNotFoundError(
@@ -62,16 +63,23 @@ def render_pdf_page(
             alpha=False,
         )
         return pixmap.tobytes("png"), pixmap.width, pixmap.height
-    except (PdfPagePreviewNotFoundError, PdfPagePreviewUnavailableError):
+    except (PdfPagePreviewNotFoundError, PdfPagePreviewUnavailableError) as exc:
+        primary_error = exc
         raise
     except Exception as exc:
-        raise PdfPagePreviewUnavailableError(
+        preview_error = PdfPagePreviewUnavailableError(
             f"failed to render PDF page preview: {page_number}"
-        ) from exc
+        )
+        primary_error = preview_error
+        raise preview_error from exc
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         try:
             document.close()
         except Exception as exc:
-            raise PdfPagePreviewUnavailableError(
-                f"failed to close PDF page preview source: {page_number}"
-            ) from exc
+            if primary_error is None:
+                raise PdfPagePreviewUnavailableError(
+                    f"failed to close PDF page preview source: {page_number}"
+                ) from exc

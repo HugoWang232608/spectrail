@@ -29,7 +29,7 @@ Successful responses include:
 
 ```text
 Content-Type: image/png
-Cache-Control: private, no-store
+Cache-Control: private, max-age=300
 X-Spectrail-Preview-Width: <rendered pixels>
 X-Spectrail-Preview-Height: <rendered pixels>
 ```
@@ -41,7 +41,10 @@ The endpoint:
 - resolves and contains the document path within the task directory;
 - participates in the task transaction guard;
 - uses RGB output without transparency;
-- caps scale at 2× and either output dimension at 2000 pixels.
+- caps scale at 2× and either output dimension at 2000 pixels;
+- permits a five-minute private browser cache so switching among sources on the
+  same page does not repeatedly render the PDF. Explicit Retry uses a new query
+  parameter and therefore bypasses the cached response.
 
 Errors remain structured:
 
@@ -83,11 +86,16 @@ npm test
 npm run build
 ```
 
+GitHub Actions runs `npm test` before the production frontend build. Component
+coverage verifies final locator highlighting, source and requirement changes,
+preview failure and retry, proportional overlay geometry, locator/block
+mismatch behavior, and all four supported page rotations.
+
 ## Next acceptance steps
 
 - add focused table-cell visualization for DOCX row-group blocks;
-- add frontend component tests for overlay math and failure/retry states;
-- add visual regression fixtures for 0°, 90°, 180°, and 270° PDF pages;
+- add pixel-based visual regression fixtures for 0°, 90°, 180°, and 270° PDF
+  pages;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

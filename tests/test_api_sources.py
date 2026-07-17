@@ -75,7 +75,7 @@ def test_api_pdf_page_preview_returns_bounded_png(api_client: TestClient):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
-    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["cache-control"] == "private, max-age=300"
     assert response.headers["x-spectrail-preview-width"] == "2000"
     assert response.headers["x-spectrail-preview-height"] == "500"
     assert response.content.startswith(b"\x89PNG\r\n\x1a\n")

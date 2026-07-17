@@ -56,7 +56,7 @@ def get_page_preview(
         content=content,
         media_type="image/png",
         headers={
-            "Cache-Control": "private, no-store",
+            "Cache-Control": "private, max-age=300",
             "X-Spectrail-Preview-Width": str(width),
             "X-Spectrail-Preview-Height": str(height),
         },

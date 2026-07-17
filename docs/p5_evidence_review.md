@@ -67,6 +67,7 @@ The table evidence endpoint is:
 
 ```text
 GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
+  ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
 ```
 
 It returns a versioned `table_evidence_view_v1` projection rather than exposing
@@ -90,10 +91,35 @@ structured:
 ```text
 TABLE_EVIDENCE_NOT_FOUND
 TABLE_EVIDENCE_UNAVAILABLE
+EVIDENCE_VERSION_CHANGED
 ```
 
 The former covers unknown or foreign table/block references. The latter covers
 a missing, invalid, or stale-fingerprint `EvidenceIndex`.
+`EVIDENCE_VERSION_CHANGED` means the ReqIR package and the current task
+EvidenceIndex are from different pipeline generations.
+
+Every pipeline ReqIR artifact now carries:
+
+```text
+metadata.evidence_fingerprint
+```
+
+Review snapshots preserve it, validation outputs copy it when Evidence is
+available, and migration rewrites it to the migrated Evidence fingerprint.
+The frontend sends that exact value with each table request and independently
+checks it against `TableEvidenceResponse.evidence_fingerprint`. A task rerun
+between the ReqIR and table requests therefore produces an explicit reload
+message even if stable table, block and cell IDs happen to remain unchanged.
+Legacy packages without the metadata cannot request a trusted table grid and
+must be migrated or reloaded.
+
+`LocalTaskStore` caches the fully validated `EvidenceIndex` and block-scoped
+table projections by task ID plus the Evidence file device, inode, size,
+modification time and change time. Repeated source navigation therefore avoids
+re-reading, Pydantic-validating and re-hashing the whole index. Upload,
+pipeline reset, or any Evidence artifact signature change invalidates the
+cache before a projection can be returned.
 
 The public renderer preserves the primary page lookup or render exception if
 closing the PDF also fails. Cleanup errors therefore cannot turn
@@ -193,7 +219,10 @@ locator's canonical row and column anchors. Only the cells matching both
 
 Merged cells retain their logical `column_span`; row-span projections and
 repeated headers are displayed on the physical row represented in the source
-block. Stable cell IDs and logical coordinates remain visible to the reviewer.
+block. Original header cells render as semantic column headers, while data
+cells use grid-cell semantics with `aria-selected`. Stable cell IDs, logical
+coordinates, occurrence roles, and canonical occurrence ranges remain visible
+to the reviewer.
 Sparse/unknown column gaps are rendered as unavailable grid slots rather than
 invented cells.
 
@@ -215,7 +244,9 @@ coverage verifies final locator highlighting, source and requirement changes,
 preview failure and retry, proportional overlay geometry, locator/block
 mismatch behavior, all four supported page rotations, table API failure and
 retry, merged-column rendering, repeated-header projection, and precise
-selected-cell highlighting.
+selected-cell highlighting. A dedicated row-span test fixes the projection
+contract: the same logical cell is rendered on each represented physical row,
+and only its selected `row_span_projection` occurrence is highlighted.
 
 Backend geometry acceptance renders real PDFs at 0°, 90°, 180°, and 270°,
 derives each `PageLocator` through the parser and enricher, decodes the same PNG

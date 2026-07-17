@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from spectrail.core.io import ensure_dir, read_json, write_json
@@ -68,12 +70,27 @@ class TableEvidenceNotFoundError(TaskStoreError):
     pass
 
 
+class TableEvidenceVersionChangedError(TaskStoreError):
+    pass
+
+
 READABLE_TASK_STATUSES = {"completed", "completed_with_warnings"}
+
+
+@dataclass
+class _TableEvidenceCacheEntry:
+    file_signature: tuple[int, int, int, int, int]
+    index: EvidenceIndex
+    projections: dict[tuple[str, str], TableEvidenceView] = field(
+        default_factory=dict
+    )
 
 
 class LocalTaskStore:
     def __init__(self, root: str | Path = "outputs/tasks") -> None:
         self.root = Path(root)
+        self._table_evidence_cache: dict[str, _TableEvidenceCacheEntry] = {}
+        self._table_evidence_cache_lock = RLock()
 
     def create_task(
         self,
@@ -145,6 +162,7 @@ class LocalTaskStore:
                 input_dir = ensure_dir(task_dir / "input")
                 document_path = input_dir / f"original{suffix}"
                 document_path.write_bytes(content)
+                self._invalidate_table_evidence_cache(task_id)
                 self.update_task(
                     task_id,
                     status="uploaded",
@@ -229,6 +247,7 @@ class LocalTaskStore:
         *,
         table_id: str,
         block_id: str,
+        expected_evidence_fingerprint: str,
     ) -> TableEvidenceView:
         task_dir = self.get_task_dir(task_id)
         try:
@@ -236,23 +255,55 @@ class LocalTaskStore:
                 self.require_readable_task(task_id)
                 evidence_path = task_dir / "parsed" / "evidence_index.json"
                 if not evidence_path.exists():
+                    self._invalidate_table_evidence_cache(task_id)
                     raise TableEvidenceUnavailableError(
                         f"EvidenceIndex not found: {task_id}"
                     )
                 try:
-                    index = EvidenceIndex.model_validate(read_json(evidence_path))
-                    validate_evidence_fingerprint(index)
+                    file_signature = _file_signature(evidence_path)
+                    with self._table_evidence_cache_lock:
+                        cache_entry = self._table_evidence_cache.get(task_id)
+                    if (
+                        cache_entry is None
+                        or cache_entry.file_signature != file_signature
+                    ):
+                        index = EvidenceIndex.model_validate(
+                            read_json(evidence_path)
+                        )
+                        validate_evidence_fingerprint(index)
+                        cache_entry = _TableEvidenceCacheEntry(
+                            file_signature=file_signature,
+                            index=index,
+                        )
+                        with self._table_evidence_cache_lock:
+                            self._table_evidence_cache[task_id] = cache_entry
                 except (OSError, TypeError, ValueError) as exc:
+                    self._invalidate_table_evidence_cache(task_id)
                     raise TableEvidenceUnavailableError(
                         f"EvidenceIndex is invalid: {task_id}"
                     ) from exc
-                try:
-                    return build_table_evidence_view(
-                        index,
-                        task_id=task_id,
-                        table_id=table_id,
-                        block_id=block_id,
+                if (
+                    cache_entry.index.evidence_fingerprint
+                    != expected_evidence_fingerprint
+                ):
+                    raise TableEvidenceVersionChangedError(
+                        "ReqIR Evidence fingerprint does not match the current "
+                        "task EvidenceIndex"
                     )
+                try:
+                    projection_key = (table_id, block_id)
+                    with self._table_evidence_cache_lock:
+                        projection = cache_entry.projections.get(projection_key)
+                    if projection is None:
+                        projection = build_table_evidence_view(
+                            cache_entry.index,
+                            task_id=task_id,
+                            table_id=table_id,
+                            block_id=block_id,
+                        )
+                        with self._table_evidence_cache_lock:
+                            cache_entry.projections[projection_key] = projection
+                    return projection
                 except TableEvidenceViewNotFoundError as exc:
                     raise TableEvidenceNotFoundError(str(exc)) from exc
         except TaskTransactionError as exc:
@@ -362,6 +413,7 @@ class LocalTaskStore:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "pipeline_reset"):
+                self._invalidate_table_evidence_cache(task_id)
                 for name in ["parsed", "extracted", "review", "exports"]:
                     target = task_dir / name
                     if target.exists():
@@ -369,9 +421,24 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
+    def _invalidate_table_evidence_cache(self, task_id: str) -> None:
+        with self._table_evidence_cache_lock:
+            self._table_evidence_cache.pop(task_id, None)
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _file_signature(path: Path) -> tuple[int, int, int, int, int]:
+    stat = path.stat()
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
 
 
 def _normalize_block(block: dict[str, Any]) -> dict[str, Any]:

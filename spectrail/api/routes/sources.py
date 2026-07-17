@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from spectrail.api.deps import get_task_store
 from spectrail.evidence import TableEvidenceView
@@ -11,6 +11,7 @@ from spectrail.tasks.store import (
     PagePreviewUnavailableError,
     TableEvidenceNotFoundError,
     TableEvidenceUnavailableError,
+    TableEvidenceVersionChangedError,
     TaskNotReadyError,
 )
 
@@ -44,6 +45,9 @@ def get_table_evidence(
     table_id: str,
     block_id: str,
     response: Response,
+    expected_evidence_fingerprint: str = Query(
+        pattern=r"^[0-9a-f]{64}$",
+    ),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> TableEvidenceView:
     try:
@@ -51,6 +55,7 @@ def get_table_evidence(
             task_id,
             table_id=table_id,
             block_id=block_id,
+            expected_evidence_fingerprint=expected_evidence_fingerprint,
         )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
@@ -60,6 +65,8 @@ def get_table_evidence(
         raise _error(404, "TABLE_EVIDENCE_NOT_FOUND", str(exc)) from exc
     except TableEvidenceUnavailableError as exc:
         raise _error(409, "TABLE_EVIDENCE_UNAVAILABLE", str(exc)) from exc
+    except TableEvidenceVersionChangedError as exc:
+        raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
     response.headers["Cache-Control"] = "private, no-store"
     return table_evidence

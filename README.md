@@ -374,6 +374,7 @@ The evidence endpoints are task-scoped and read-only:
 ```text
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
 GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
+  ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
 ```
 
 Rendering is allowed only for completed PDF tasks, runs under the task
@@ -384,7 +385,10 @@ The table endpoint fingerprint-validates `evidence_v5` and returns a stable
 occurrence roles. The UI draws a page overlay or table-cell highlight only when
 the corresponding capability is `PASS`; locator status, score, structured cell
 identity, and per-capability validation results remain visible alongside the
-source.
+source. ReqIR and table projections are bound to the same Evidence fingerprint;
+a task rerun between requests returns `EVIDENCE_VERSION_CHANGED` instead of
+mixing generations. Validated Evidence indexes and table projections are cached
+by artifact file identity for responsive source navigation.
 
 See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
 contract and next acceptance steps.

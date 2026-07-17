@@ -235,6 +235,7 @@ function App() {
                 requirement={selectedRequirement}
                 blocks={blocks}
                 blocksError={blocksError}
+                evidenceFingerprint={reqirEvidenceFingerprint(reqir)}
               />
             </div>
           </div>
@@ -250,6 +251,14 @@ function isSupportedDocument(filename: string) {
 
 function isReadableStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'completed_with_warnings'
+}
+
+function reqirEvidenceFingerprint(reqir: ReqIRPackage | null): string | null {
+  const value = reqir?.metadata.evidence_fingerprint
+  return (
+    typeof value === 'string'
+    && /^[0-9a-f]{64}$/.test(value)
+  ) ? value : null
 }
 
 function filterRequirements(

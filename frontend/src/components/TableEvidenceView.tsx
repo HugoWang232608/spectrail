@@ -14,12 +14,14 @@ type TableEvidenceViewProps = {
   taskId: string
   source: SourceSpan
   tableCellStatus: CapabilityValidationResult['status'] | undefined
+  expectedEvidenceFingerprint: string | null
 }
 
 function TableEvidenceView({
   taskId,
   source,
-  tableCellStatus
+  tableCellStatus,
+  expectedEvidenceFingerprint
 }: TableEvidenceViewProps) {
   const locator = source.table_locator
   const validated = tableCellStatus === 'PASS'
@@ -31,7 +33,7 @@ function TableEvidenceView({
   useEffect(() => {
     setData(null)
     setError(null)
-    if (!validated || !locator) {
+    if (!validated || !locator || !expectedEvidenceFingerprint) {
       setLoading(false)
       return
     }
@@ -42,6 +44,7 @@ function TableEvidenceView({
       taskId,
       locator.table_id,
       source.block_id,
+      expectedEvidenceFingerprint,
       controller.signal
     )
       .then((response) => {
@@ -62,8 +65,23 @@ function TableEvidenceView({
     source.block_id,
     source.source_evidence_key,
     taskId,
-    validated
+    validated,
+    expectedEvidenceFingerprint
   ])
+
+  if (validated && locator && !expectedEvidenceFingerprint) {
+    return (
+      <section className="table-evidence-box">
+        <h3>Table evidence</h3>
+        <div className="preview-unavailable" role="alert">
+          <p className="muted-text">
+            ReqIR Evidence version is unavailable. Reload or migrate the ReqIR
+            package before reviewing table evidence.
+          </p>
+        </div>
+      </section>
+    )
+  }
 
   if (!validated || !locator) {
     return (
@@ -79,7 +97,12 @@ function TableEvidenceView({
   }
 
   const responseMatches = data
-    ? tableEvidenceMatchesLocator(data, source, taskId)
+    ? tableEvidenceMatchesLocator(
+      data,
+      source,
+      taskId,
+      expectedEvidenceFingerprint
+    )
     : false
   return (
     <section className="table-evidence-box">
@@ -93,17 +116,27 @@ function TableEvidenceView({
         <p className="muted-text" role="status">Loading table evidence…</p>
       ) : error ? (
         <div className="preview-unavailable" role="alert">
-          <p className="muted-text">
-            Table evidence unavailable: {error.code} {error.message}
-          </p>
-          <button type="button" onClick={() => setAttempt((current) => current + 1)}>
-            Retry table evidence
-          </button>
+          {error.code === 'EVIDENCE_VERSION_CHANGED' ? (
+            <p className="muted-text">
+              Evidence version changed. Reload ReqIR before reviewing table evidence.
+            </p>
+          ) : (
+            <>
+              <p className="muted-text">
+                Table evidence unavailable: {error.code} {error.message}
+              </p>
+              <button type="button" onClick={() => setAttempt((current) => current + 1)}>
+                Retry table evidence
+              </button>
+            </>
+          )}
         </div>
       ) : data && !responseMatches ? (
         <div className="preview-unavailable" role="alert">
           <p className="muted-text">
-            Table evidence response does not match the validated locator. Grid withheld.
+            {data.evidence_fingerprint !== expectedEvidenceFingerprint
+              ? 'Evidence version changed. Reload ReqIR before reviewing table evidence.'
+              : 'Table evidence response does not match the validated locator. Grid withheld.'}
           </p>
         </div>
       ) : data ? (
@@ -120,12 +153,13 @@ function TableEvidenceView({
           <div className="table-evidence-scroll">
             <table
               className="table-evidence-grid"
+              role="grid"
               aria-label={`Table evidence ${data.table_id}`}
             >
               <tbody>
                 {data.rows.map((row) => (
                   <tr key={`${row.physical_row_index}-${row.rendered_start}`}>
-                    <th scope="row">
+                    <th scope="row" className="table-evidence-row-heading">
                       <span>Row {row.physical_row_index}</span>
                       {row.repeated_header ? <small>repeated header</small> : null}
                     </th>
@@ -206,16 +240,15 @@ function TableEvidenceCellElement({
   physicalRowIndex: number
   selected: boolean
 }) {
-  return (
-    <td
-      colSpan={cell.column_span}
-      className={selected ? 'table-evidence-cell selected' : 'table-evidence-cell'}
-      aria-label={
-        `Cell ${cell.cell_id}, physical row ${physicalRowIndex}, ` +
-        `column ${cell.column_index}`
-      }
-      aria-selected={selected}
-    >
+  const className = selected
+    ? 'table-evidence-cell selected'
+    : 'table-evidence-cell'
+  const ariaLabel = (
+    `Cell ${cell.cell_id}, physical row ${physicalRowIndex}, ` +
+    `column ${cell.column_index}`
+  )
+  const content = (
+    <>
       <span className={cell.text ? 'table-cell-text' : 'table-cell-text empty'}>
         {cell.text || 'empty'}
       </span>
@@ -224,7 +257,38 @@ function TableEvidenceCellElement({
         {cell.row_span > 1 ? ` · row span ${cell.row_span}` : ''}
         {cell.column_span > 1 ? ` · column span ${cell.column_span}` : ''}
       </small>
+      <small className="table-cell-occurrences">
+        {cell.occurrences.map((occurrence) => (
+          `${occurrence.occurrence_role} ` +
+          `[${occurrence.canonical_start}, ${occurrence.canonical_end})`
+        )).join(' · ')}
+      </small>
       <code>{cell.cell_id}</code>
+    </>
+  )
+  if (cell.is_header) {
+    return (
+      <th
+        scope="col"
+        role="columnheader"
+        colSpan={cell.column_span}
+        className={className}
+        aria-label={ariaLabel}
+        aria-selected={selected}
+      >
+        {content}
+      </th>
+    )
+  }
+  return (
+    <td
+      role="gridcell"
+      colSpan={cell.column_span}
+      className={className}
+      aria-label={ariaLabel}
+      aria-selected={selected}
+    >
+      {content}
     </td>
   )
 }
@@ -232,12 +296,15 @@ function TableEvidenceCellElement({
 function tableEvidenceMatchesLocator(
   data: TableEvidenceResponse,
   source: SourceSpan,
-  taskId: string
+  taskId: string,
+  expectedEvidenceFingerprint: string | null
 ): boolean {
   const locator = source.table_locator
   if (
     !locator
+    || !expectedEvidenceFingerprint
     || data.task_id !== taskId
+    || data.evidence_fingerprint !== expectedEvidenceFingerprint
     || data.table_id !== locator.table_id
     || data.block_id !== source.block_id
     || locator.row_indices.length !== locator.cell_ids.length

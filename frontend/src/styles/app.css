@@ -663,7 +663,7 @@ mark {
   border-bottom: 0;
 }
 
-.table-evidence-grid th {
+.table-evidence-row-heading {
   width: 86px;
   color: #344054;
   background: #f2f4f7;
@@ -679,6 +679,12 @@ mark {
 .table-evidence-cell {
   min-width: 130px;
   background: #ffffff;
+}
+
+.table-evidence-grid .table-evidence-cell[role="columnheader"] {
+  color: #1d2939;
+  background: #f8fafc;
+  text-align: left;
 }
 
 .table-evidence-cell.selected {

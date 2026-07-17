@@ -51,12 +51,14 @@ export async function getTableEvidence(
   taskId: string,
   tableId: string,
   blockId: string,
+  expectedEvidenceFingerprint: string,
   signal?: AbortSignal
 ): Promise<TableEvidenceResponse> {
   return request<TableEvidenceResponse>(
     `/tasks/${encodeURIComponent(taskId)}` +
       `/tables/${encodeURIComponent(tableId)}` +
-      `/blocks/${encodeURIComponent(blockId)}/evidence`,
+      `/blocks/${encodeURIComponent(blockId)}/evidence` +
+      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}`,
     { signal }
   )
 }

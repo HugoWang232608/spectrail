@@ -263,7 +263,16 @@ def _migrate_task_locked(root: Path) -> dict[str, Any]:
                 }
             )
         migrated_packages.append(
-            (package_kind, path, metadata, requirements, schema_version)
+            (
+                package_kind,
+                path,
+                {
+                    **metadata,
+                    "evidence_fingerprint": evidence_index.evidence_fingerprint,
+                },
+                requirements,
+                schema_version,
+            )
         )
 
     migration_id = _migration_id()

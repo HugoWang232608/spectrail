@@ -42,6 +42,12 @@ def test_mock_pipeline_generates_p0_outputs(tmp_path: Path):
     assert run_manifest["evidence"]["block_count"] > 0
     assert run_manifest["evidence"]["quote_match_count"] > 0
     assert run_manifest["evidence"]["policy"] == "structured_if_available"
+    assert package["metadata"]["evidence_fingerprint"] == (
+        run_manifest["evidence"]["evidence_fingerprint"]
+    )
+    assert read_json(output / "exports" / "reqir.json")["metadata"][
+        "evidence_fingerprint"
+    ] == run_manifest["evidence"]["evidence_fingerprint"]
 
     for requirement in requirements:
         assert requirement["id"]

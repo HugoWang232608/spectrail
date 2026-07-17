@@ -835,28 +835,32 @@ describe('SourceViewer', () => {
 
     renderViewer(makeRequirement('req_table', [source]), [block])
 
-    const grid = await screen.findByRole('table', {
+    const grid = await screen.findByRole('grid', {
       name: 'Table evidence tbl_00000001'
     })
     expect(grid).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/tasks/task-1/tables/tbl_00000001/blocks/blk_table/evidence',
+      '/api/tasks/task-1/tables/tbl_00000001/blocks/blk_table/evidence' +
+        `?expected_evidence_fingerprint=${'a'.repeat(64)}`,
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     expect(screen.getByText('repeated header')).toBeTruthy()
 
-    const selected = screen.getByRole('cell', {
+    const selected = screen.getByRole('gridcell', {
       name: /cell_00000001_r0002_c0002/
     })
-    const unselected = screen.getByRole('cell', {
+    const unselected = screen.getByRole('gridcell', {
       name: /cell_00000001_r0002_c0001/
     })
     expect(selected.getAttribute('aria-selected')).toBe('true')
     expect(selected.className).toContain('selected')
     expect(unselected.getAttribute('aria-selected')).toBe('false')
-    expect(screen.getByRole('cell', {
+    const header = screen.getByRole('columnheader', {
       name: /cell_00000001_r0001_c0001/
-    }).getAttribute('colspan')).toBe('2')
+    })
+    expect(header.getAttribute('colspan')).toBe('2')
+    expect(header.getAttribute('scope')).toBe('col')
+    expect(screen.getAllByText(/repeated_header \[/).length).toBeGreaterThan(0)
   })
 
   it('withholds the table grid when table-cell validation failed', () => {
@@ -875,7 +879,7 @@ describe('SourceViewer', () => {
 
     renderViewer(makeRequirement('req_invalid_table', [source]), [block])
 
-    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByRole('grid')).toBeNull()
     expect(screen.getByText(
       'Table locator invalid (FAIL_INVALID_REFERENCE). Grid withheld.'
     )).toBeTruthy()
@@ -904,7 +908,7 @@ describe('SourceViewer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Retry table evidence' }))
 
-    expect(await screen.findByRole('table', {
+    expect(await screen.findByRole('grid', {
       name: 'Table evidence tbl_00000001'
     })).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -928,17 +932,138 @@ describe('SourceViewer', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(
       'does not match the validated locator'
     )
-    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByRole('grid')).toBeNull()
+  })
+
+  it('withholds table cells when the projection Evidence version changed', async () => {
+    const block = {
+      ...makeBlock('blk_version_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      jsonResponse({
+        ...makeTableEvidenceResponse(block.block_id),
+        evidence_fingerprint: 'b'.repeat(64)
+      })
+    ))
+
+    renderViewer(makeRequirement('req_version_table', [source]), [block])
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Evidence version changed. Reload ReqIR'
+    )
+    expect(screen.queryByRole('grid')).toBeNull()
+  })
+
+  it('requires ReqIR Evidence metadata before requesting table evidence', () => {
+    const block = {
+      ...makeBlock('blk_unbound_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_unbound_table', [
+          makeTableSource(block.block_id)
+        ])}
+        blocks={[block]}
+        blocksError={null}
+        evidenceFingerprint={null}
+      />
+    )
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'ReqIR Evidence version is unavailable'
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('highlights a row-span projection on its selected physical row', async () => {
+    const block = {
+      ...makeBlock('blk_row_span_table', 'Merged | A\nMerged | B'),
+      type: 'table' as const
+    }
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: 'Merged',
+      canonical_source_cell_ids: ['cell_00000001_r0002_c0001'],
+      source_cell_ids_raw: ['cell_00000001_r0002_c0001'],
+      source_table_row_index: 3,
+      table_locator: {
+        table_id: 'tbl_00000001',
+        cell_ids: ['cell_00000001_r0002_c0001'],
+        row_indices: [2],
+        selected_row_index: 3,
+        column_indices: [1],
+        bbox: null
+      },
+      locator_status: 'PASS_STRUCTURED',
+      capability_results: [tableCellResult('PASS')]
+    })
+    const response = makeTableEvidenceResponse(block.block_id)
+    response.rows = [
+      {
+        physical_row_index: 2,
+        rendered_start: 0,
+        rendered_end: 10,
+        repeated_header: false,
+        cells: [{
+          ...response.rows[1].cells[0],
+          cell_id: 'cell_00000001_r0002_c0001',
+          text: 'Merged',
+          row_span: 2
+        }]
+      },
+      {
+        physical_row_index: 3,
+        rendered_start: 11,
+        rendered_end: 21,
+        repeated_header: false,
+        cells: [{
+          ...response.rows[1].cells[0],
+          cell_id: 'cell_00000001_r0002_c0001',
+          text: 'Merged',
+          row_span: 2,
+          occurrences: [{
+            occurrence_id: 'occ_projection',
+            occurrence_role: 'row_span_projection',
+            canonical_start: 11,
+            canonical_end: 17
+          }]
+        }]
+      }
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(response)))
+
+    renderViewer(makeRequirement('req_row_span_table', [source]), [block])
+
+    const projected = await screen.findByRole('gridcell', {
+      name: /cell_00000001_r0002_c0001, physical row 3/
+    })
+    expect(projected.getAttribute('aria-selected')).toBe('true')
+    expect(projected.textContent).toContain('row_span_projection [11, 17)')
+    expect(screen.getByRole('gridcell', {
+      name: /cell_00000001_r0002_c0001, physical row 2/
+    }).getAttribute('aria-selected')).toBe('false')
   })
 })
 
-function renderViewer(requirement: RequirementIR, blocks: DocumentBlock[]) {
+function renderViewer(
+  requirement: RequirementIR,
+  blocks: DocumentBlock[],
+  evidenceFingerprint = 'a'.repeat(64)
+) {
   return render(
     <SourceViewer
       taskId="task-1"
       requirement={requirement}
       blocks={blocks}
       blocksError={null}
+      evidenceFingerprint={evidenceFingerprint}
     />
   )
 }

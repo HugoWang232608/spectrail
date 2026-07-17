@@ -8,6 +8,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 
 from spectrail.core.io import read_json, write_json
+from spectrail.evidence import finalize_evidence_fingerprint
 from spectrail.parsers.docx_parser import DocxParserV2
 
 
@@ -80,6 +81,7 @@ def test_api_table_evidence_returns_block_scoped_logical_grid(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{block.block_id}/evidence"
+        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 200
@@ -118,6 +120,7 @@ def test_api_table_evidence_preserves_repeated_header_projection(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{second_block_id}/evidence"
+        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 200
@@ -139,6 +142,7 @@ def test_api_table_evidence_rejects_foreign_block(api_client: TestClient):
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table_id}"
         "/blocks/blk_9999/evidence"
+        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 404
@@ -158,10 +162,101 @@ def test_api_table_evidence_rejects_stale_fingerprint(api_client: TestClient):
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{table.block_ids[0]}/evidence"
+        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TABLE_EVIDENCE_UNAVAILABLE"
+
+
+def test_api_table_evidence_rejects_reqir_from_another_evidence_version(
+    api_client: TestClient,
+):
+    task_id, parsed = _create_completed_docx_table_task(api_client)
+    assert parsed.evidence_index is not None
+    table = parsed.evidence_index.tables[0]
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/tables/{table.table_id}"
+        f"/blocks/{table.block_ids[0]}/evidence"
+        f"?expected_evidence_fingerprint={'f' * 64}"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "EVIDENCE_VERSION_CHANGED",
+        "message": (
+            "ReqIR Evidence fingerprint does not match the current task "
+            "EvidenceIndex"
+        ),
+    }
+
+
+def test_api_table_evidence_cache_invalidates_when_evidence_changes(
+    api_client: TestClient,
+):
+    task_id, parsed = _create_completed_docx_table_task(api_client)
+    assert parsed.evidence_index is not None
+    table = parsed.evidence_index.tables[0]
+    old_fingerprint = parsed.evidence_index.evidence_fingerprint
+    endpoint = (
+        f"/api/tasks/{task_id}/tables/{table.table_id}"
+        f"/blocks/{table.block_ids[0]}/evidence"
+    )
+
+    first = api_client.get(
+        f"{endpoint}?expected_evidence_fingerprint={old_fingerprint}"
+    )
+    assert first.status_code == 200
+
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    evidence_path = task_dir / "parsed" / "evidence_index.json"
+    changed = parsed.evidence_index.model_copy(
+        update={"warnings": [*parsed.evidence_index.warnings, "regenerated"]}
+    )
+    changed = finalize_evidence_fingerprint(changed)
+    write_json(evidence_path, changed.model_dump(mode="json"))
+
+    stale_reqir = api_client.get(
+        f"{endpoint}?expected_evidence_fingerprint={old_fingerprint}"
+    )
+    assert stale_reqir.status_code == 409
+    assert stale_reqir.json()["detail"]["code"] == "EVIDENCE_VERSION_CHANGED"
+
+    refreshed_reqir = api_client.get(
+        f"{endpoint}?expected_evidence_fingerprint={changed.evidence_fingerprint}"
+    )
+    assert refreshed_reqir.status_code == 200
+    assert refreshed_reqir.json()["evidence_fingerprint"] == (
+        changed.evidence_fingerprint
+    )
+
+
+def test_api_table_evidence_reuses_validated_index_for_unchanged_file(
+    api_client: TestClient,
+    monkeypatch,
+):
+    task_id, parsed = _create_completed_docx_table_task(api_client)
+    assert parsed.evidence_index is not None
+    table = parsed.evidence_index.tables[0]
+    endpoint = (
+        f"/api/tasks/{task_id}/tables/{table.table_id}"
+        f"/blocks/{table.block_ids[0]}/evidence"
+        "?expected_evidence_fingerprint="
+        f"{parsed.evidence_index.evidence_fingerprint}"
+    )
+
+    assert api_client.get(endpoint).status_code == 200
+
+    def fail_if_revalidated(index) -> None:
+        del index
+        raise AssertionError("unchanged EvidenceIndex should be served from cache")
+
+    monkeypatch.setattr(
+        "spectrail.tasks.store.validate_evidence_fingerprint",
+        fail_if_revalidated,
+    )
+    assert api_client.get(endpoint).status_code == 200
 
 
 def test_api_pdf_page_preview_returns_bounded_png(api_client: TestClient):

@@ -342,7 +342,18 @@ def _run_validate_locked(args: argparse.Namespace) -> int:
             args.validated_output,
             reqir_package_dump(
                 validated,
-                metadata={"validation_state": "validated"},
+                metadata={
+                    "validation_state": "validated",
+                    **(
+                        {
+                            "evidence_fingerprint": (
+                                evidence_index.evidence_fingerprint
+                            )
+                        }
+                        if evidence_index is not None
+                        else {}
+                    ),
+                },
             ),
         )
     print(report.model_dump_json(indent=2))

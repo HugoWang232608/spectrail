@@ -464,6 +464,7 @@ class PipelineRunner:
                         "parser": parsed_document.parser_name,
                         "parser_warnings": parsed_document.warnings,
                         "chunk_count": len(chunks),
+                        "evidence_fingerprint": evidence_index.evidence_fingerprint,
                     },
                 ),
             )
@@ -553,7 +554,10 @@ class PipelineRunner:
                 extracted_dir / "reqir.quarantined.json",
                 reqir_package_dump(
                     quarantined,
-                    metadata={"validation_state": "quarantined"},
+                    metadata={
+                        "validation_state": "quarantined",
+                        "evidence_fingerprint": evidence_index.evidence_fingerprint,
+                    },
                 ),
             )
             if not source_report.valid and pipeline_config.validation_policy == "strict":
@@ -600,6 +604,7 @@ class PipelineRunner:
                         "document": document.name,
                         "source_format": parsed_document.source_format,
                         "parser": parsed_document.parser_name,
+                        "evidence_fingerprint": evidence_index.evidence_fingerprint,
                     },
                 ),
             )
@@ -614,6 +619,7 @@ class PipelineRunner:
                         "document": document.name,
                         "source_format": parsed_document.source_format,
                         "parser": parsed_document.parser_name,
+                        "evidence_fingerprint": evidence_index.evidence_fingerprint,
                     },
                 ),
             )

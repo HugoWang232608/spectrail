@@ -43,6 +43,12 @@ def test_extract_writes_plan_and_completed_manifest(tmp_path: Path):
     assert raw["schema_version"] == "reqir_v4"
     assert validated["schema_version"] == "reqir_v4"
     assert exported["schema_version"] == "reqir_v4"
+    evidence_fingerprint = manifest["evidence"]["evidence_fingerprint"]
+    assert {
+        raw["metadata"]["evidence_fingerprint"],
+        validated["metadata"]["evidence_fingerprint"],
+        exported["metadata"]["evidence_fingerprint"],
+    } == {evidence_fingerprint}
     assert raw["items"][0]["metadata"]["extractor_version"] == (
         "reqir_extractor_v4_table_row_evidence"
     )

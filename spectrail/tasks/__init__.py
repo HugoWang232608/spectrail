@@ -7,6 +7,7 @@ from spectrail.tasks.store import (
     TaskTransactionInProgressError,
     TableEvidenceNotFoundError,
     TableEvidenceUnavailableError,
+    TableEvidenceVersionChangedError,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "TaskTransactionInProgressError",
     "TableEvidenceNotFoundError",
     "TableEvidenceUnavailableError",
+    "TableEvidenceVersionChangedError",
     "new_task_id",
 ]

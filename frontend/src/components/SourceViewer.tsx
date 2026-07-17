@@ -21,6 +21,7 @@ type SourceViewerProps = {
   requirement: RequirementIR | null
   blocks: DocumentBlock[]
   blocksError: ApiError | null
+  evidenceFingerprint?: string | null
 }
 
 type SourceSelection = {
@@ -30,7 +31,13 @@ type SourceSelection = {
   sourceOccurrence: SourceIdentitySelection['sourceOccurrence'] | null
 }
 
-function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewerProps) {
+function SourceViewer({
+  taskId,
+  requirement,
+  blocks,
+  blocksError,
+  evidenceFingerprint = null
+}: SourceViewerProps) {
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
     taskId: null,
     requirementId: null,
@@ -210,6 +217,7 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
               taskId={taskId}
               source={source}
               tableCellStatus={tableCellStatus}
+              expectedEvidenceFingerprint={evidenceFingerprint}
             />
           ) : null}
 

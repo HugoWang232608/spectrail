@@ -24,6 +24,8 @@ from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 
 
 RequirementList = TypeAdapter(list[RequirementIR])
+EVALUATION_OUTPUT_MARKER = ".spectrail-evaluation-output"
+EVALUATION_OUTPUT_MARKER_CONTENT = "spectrail-evaluation-output-v1\n"
 
 
 class EvaluationFixtureStaleError(Exception):
@@ -49,16 +51,25 @@ class EvaluationRunner:
         case_files = sorted(path.rglob("case.json")) if path.is_dir() else [path]
         if not case_files:
             raise ValueError(f"no evaluation cases found: {path}")
-        output = ensure_dir(output_dir)
+        relative_outputs = [
+            _case_output_relative_path(path, case_file) for case_file in case_files
+        ]
+        if len(set(relative_outputs)) != len(relative_outputs):
+            raise ValueError(
+                "EVALUATION_CASE_OUTPUT_COLLISION: multiple cases resolve to the "
+                "same output path"
+            )
+        output, cases_output = _prepare_evaluation_output(
+            path,
+            case_files,
+            Path(output_dir),
+        )
         for report_name in ("evaluation_report.json", "evaluation_report.md"):
             (output / report_name).unlink(missing_ok=True)
-        cases_output = output / "cases"
-        if cases_output.exists():
-            shutil.rmtree(cases_output)
         ensure_dir(cases_output)
         reports = []
-        for case_file in case_files:
-            case_output = output / "cases" / case_file.parent.name
+        for case_file, relative_output in zip(case_files, relative_outputs):
+            case_output = cases_output / relative_output
             try:
                 report = self._run_case(case_file, case_output)
             except EvaluationCaseConfigurationError as exc:
@@ -272,6 +283,74 @@ class EvaluationRunner:
         write_json(output / "case_report.json", report)
         (output / "case_report.md").write_text(_case_markdown(report), encoding="utf-8")
         return report
+
+
+def _prepare_evaluation_output(
+    case_path: Path,
+    case_files: list[Path],
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    output = output_dir.resolve(strict=False)
+    cases_output = output / "cases"
+    resolved_cases_output = cases_output.resolve(strict=False)
+    resolved_case_path = case_path.resolve(strict=False)
+    resolved_case_files = [case_file.resolve(strict=False) for case_file in case_files]
+    overlapping_inputs = [resolved_case_path, *resolved_case_files]
+    overlapping = [
+        case_file
+        for case_file in overlapping_inputs
+        if case_file == resolved_cases_output
+        or case_file.is_relative_to(resolved_cases_output)
+    ]
+    if overlapping:
+        rendered = ", ".join(path.as_posix() for path in overlapping)
+        raise ValueError(
+            "EVALUATION_OUTPUT_OVERLAPS_INPUT: "
+            f"output cases directory would contain input case(s): {rendered}"
+        )
+
+    if output.exists() and not output.is_dir():
+        raise ValueError(
+            f"EVALUATION_OUTPUT_NOT_DIRECTORY: output is not a directory: {output}"
+        )
+
+    marker = output / EVALUATION_OUTPUT_MARKER
+    if output.exists():
+        entries = list(output.iterdir())
+        if entries and not _valid_evaluation_output_marker(marker):
+            raise ValueError(
+                "EVALUATION_OUTPUT_NOT_OWNED: existing non-empty output directory "
+                f"does not contain a valid {EVALUATION_OUTPUT_MARKER}: {output}"
+            )
+    else:
+        output.mkdir(parents=True)
+
+    if not marker.exists():
+        marker.write_text(EVALUATION_OUTPUT_MARKER_CONTENT, encoding="utf-8")
+
+    if cases_output.is_symlink() or (
+        cases_output.exists() and not cases_output.is_dir()
+    ):
+        cases_output.unlink()
+    elif cases_output.exists():
+        shutil.rmtree(cases_output)
+    return output, cases_output
+
+
+def _valid_evaluation_output_marker(marker: Path) -> bool:
+    if marker.is_symlink() or not marker.is_file():
+        return False
+    try:
+        return marker.read_text(encoding="utf-8") == EVALUATION_OUTPUT_MARKER_CONTENT
+    except (OSError, UnicodeError):
+        return False
+
+
+def _case_output_relative_path(case_path: Path, case_file: Path) -> Path:
+    if case_path.is_dir():
+        relative = case_file.parent.relative_to(case_path)
+        return Path("_root") if relative == Path(".") else relative
+    return Path(case_file.parent.name or "_root")
 
 
 def _resolve_path(value: str | Path, case_dir: Path) -> Path:

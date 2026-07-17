@@ -28,6 +28,84 @@ def test_evaluate_cli_generates_passing_report(tmp_path: Path):
     assert "Structured grounding coverage" in case_markdown
 
 
+def test_evaluation_output_rejects_input_overlap_before_deleting_files(
+    tmp_path: Path,
+):
+    evaluation_root = tmp_path / "eval"
+    case_dir = evaluation_root / "cases" / "sample"
+    case_dir.mkdir(parents=True)
+    case = case_dir / "case.json"
+    case.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="EVALUATION_OUTPUT_OVERLAPS_INPUT"):
+        main(
+            [
+                "evaluate",
+                str(evaluation_root / "cases"),
+                "--output",
+                str(evaluation_root),
+            ]
+        )
+
+    assert case.exists()
+    assert not (evaluation_root / ".spectrail-evaluation-output").exists()
+
+
+def test_evaluation_output_refuses_nonempty_unowned_directory(tmp_path: Path):
+    output = tmp_path / "unowned-output"
+    output.mkdir()
+    sentinel = output / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="EVALUATION_OUTPUT_NOT_OWNED"):
+        main(
+            [
+                "evaluate",
+                "eval/cases/sample_srs/case.json",
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert not (output / ".spectrail-evaluation-output").exists()
+
+
+def test_nested_cases_with_same_parent_name_keep_distinct_artifacts(
+    tmp_path: Path,
+):
+    cases = tmp_path / "cases"
+    docx = cases / "docx" / "basic"
+    pdf = cases / "pdf" / "basic"
+    docx.mkdir(parents=True)
+    pdf.mkdir(parents=True)
+    common = {
+        "document": "docs/sample_srs.md",
+        "gold": "eval/cases/sample_srs/gold.json",
+    }
+    (docx / "case.json").write_text(
+        json.dumps({**common, "name": "docx-basic"}),
+        encoding="utf-8",
+    )
+    (pdf / "case.json").write_text(
+        json.dumps({**common, "name": "pdf-basic"}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "evaluation-output"
+
+    assert main(["evaluate", str(cases), "--output", str(output)]) == 0
+    suite = read_json(output / "evaluation_report.json")
+    assert suite["case_count"] == 2
+    assert (output / "cases" / "docx" / "basic" / "case_report.json").exists()
+    assert (output / "cases" / "pdf" / "basic" / "case_report.json").exists()
+    assert (
+        output / "cases" / "docx" / "basic" / "pipeline" / "exports" / "reqir.json"
+    ).exists()
+    assert (
+        output / "cases" / "pdf" / "basic" / "pipeline" / "exports" / "reqir.json"
+    ).exists()
+
+
 def test_selected_scope_evaluation_is_reported_explicitly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

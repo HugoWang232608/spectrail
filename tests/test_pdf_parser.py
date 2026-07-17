@@ -47,7 +47,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.6"
+    assert parsed.parser_identity.parser_version == "2.7"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -644,6 +644,43 @@ def test_pdf_v2_bold_heading_can_be_confirmed_by_next_page_body(
     assert by_text[
         "Interfaces are exposed through authenticated endpoints."
     ].section_path == ["System Interfaces"]
+
+
+def test_pdf_v2_cross_page_heading_skips_unmarked_short_footer(
+    tmp_path: Path,
+):
+    path = tmp_path / "cross-page-heading-with-footer.pdf"
+    document = fitz.open()
+    page_one = document.new_page(width=500, height=800)
+    page_one.insert_text(
+        (50, 680),
+        "System Interfaces",
+        fontname="hebo",
+    )
+    page_one.insert_text((230, 790), "Page 1")
+    page_two = document.new_page(width=500, height=800)
+    page_two.insert_text(
+        (50, 50),
+        "Interfaces are exposed through authenticated endpoints.",
+    )
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    by_text = {block.text.strip(): block for block in parsed.blocks}
+
+    assert by_text["System Interfaces"].type == "heading"
+    assert by_text[
+        "Interfaces are exposed through authenticated endpoints."
+    ].section_path == ["System Interfaces"]
+    assert by_text["Page 1"].metadata["repeated_edge_candidate"] is False
+    assert by_text["Page 1"].type == "paragraph"
+    assert any(
+        evidence.block_id == by_text["Page 1"].block_id
+        for evidence in index.blocks
+    )
 
 
 def test_pdf_v2_cross_page_heading_rejects_different_horizontal_region(

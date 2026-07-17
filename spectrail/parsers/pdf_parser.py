@@ -34,6 +34,8 @@ WIDE_BLOCK_RATIO = 0.70
 COLUMN_OVERLAP_RATIO = 0.20
 MIN_REPEATED_EDGE_PAGES = 3
 EDGE_POSITION_TOLERANCE = 0.01
+EDGE_DECORATION_MAX_CHARS = 40
+EDGE_DECORATION_MAX_WORDS = 8
 PARAGRAPH_GAP_RATIO = 0.60
 FONT_LEVEL_DELTA_RATIO = 0.20
 MIN_FONT_LEVEL_DELTA = 2.0
@@ -748,7 +750,7 @@ def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
             (
                 entry
                 for entry in reading_sequence[index + 1 :]
-                if not entry[1].edge_candidate
+                if not _is_heading_inference_edge_decoration(*entry)
             ),
             None,
         )
@@ -769,6 +771,21 @@ def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
             following,
         ):
             block.block_type = "heading"
+
+
+def _is_heading_inference_edge_decoration(
+    layout: _PageLayout,
+    block: _PageTextBlock,
+) -> bool:
+    if block.edge_candidate:
+        return True
+    if block.bbox is None or _edge_role(block.bbox, layout.height) is None:
+        return False
+    normalized = " ".join(block.text.split())
+    return (
+        len(normalized) <= EDGE_DECORATION_MAX_CHARS
+        and len(normalized.split()) <= EDGE_DECORATION_MAX_WORDS
+    )
 
 
 def _is_adjacent_heading_body(
@@ -1048,15 +1065,15 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.6",
+        parser_version="2.7",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
             "canonical_line_separator": "\\n",
             "canonical_span_gap_separator": "space_when_geometrically_separated_v1",
             "logical_block_segmentation": "line_gap_and_font_hierarchy_v1",
-            "section_hierarchy": "numeric_prefix_then_font_size_v5",
-            "bold_heading_detection": "adjacent_body_with_normalized_page_boundary_v4",
+            "section_hierarchy": "numeric_prefix_then_font_size_v6",
+            "bold_heading_detection": "adjacent_body_skip_edge_decorations_v5",
             "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
             "reading_order": "hybrid_geometry_with_source_anchor_fallback_v2",
             "repeated_page_edges": "preserve_stable_candidate_v1",

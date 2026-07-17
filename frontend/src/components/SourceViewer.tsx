@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
 
 import { getPagePreviewUrl } from '../api/client'
-import type { ApiError, DocumentBlock, RequirementIR, SourceSpan } from '../api/types'
+import type {
+  ApiError,
+  CapabilityValidationResult,
+  DocumentBlock,
+  RequirementIR,
+  SourceSpan
+} from '../api/types'
 import { resolveTextHighlight } from '../evidence/textHighlight'
 
 type SourceViewerProps = {
@@ -18,7 +24,16 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   const sources = requirement?.sources ?? []
   const source = sources[sourceIndex] ?? null
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
-  const page = source?.page ?? block?.page ?? null
+  const pageRegionStatus = source ? getPageRegionStatus(source) : undefined
+  const pageRegionPassed = pageRegionStatus === 'PASS'
+  const displayedPage = pageRegionPassed
+    ? source?.page ?? block?.page ?? null
+    : block?.page ?? null
+  const showClaimedPage = (
+    !pageRegionPassed
+    && source?.page != null
+    && source.page !== block?.page
+  )
 
   useEffect(() => {
     setSourceIndex(0)
@@ -67,7 +82,16 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
 
           <dl className="source-meta">
             <SourceItem label="Block" value={source.block_id} />
-            <SourceItem label="Page" value={page != null ? String(page) : 'None'} />
+            <SourceItem
+              label={pageRegionPassed ? 'Page' : 'Block Page'}
+              value={displayedPage != null ? String(displayedPage) : 'None'}
+            />
+            {showClaimedPage ? (
+              <SourceItem
+                label="Claimed Page"
+                value={`${source.page} (${pageLocatorTrustDescription(pageRegionStatus)})`}
+              />
+            ) : null}
             <SourceItem label="Section" value={source.section_path?.join(' / ') || source.section || 'None'} />
             <SourceItem label="Score" value={source.match_score != null ? source.match_score.toFixed(3) : 'None'} />
             <SourceItem
@@ -91,6 +115,7 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
             <PageEvidencePreview
               taskId={taskId}
               source={source}
+              pageRegionStatus={pageRegionStatus}
               failed={previewFailed}
               attempt={previewAttempt}
               onError={() => setPreviewFailed(true)}
@@ -139,6 +164,7 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
 function PageEvidencePreview({
   taskId,
   source,
+  pageRegionStatus,
   failed,
   attempt,
   onError,
@@ -146,6 +172,7 @@ function PageEvidencePreview({
 }: {
   taskId: string
   source: SourceSpan
+  pageRegionStatus: CapabilityValidationResult['status'] | undefined
   failed: boolean
   attempt: number
   onError: () => void
@@ -157,9 +184,6 @@ function PageEvidencePreview({
   }
 
   const evidenceVersion = source.source_evidence_key ?? 'legacy'
-  const pageRegionStatus = source.capability_results?.find(
-    (result) => result.capability === 'page_region'
-  )?.status
   const pageLocatorValidated = pageRegionStatus === 'PASS'
   if (!pageLocatorValidated) {
     return (
@@ -168,9 +192,7 @@ function PageEvidencePreview({
           <h3>Page evidence</h3>
         </div>
         <div className="preview-unavailable" role="status">
-          <p className="muted-text">
-            Page locator invalid ({pageRegionStatus ?? 'UNVERIFIED'}). Preview withheld.
-          </p>
+          <p className="muted-text">{pageLocatorNotice(pageRegionStatus)} Preview withheld.</p>
         </div>
       </div>
     )
@@ -231,6 +253,48 @@ function SourceItem({ label, value }: { label: string; value: string }) {
       <dd>{value}</dd>
     </div>
   )
+}
+
+function getPageRegionStatus(
+  source: SourceSpan
+): CapabilityValidationResult['status'] | undefined {
+  return source.capability_results?.find(
+    (result) => result.capability === 'page_region'
+  )?.status
+}
+
+function pageLocatorNotice(
+  status: CapabilityValidationResult['status'] | undefined
+): string {
+  switch (status) {
+    case 'WARNING_UNAVAILABLE':
+      return 'Page locator unavailable.'
+    case 'WARNING_AMBIGUOUS':
+      return 'Page locator ambiguous.'
+    case 'FAIL_INVALID_REFERENCE':
+    case 'FAIL_DERIVATION':
+      return `Page locator invalid (${status}).`
+    case 'UNVERIFIED':
+    default:
+      return 'Page locator not verified.'
+  }
+}
+
+function pageLocatorTrustDescription(
+  status: CapabilityValidationResult['status'] | undefined
+): string {
+  switch (status) {
+    case 'WARNING_UNAVAILABLE':
+      return 'unavailable'
+    case 'WARNING_AMBIGUOUS':
+      return 'ambiguous'
+    case 'FAIL_INVALID_REFERENCE':
+    case 'FAIL_DERIVATION':
+      return 'invalid'
+    case 'UNVERIFIED':
+    default:
+      return 'not verified'
+  }
 }
 
 function renderHighlightedBlock(text: string, source: SourceSpan) {

@@ -31,6 +31,14 @@ from spectrail.evidence.models import (
     TextLocator,
     aggregate_locator_status,
 )
+from spectrail.evidence.pdf_preview import (
+    PDF_PREVIEW_MAX_DIMENSION,
+    PDF_PREVIEW_MAX_SCALE,
+    PdfPagePreviewError,
+    PdfPagePreviewNotFoundError,
+    PdfPagePreviewUnavailableError,
+    render_pdf_page,
+)
 from spectrail.evidence.quote_matcher import (
     NormalizedText,
     QuoteMatcher,
@@ -48,6 +56,8 @@ from spectrail.evidence.quote_matcher import (
 
 __all__ = [
     "PDF_PREVIEW_COORDINATE_SPACE",
+    "PDF_PREVIEW_MAX_DIMENSION",
+    "PDF_PREVIEW_MAX_SCALE",
     "BlockEvidenceRecord",
     "BoundingBox",
     "CapabilityStatus",
@@ -63,6 +73,9 @@ __all__ = [
     "PageLocator",
     "PageRecord",
     "ParserIdentity",
+    "PdfPagePreviewError",
+    "PdfPagePreviewNotFoundError",
+    "PdfPagePreviewUnavailableError",
     "QuoteMatchRange",
     "QuoteMatchRegistry",
     "QuoteMatchResult",
@@ -86,6 +99,7 @@ __all__ = [
     "normalize_with_mapping",
     "occurrence_id",
     "page_id",
+    "render_pdf_page",
     "sha256_bytes",
     "sha256_file",
     "sha256_text",

@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from spectrail.core.io import ensure_dir, read_json, write_json
+from spectrail.evidence.pdf_preview import (
+    PdfPagePreviewNotFoundError,
+    PdfPagePreviewUnavailableError,
+    render_pdf_page,
+)
 from spectrail.parsers import SUPPORTED_DOCUMENT_SUFFIXES
 from spectrail.task_transactions import TaskTransactionError, task_operation
 from spectrail.tasks.ids import new_task_id
@@ -49,8 +54,6 @@ class PagePreviewNotFoundError(TaskStoreError):
 
 
 READABLE_TASK_STATUSES = {"completed", "completed_with_warnings"}
-PAGE_PREVIEW_MAX_DIMENSION = 2000
-PAGE_PREVIEW_MAX_SCALE = 2.0
 
 
 class LocalTaskStore:
@@ -239,7 +242,12 @@ class LocalTaskStore:
                     raise PagePreviewUnavailableError(
                         f"uploaded PDF is missing: {task_id}"
                     )
-                return _render_pdf_page(document_path, page_number)
+                try:
+                    return render_pdf_page(document_path, page_number)
+                except PdfPagePreviewNotFoundError as exc:
+                    raise PagePreviewNotFoundError(str(exc)) from exc
+                except PdfPagePreviewUnavailableError as exc:
+                    raise PagePreviewUnavailableError(str(exc)) from exc
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -328,58 +336,3 @@ def _input_format(suffix: str) -> str:
     if suffix in {".md", ".markdown"}:
         return "markdown"
     return suffix.lstrip(".")
-
-
-def _render_pdf_page(
-    document_path: Path,
-    page_number: int,
-) -> tuple[bytes, int, int]:
-    try:
-        import fitz
-    except ImportError as exc:  # pragma: no cover - parser uses the same dependency
-        raise PagePreviewUnavailableError(
-            "PyMuPDF is required for PDF page previews"
-        ) from exc
-
-    try:
-        document = fitz.open(document_path)
-    except Exception as exc:
-        raise PagePreviewUnavailableError(
-            f"failed to open PDF preview source: {document_path.name}"
-        ) from exc
-    try:
-        if page_number > document.page_count:
-            raise PagePreviewNotFoundError(
-                f"PDF page does not exist: {page_number}"
-            )
-        page = document[page_number - 1]
-        width = float(page.rect.width)
-        height = float(page.rect.height)
-        if width <= 0 or height <= 0:
-            raise PagePreviewUnavailableError(
-                f"PDF page has invalid dimensions: {page_number}"
-            )
-        scale = min(
-            PAGE_PREVIEW_MAX_SCALE,
-            PAGE_PREVIEW_MAX_DIMENSION / width,
-            PAGE_PREVIEW_MAX_DIMENSION / height,
-        )
-        pixmap = page.get_pixmap(
-            matrix=fitz.Matrix(scale, scale),
-            colorspace=fitz.csRGB,
-            alpha=False,
-        )
-        return pixmap.tobytes("png"), pixmap.width, pixmap.height
-    except (PagePreviewNotFoundError, PagePreviewUnavailableError):
-        raise
-    except Exception as exc:
-        raise PagePreviewUnavailableError(
-            f"failed to render PDF page preview: {page_number}"
-        ) from exc
-    finally:
-        try:
-            document.close()
-        except Exception as exc:
-            raise PagePreviewUnavailableError(
-                f"failed to close PDF page preview source: {page_number}"
-            ) from exc

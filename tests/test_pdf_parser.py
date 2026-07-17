@@ -13,6 +13,7 @@ from spectrail.evidence.index_builder import (
     ensure_evidence_index,
     validate_evidence_index_against_parsed_document,
 )
+from spectrail.evidence.pdf_preview import render_pdf_page
 from spectrail.parsers.base import DocumentParseError
 from spectrail.parsers import pdf_parser as pdf_parser_module
 from spectrail.parsers.pdf_parser import (
@@ -21,7 +22,6 @@ from spectrail.parsers.pdf_parser import (
     _project_text_block,
 )
 from spectrail.parsers.registry import parse_document
-from spectrail.tasks.store import _render_pdf_page
 from spectrail.validators.source_locator_validator import SourceLocatorValidator
 
 
@@ -987,7 +987,7 @@ def test_pdf_v2_page_locator_overlays_rendered_preview_pixels(
     assert locator is not None
     assert locator.source_rotation == rotation
 
-    preview_png, preview_width, preview_height = _render_pdf_page(path, 1)
+    preview_png, preview_width, preview_height = render_pdf_page(path, 1)
     pixmap = fitz.Pixmap(preview_png)
     assert (pixmap.width, pixmap.height) == (preview_width, preview_height)
     scale_x = preview_width / locator.page_width

@@ -84,7 +84,18 @@ The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or
 unverified locator cannot choose the preview page or aspect ratio; the UI
 withholds the image, reports the locator status, and retains canonical block
-text as the review evidence.
+text as the review evidence. Its metadata shows the canonical block page as
+`Block Page` and, when they differ, lists `Claimed Page` separately as invalid,
+ambiguous, unavailable, or not verified.
+
+Non-pass states retain their validation meaning in the UI:
+
+```text
+UNVERIFIED           -> Page locator not verified
+WARNING_UNAVAILABLE  -> Page locator unavailable
+WARNING_AMBIGUOUS    -> Page locator ambiguous
+FAIL_*               -> Page locator invalid
+```
 
 Run the frontend evidence tests and production build with:
 
@@ -102,8 +113,10 @@ mismatch behavior, and all four supported page rotations.
 Backend geometry acceptance renders real PDFs at 0°, 90°, 180°, and 270°,
 derives each `PageLocator` through the parser and enricher, decodes the same PNG
 renderer used by the preview API, and confirms that the locator's proportional
-pixel region contains the quoted glyphs. Browser-level screenshot regression
-remains separate from this deterministic cross-layer check.
+pixel region contains the quoted glyphs. The renderer is the public, stateless
+`spectrail.evidence.pdf_preview.render_pdf_page` function shared by TaskStore
+and acceptance tests. Browser-level screenshot regression remains separate
+from this deterministic cross-layer check.
 
 ## Next acceptance steps
 

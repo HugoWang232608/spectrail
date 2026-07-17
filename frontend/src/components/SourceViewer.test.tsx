@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type {
+  CapabilityValidationResult,
   DocumentBlock,
   PageLocator,
   RequirementIR,
@@ -195,12 +196,18 @@ describe('SourceViewer', () => {
   })
 
   it('withholds page context when the locator is invalid', () => {
-    const block = makeBlock('blk_invalid_page', 'Invalid page locator')
+    const block = {
+      ...makeBlock('blk_invalid_page', 'Invalid page locator'),
+      page: 3
+    }
     const source = makeSource({
       block_id: block.block_id,
       quote: block.text,
-      page: 1,
-      page_locator: makePageLocator(0),
+      page: 8,
+      page_locator: {
+        ...makePageLocator(0),
+        page: 8
+      },
       capability_results: [
         pageRegionResult('FAIL_INVALID_REFERENCE', 'SOURCE_PAGE_LOCATOR_INVALID')
       ]
@@ -213,8 +220,32 @@ describe('SourceViewer', () => {
     expect(screen.getByRole('status').textContent).toBe(
       'Page locator invalid (FAIL_INVALID_REFERENCE). Preview withheld.'
     )
+    expect(sourceMetadataValue('Block Page')).toBe('3')
+    expect(sourceMetadataValue('Claimed Page')).toBe('8 (invalid)')
     expect(screen.getByText(block.text, { selector: 'mark' })).toBeTruthy()
   })
+
+  it.each([
+    ['UNVERIFIED', 'Page locator not verified. Preview withheld.'],
+    ['WARNING_UNAVAILABLE', 'Page locator unavailable. Preview withheld.'],
+    ['WARNING_AMBIGUOUS', 'Page locator ambiguous. Preview withheld.']
+  ] as const)(
+    'describes a %s page locator without calling it invalid',
+    (status, expectedMessage) => {
+      const block = makeBlock(`blk_${status.toLowerCase()}`, 'Untrusted page evidence')
+      const source = makeSource({
+        block_id: block.block_id,
+        quote: block.text,
+        page_locator: makePageLocator(0),
+        capability_results: [pageRegionResult(status)]
+      })
+
+      renderViewer(makeRequirement(`req_${status.toLowerCase()}`, [source]), [block])
+
+      expect(screen.queryByRole('img')).toBeNull()
+      expect(screen.getByRole('status').textContent).toBe(expectedMessage)
+    }
+  )
 
   it.each([
     [0, ['10%', '10%', '25%', '30%']],
@@ -327,14 +358,19 @@ function makePageLocator(sourceRotation: 0 | 90 | 180 | 270): PageLocator {
 }
 
 function pageRegionResult(
-  status: 'PASS' | 'FAIL_INVALID_REFERENCE',
+  status: CapabilityValidationResult['status'],
   issueCode: string | null = null
-) {
+): CapabilityValidationResult {
   return {
-    capability: 'page_region' as const,
+    capability: 'page_region',
     status,
     issue_code: issueCode
   }
+}
+
+function sourceMetadataValue(label: string): string | null | undefined {
+  const term = screen.getByText(label, { selector: 'dt' })
+  return term.parentElement?.querySelector('dd')?.textContent
 }
 
 function makeBlock(blockId: string, text: string): DocumentBlock {

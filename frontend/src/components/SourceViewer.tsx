@@ -18,18 +18,28 @@ type SourceViewerProps = {
 }
 
 function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewerProps) {
-  const [sourceIndex, setSourceIndex] = useState(0)
+  const [sourceSelection, setSourceSelection] = useState<{
+    requirementId: string | null
+    sourceIdentity: string | null
+  }>({
+    requirementId: null,
+    sourceIdentity: null
+  })
   const [previewFailed, setPreviewFailed] = useState(false)
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const sources = requirement?.sources ?? []
-  const source = sources[sourceIndex] ?? null
+  const requirementId = requirement?.id ?? null
+  const selectedIdentity = sourceSelection.requirementId === requirementId
+    ? sourceSelection.sourceIdentity
+    : null
+  const selectedIdentityIndex = selectedIdentity
+    ? sources.findIndex((item) => sourceSelectionIdentity(item) === selectedIdentity)
+    : -1
+  const effectiveSourceIndex = selectedIdentityIndex >= 0 ? selectedIdentityIndex : 0
+  const source = sources[effectiveSourceIndex] ?? null
+  const sourceIdentitySignature = sources.map(sourceSelectionIdentity).join('\u0000')
   const block = source ? blocks.find((item) => item.block_id === source.block_id) ?? null : null
-  const sourcePreviewIdentity = source?.source_evidence_key ?? [
-    sourceIndex,
-    source?.block_id ?? '',
-    source?.text_locator?.start ?? '',
-    source?.text_locator?.end ?? ''
-  ].join(':')
+  const sourcePreviewIdentity = source ? sourceSelectionIdentity(source) : ''
   const pageRegionStatus = source ? getPageRegionStatus(source) : undefined
   const pageRegionPassed = pageRegionStatus === 'PASS'
   const displayedPage = pageRegionPassed
@@ -42,12 +52,19 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   )
 
   useEffect(() => {
-    setSourceIndex(0)
-  }, [requirement?.id])
-
-  useEffect(() => {
-    setSourceIndex((current) => Math.min(current, Math.max(0, sources.length - 1)))
-  }, [sources.length])
+    if (selectedIdentity && selectedIdentityIndex < 0) {
+      setSourceSelection({
+        requirementId,
+        sourceIdentity: source ? sourceSelectionIdentity(source) : null
+      })
+    }
+  }, [
+    requirementId,
+    selectedIdentity,
+    selectedIdentityIndex,
+    source,
+    sourceIdentitySignature
+  ])
 
   useEffect(() => {
     setPreviewFailed(false)
@@ -73,18 +90,28 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
           <div className="source-switcher">
             <button
               type="button"
-              disabled={sourceIndex === 0}
-              onClick={() => setSourceIndex((current) => Math.max(0, current - 1))}
+              disabled={effectiveSourceIndex === 0}
+              onClick={() => selectSource(
+                effectiveSourceIndex - 1,
+                requirementId,
+                sources,
+                setSourceSelection
+              )}
             >
               Previous
             </button>
             <span>
-              {sourceIndex + 1} / {sources.length}
+              {effectiveSourceIndex + 1} / {sources.length}
             </span>
             <button
               type="button"
-              disabled={sourceIndex >= sources.length - 1}
-              onClick={() => setSourceIndex((current) => Math.min(sources.length - 1, current + 1))}
+              disabled={effectiveSourceIndex >= sources.length - 1}
+              onClick={() => selectSource(
+                effectiveSourceIndex + 1,
+                requirementId,
+                sources,
+                setSourceSelection
+              )}
             >
               Next
             </button>
@@ -263,6 +290,37 @@ function SourceItem({ label, value }: { label: string; value: string }) {
       <dd>{value}</dd>
     </div>
   )
+}
+
+function selectSource(
+  index: number,
+  requirementId: string | null,
+  sources: SourceSpan[],
+  setSelection: (selection: {
+    requirementId: string | null
+    sourceIdentity: string | null
+  }) => void
+) {
+  const source = sources[index]
+  if (!source) {
+    return
+  }
+  setSelection({
+    requirementId,
+    sourceIdentity: sourceSelectionIdentity(source)
+  })
+}
+
+function sourceSelectionIdentity(source: SourceSpan): string {
+  if (source.source_evidence_key) {
+    return source.source_evidence_key
+  }
+  return JSON.stringify([
+    source.block_id,
+    source.text_locator?.start ?? null,
+    source.text_locator?.end ?? null,
+    source.quote
+  ])
 }
 
 function getPageRegionStatus(

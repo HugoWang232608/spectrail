@@ -128,10 +128,58 @@ describe('SourceViewer', () => {
       />
     )
 
+    expect(screen.queryByText('No source')).toBeNull()
     await waitFor(() => {
       expect(screen.getByText('Kept', { selector: 'mark' })).toBeTruthy()
     })
     expect(screen.getByText('1 / 1')).toBeTruthy()
+  })
+
+  it('keeps a selected source across reorder and falls back when it is replaced', () => {
+    const blocks = [
+      makeBlock('blk_a', 'Evidence A'),
+      makeBlock('blk_b', 'Evidence B'),
+      makeBlock('blk_c', 'Evidence C'),
+      makeBlock('blk_d', 'Evidence D')
+    ]
+    const sources = blocks.map((block) => locatedSource(block, block.text))
+    const requirementId = 'req_reordered'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [sources[0], sources[1]])}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('Evidence B', { selector: 'mark' })).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [sources[1], sources[2]])}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByText('Evidence B', { selector: 'mark' })).toBeTruthy()
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [sources[2], sources[3]])}
+        blocks={blocks}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.queryByText('No source')).toBeNull()
+    expect(screen.getByText('Evidence C', { selector: 'mark' })).toBeTruthy()
+    expect(screen.getByText('1 / 2')).toBeTruthy()
   })
 
   it('keeps block text unmarked when the locator belongs to another block', () => {

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 
 PDF_PREVIEW_MAX_DIMENSION = 2000
 PDF_PREVIEW_MAX_SCALE = 2.0
+LOGGER = logging.getLogger(__name__)
 
 
 class PdfPagePreviewError(Exception):
@@ -83,3 +85,9 @@ def render_pdf_page(
                 raise PdfPagePreviewUnavailableError(
                     f"failed to close PDF page preview source: {page_number}"
                 ) from exc
+            LOGGER.warning(
+                "failed to close PDF page preview source %s after %s",
+                page_number,
+                type(primary_error).__name__,
+                exc_info=True,
+            )

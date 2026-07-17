@@ -176,6 +176,43 @@ def test_api_pdf_page_preview_maps_render_failure_to_structured_error(
     }
 
 
+def test_api_pdf_page_preview_preserves_render_error_when_close_fails(
+    api_client: TestClient,
+    monkeypatch,
+    caplog,
+):
+    task_id = _create_completed_pdf_task(api_client)
+
+    class BrokenPage:
+        rect = SimpleNamespace(width=400, height=300)
+
+        def get_pixmap(self, **kwargs):
+            del kwargs
+            raise RuntimeError("broken page resource")
+
+    class BrokenDocument:
+        page_count = 1
+
+        def __getitem__(self, index):
+            assert index == 0
+            return BrokenPage()
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr(fitz, "open", lambda path: BrokenDocument())
+    caplog.set_level("WARNING", logger="spectrail.evidence.pdf_preview")
+
+    response = api_client.get(f"/api/tasks/{task_id}/pages/1/preview.png")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "PAGE_PREVIEW_UNAVAILABLE",
+        "message": "failed to render PDF page preview: 1",
+    }
+    assert "failed to close PDF page preview source 1 after" in caplog.text
+
+
 def test_api_page_preview_rejects_non_pdf_task(
     api_client: TestClient,
     completed_api_task: dict,

@@ -18,6 +18,7 @@ type SourceViewerProps = {
 }
 
 type SourceSelection = {
+  taskId: string | null
   requirementId: string | null
   sourceIdentity: string | null
   sourceOccurrence: number | null
@@ -25,6 +26,7 @@ type SourceSelection = {
 
 function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewerProps) {
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
+    taskId: null,
     requirementId: null,
     sourceIdentity: null,
     sourceOccurrence: null
@@ -33,10 +35,14 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const sources = requirement?.sources ?? []
   const requirementId = requirement?.id ?? null
-  const selectedIdentity = sourceSelection.requirementId === requirementId
+  const selectionContextMatches = (
+    sourceSelection.taskId === taskId
+    && sourceSelection.requirementId === requirementId
+  )
+  const selectedIdentity = selectionContextMatches
     ? sourceSelection.sourceIdentity
     : null
-  const selectedOccurrence = sourceSelection.requirementId === requirementId
+  const selectedOccurrence = selectionContextMatches
     ? sourceSelection.sourceOccurrence
     : null
   const selectedIdentityIndex = selectedIdentity && selectedOccurrence != null
@@ -67,11 +73,13 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
 
   useEffect(() => {
     if (
-      sourceSelection.requirementId !== requirementId
+      sourceSelection.taskId !== taskId
+      || sourceSelection.requirementId !== requirementId
       || sourceSelection.sourceIdentity !== effectiveSourceIdentity
       || sourceSelection.sourceOccurrence !== effectiveSourceOccurrence
     ) {
       setSourceSelection({
+        taskId,
         requirementId,
         sourceIdentity: effectiveSourceIdentity,
         sourceOccurrence: effectiveSourceOccurrence
@@ -81,6 +89,8 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
     effectiveSourceIdentity,
     effectiveSourceOccurrence,
     requirementId,
+    taskId,
+    sourceSelection.taskId,
     sourceSelection.requirementId,
     sourceSelection.sourceIdentity,
     sourceSelection.sourceOccurrence
@@ -113,6 +123,7 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
               disabled={effectiveSourceIndex === 0}
               onClick={() => selectSource(
                 effectiveSourceIndex - 1,
+                taskId,
                 requirementId,
                 sources,
                 setSourceSelection
@@ -128,6 +139,7 @@ function SourceViewer({ taskId, requirement, blocks, blocksError }: SourceViewer
               disabled={effectiveSourceIndex >= sources.length - 1}
               onClick={() => selectSource(
                 effectiveSourceIndex + 1,
+                taskId,
                 requirementId,
                 sources,
                 setSourceSelection
@@ -314,6 +326,7 @@ function SourceItem({ label, value }: { label: string; value: string }) {
 
 function selectSource(
   index: number,
+  taskId: string | null,
   requirementId: string | null,
   sources: SourceSpan[],
   setSelection: (selection: SourceSelection) => void
@@ -323,6 +336,7 @@ function selectSource(
     return
   }
   setSelection({
+    taskId,
     requirementId,
     ...selection
   })
@@ -331,7 +345,7 @@ function selectSource(
 function sourceSelectionAt(
   sources: SourceSpan[],
   index: number
-): Omit<SourceSelection, 'requirementId'> | null {
+): Pick<SourceSelection, 'sourceIdentity' | 'sourceOccurrence'> | null {
   const source = sources[index]
   if (!source) {
     return null
@@ -339,7 +353,7 @@ function sourceSelectionAt(
   const sourceIdentity = sourceSelectionIdentity(source)
   let sourceOccurrence = 0
   for (let current = 0; current < index; current += 1) {
-    if (sourceSelectionIdentity(sources[current]) === sourceIdentity) {
+    if (sourceSelectionIdentities(sources[current]).includes(sourceIdentity)) {
       sourceOccurrence += 1
     }
   }
@@ -353,7 +367,7 @@ function findSourceSelectionIndex(
 ): number {
   let currentOccurrence = 0
   for (let index = 0; index < sources.length; index += 1) {
-    if (sourceSelectionIdentity(sources[index]) !== sourceIdentity) {
+    if (!sourceSelectionIdentities(sources[index]).includes(sourceIdentity)) {
       continue
     }
     if (currentOccurrence === sourceOccurrence) {
@@ -365,10 +379,10 @@ function findSourceSelectionIndex(
 }
 
 function sourceSelectionIdentity(source: SourceSpan): string {
-  if (source.source_evidence_key) {
-    return source.source_evidence_key
-  }
+  return sourceSelectionIdentities(source)[0]
+}
 
+function sourceSelectionIdentities(source: SourceSpan): string[] {
   const canonicalBase = [
     source.document_id,
     source.block_id,
@@ -376,24 +390,28 @@ function sourceSelectionIdentity(source: SourceSpan): string {
   ]
   const canonicalCellIds = source.canonical_source_cell_ids ?? []
   const rawCellIds = source.source_cell_ids_raw ?? []
+  const identities: string[] = []
+  if (source.source_evidence_key) {
+    identities.push(source.source_evidence_key)
+  }
   if (canonicalCellIds.length > 0) {
-    return JSON.stringify([
+    identities.push(JSON.stringify([
       ...canonicalBase,
       'canonical_cells',
       source.source_table_row_index ?? null,
       canonicalCellIds
-    ])
+    ]))
   }
   if (rawCellIds.length > 0) {
-    return JSON.stringify([
+    identities.push(JSON.stringify([
       ...canonicalBase,
       'raw_cells',
       source.source_table_row_index ?? null,
       rawCellIds
-    ])
+    ]))
   }
   if (source.table_locator) {
-    return JSON.stringify([
+    identities.push(JSON.stringify([
       ...canonicalBase,
       'table_locator',
       [
@@ -403,14 +421,15 @@ function sourceSelectionIdentity(source: SourceSpan): string {
         source.table_locator.row_indices,
         source.table_locator.column_indices
       ]
-    ])
+    ]))
   }
-  return JSON.stringify([
+  identities.push(JSON.stringify([
     ...canonicalBase,
     'text_occurrence',
     source.text_locator?.start ?? null,
     source.text_locator?.end ?? null
-  ])
+  ]))
+  return [...new Set(identities)]
 }
 
 function getPageRegionStatus(

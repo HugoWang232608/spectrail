@@ -232,6 +232,37 @@ describe('SourceViewer', () => {
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('isolates duplicate source selection between tasks', () => {
+    const block = makeBlock('blk_cross_task', 'Cross-task evidence')
+    const source = locatedSource(block, block.text)
+    const requirement = makeRequirement('req_shared_task_id', [source, { ...source }])
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={requirement}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+
+    rerender(
+      <SourceViewer
+        taskId="task-2"
+        requirement={requirement}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement).disabled).toBe(
+      true
+    )
+  })
+
   it('keeps a legacy table-cell source selected across reorder', () => {
     const block = makeBlock('blk_legacy_table', 'Shared table quote')
     const textSource = locatedSource(block, block.text)
@@ -417,6 +448,53 @@ describe('SourceViewer', () => {
           {
             ...cellBSource,
             source_cell_ids_raw: ['cell_00000001_r0001_c0002']
+          }
+        ])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+  })
+
+  it('migrates a selected raw-only source to canonical cell identity', () => {
+    const block = makeBlock('blk_raw_to_canonical', 'Raw to canonical quote')
+    const textSource = locatedSource(block, block.text)
+    const rawASource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_alias_a'],
+      source_table_row_index: 1,
+      locator_score: 0.1
+    })
+    const rawBSource = makeSource({
+      ...textSource,
+      source_cell_ids_raw: ['raw_alias_b'],
+      source_table_row_index: 1,
+      locator_score: 0.2
+    })
+    const requirementId = 'req_raw_to_canonical'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [rawASource, rawBSource])}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, [
+          rawASource,
+          {
+            ...rawBSource,
+            canonical_source_cell_ids: ['cell_00000001_r0001_c0002']
           }
         ])}
         blocks={[block]}

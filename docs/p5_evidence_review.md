@@ -91,8 +91,9 @@ their block, text range, and quote so a failed same-page source cannot poison
 the next source.
 
 Source selection itself uses the same stable identity plus its occurrence
-ordinal instead of a numeric list index. The initially displayed source is
-committed to that selection state even before the reviewer navigates.
+ordinal instead of a numeric list index, and the selection context is scoped by
+both task ID and requirement ID. The initially displayed source is committed to
+that selection state even before the reviewer navigates.
 Reordering therefore preserves the current source, exact duplicate sources
 remain individually selectable, and removal or replacement synchronously falls
 back to the first remaining source without an intermediate `No source` render.
@@ -107,11 +108,13 @@ source_evidence_key
   -> document + block + quote + text occurrence range
 ```
 
-Raw aliases and derived `TableLocator` fields are excluded whenever canonical
-cell IDs exist. Adding a locator or normalizing raw aliases therefore cannot
-change the identity of an already canonicalized source. Table sources with
-identical text but different structured cells remain stable across both reorder
-and enrichment lifecycle transitions.
+The first available identity in that order is the primary selection key. Lower
+priority identities remain matching aliases, allowing an existing raw-only
+selection to migrate to canonical cells or a final `source_evidence_key`
+without losing its occurrence. Raw aliases and derived `TableLocator` fields
+never replace an existing canonical primary identity. Table sources with
+identical text but different structured cells remain stable across reorder,
+enrichment lifecycle transitions, and task switches.
 
 The page image and red bbox are rendered only when the `page_region` capability
 status is `PASS`. A legacy, edited, or migrated source with an invalid or

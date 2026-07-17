@@ -380,11 +380,15 @@ Merged, incomplete, or physically invalid PDF grids are not guessed. Their
 ordinary PDF text blocks remain available, a
 `PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the reason, and no
 `TableRecord` or available `table_cell` capability is exposed. The rejected
-candidate bbox is retained long enough to mark overlapping fallback blocks
-with expected capabilities `text_range + page_region + table_cell`, while
-available capabilities remain `text_range + page_region`. Consequently,
-`structured_if_available` preserves the source with
-`table_cell=WARNING_UNAVAILABLE`, whereas `structured_required` rejects it.
+candidate bbox is retained long enough to mark a fallback block when at least
+80% of that block lies in the table region or any of its text-fragment centers
+lies inside the region. The fragment rule safely covers mixed blocks that
+contain both a table row and adjacent prose without widening the association
+to nearby captions or geometry-free text. Associated blocks expect
+`text_range + page_region + table_cell`, while available capabilities remain
+`text_range + page_region`. Consequently, `structured_if_available` preserves
+the source with `table_cell=WARNING_UNAVAILABLE`, whereas
+`structured_required` rejects it.
 
 The checked-in `pdf_table_requirements.pdf` fixture runs through prompt cell
 mapping, source identity canonicalization, quote matching, enrichment, quote

@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.13"
+    assert parsed.parser_identity.parser_version == "2.14"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -676,6 +676,138 @@ def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
     )
 
 
+def test_pdf_v2_rejected_table_marks_only_related_mixed_page_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def span(
+        text: str,
+        bbox: tuple[float, float, float, float] | None,
+    ) -> dict:
+        return {
+            "text": text,
+            "bbox": bbox,
+            "size": 11,
+            "flags": 0,
+        }
+
+    raw_blocks = [
+        {
+            "type": 0,
+            "lines": [{"spans": [span("Table title", (60, 20, 140, 35))]}],
+        },
+        {
+            "type": 0,
+            "lines": [{"spans": [span("Inside table", (60, 60, 140, 75))]}],
+        },
+        {
+            "type": 0,
+            "lines": [
+                {
+                    "spans": [
+                        span("Table tail", (60, 130, 140, 145)),
+                        span("Outside explanation", (310, 130, 390, 145)),
+                    ]
+                }
+            ],
+        },
+        {
+            "type": 0,
+            "lines": [
+                {"spans": [span("Adjacent caption", (60, 160, 180, 175))]}
+            ],
+        },
+        {
+            "type": 0,
+            "lines": [{"spans": [span("Geometry unavailable", None)]}],
+        },
+    ]
+    raw_table = SimpleNamespace(
+        row_count=1,
+        col_count=2,
+        bbox=(50.0, 50.0, 300.0, 150.0),
+        rows=[
+            SimpleNamespace(
+                cells=[
+                    (50.0, 50.0, 175.0, 150.0),
+                    None,
+                ]
+            )
+        ],
+        extract=lambda: [["A", "B"]],
+        header=SimpleNamespace(names=["A", "B"], external=False),
+    )
+
+    class FakePage:
+        rect = SimpleNamespace(width=400.0, height=300.0)
+        rotation = 0
+        rotation_matrix = fitz.Matrix(1, 0, 0, 1, 0, 0)
+
+        def get_text(self, *args, **kwargs):
+            return {"blocks": raw_blocks}
+
+        def find_tables(self, **kwargs):
+            return SimpleNamespace(tables=[raw_table])
+
+    class FakeDocument:
+        def __iter__(self):
+            return iter([FakePage()])
+
+        def close(self):
+            return None
+
+    source_path = tmp_path / "mixed-rejected-table.pdf"
+    source_path.write_bytes(b"%PDF-1.7 mixed-page test fixture")
+    monkeypatch.setattr(fitz, "open", lambda *args, **kwargs: FakeDocument())
+
+    parsed = PdfParserV2().parse(source_path)
+    index = parsed.evidence_index
+    assert index is not None
+    evidence_by_text = {
+        block.text: next(
+            evidence
+            for evidence in index.blocks
+            if evidence.block_id == block.block_id
+        )
+        for block in parsed.blocks
+    }
+    blocks_by_text = {block.text: block for block in parsed.blocks}
+
+    for text in ("Inside table", "Table tail Outside explanation"):
+        assert evidence_by_text[text].expected_capabilities == [
+            "text_range",
+            "page_region",
+            "table_cell",
+        ]
+        assert evidence_by_text[text].available_capabilities == [
+            "text_range",
+            "page_region",
+        ]
+        assert blocks_by_text[text].metadata["rejected_table_candidates"] == [1]
+
+    mixed_bbox = evidence_by_text["Table tail Outside explanation"].bbox
+    assert mixed_bbox is not None
+    intersection_area = (
+        (min(mixed_bbox.x1, 300.0) - max(mixed_bbox.x0, 50.0))
+        * (min(mixed_bbox.y1, 150.0) - max(mixed_bbox.y0, 50.0))
+    )
+    mixed_block_area = (
+        (mixed_bbox.x1 - mixed_bbox.x0)
+        * (mixed_bbox.y1 - mixed_bbox.y0)
+    )
+    assert intersection_area / mixed_block_area < 0.80
+
+    for text in ("Table title", "Adjacent caption", "Geometry unavailable"):
+        assert evidence_by_text[text].expected_capabilities == [
+            "text_range",
+            "page_region",
+        ]
+        assert blocks_by_text[text].metadata["rejected_table_candidates"] == []
+    assert evidence_by_text["Geometry unavailable"].available_capabilities == [
+        "text_range"
+    ]
+
+
 @pytest.mark.parametrize(
     ("table_bbox", "cell_boxes", "expected_reason"),
     [
@@ -718,6 +850,14 @@ def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
                 [(50.0, 100.0, 150.0, 150.0), (150.0, 100.0, 300.0, 150.0)],
             ],
             "column boundaries contain a gap",
+        ),
+        (
+            (50.0, 50.0, 300.0, 150.0),
+            [
+                [(50.0, 50.0, 150.0, 95.0), (150.0, 50.0, 300.0, 95.0)],
+                [(50.0, 105.0, 150.0, 150.0), (150.0, 105.0, 300.0, 150.0)],
+            ],
+            "row boundaries contain a gap",
         ),
         (
             (50.0, 50.0, 300.0, 150.0),

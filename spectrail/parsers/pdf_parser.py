@@ -472,7 +472,7 @@ def _extract_page_layout(page: object, page_index: int) -> _PageLayout:
         block.rejected_table_numbers = [
             rejected.source_table_number
             for rejected in rejected_tables
-            if _text_block_belongs_to_bbox(block, rejected.bbox)
+            if _text_block_matches_rejected_table(block, rejected.bbox)
         ]
     if projected_tables:
         blocks = [
@@ -858,6 +858,19 @@ def _text_block_belongs_to_table(
     table: _ProjectedPdfTable,
 ) -> bool:
     return _text_block_belongs_to_bbox(block, table.bbox)
+
+
+def _text_block_matches_rejected_table(
+    block: _PageTextBlock,
+    bbox: BoundingBox,
+) -> bool:
+    if _text_block_belongs_to_bbox(block, bbox):
+        return True
+    return any(
+        bbox.x0 <= (fragment.bbox.x0 + fragment.bbox.x1) / 2 <= bbox.x1
+        and bbox.y0 <= (fragment.bbox.y0 + fragment.bbox.y1) / 2 <= bbox.y1
+        for fragment in block.fragments
+    )
 
 
 def _text_block_belongs_to_bbox(
@@ -1853,7 +1866,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.13",
+        parser_version="2.14",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -1882,7 +1895,7 @@ def _parser_identity() -> ParserIdentity:
                 "preserve_text_expected_table_cell_unavailable_v2"
             ),
             "rejected_table_region_projection": (
-                "fallback_blocks_by_80_percent_bbox_overlap_v1"
+                "block_80pct_overlap_or_fragment_center_v2"
             ),
         },
         runtime_dependencies={

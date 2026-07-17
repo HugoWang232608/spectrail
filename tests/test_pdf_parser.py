@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import fitz
 import pytest
@@ -27,6 +29,7 @@ from spectrail.parsers import pdf_parser as pdf_parser_module
 from spectrail.parsers.pdf_parser import (
     PdfParserV2,
     TextPdfParser,
+    _extract_page_tables,
     _project_text_block,
 )
 from spectrail.parsers.registry import parse_document
@@ -81,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.11"
+    assert parsed.parser_identity.parser_version == "2.12"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -457,6 +460,13 @@ def test_pdf_v2_checked_in_table_fixture_builds_structured_evidence():
     assert visual_fixture["tableEvidence"] == (
         expected_visual_projection.model_dump(mode="json")
     )
+    current_preview, _, _ = render_pdf_page(path, 1)
+    checked_preview = Path(
+        "frontend/tests/visual/fixtures/pdf-table-page.png"
+    ).read_bytes()
+    assert hashlib.sha256(checked_preview).hexdigest() == (
+        hashlib.sha256(current_preview).hexdigest()
+    )
 
 
 def test_pdf_v2_table_source_passes_structured_locator_validation():
@@ -591,6 +601,55 @@ def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
     )
 
 
+def test_pdf_v2_rejects_overlapping_physical_cell_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raw_table = SimpleNamespace(
+        row_count=2,
+        col_count=2,
+        bbox=(50.0, 50.0, 300.0, 150.0),
+        rows=[
+            SimpleNamespace(
+                cells=[
+                    (50.0, 50.0, 160.0, 100.0),
+                    (150.0, 50.0, 300.0, 100.0),
+                ]
+            ),
+            SimpleNamespace(
+                cells=[
+                    (50.0, 100.0, 150.0, 150.0),
+                    (150.0, 100.0, 300.0, 150.0),
+                ]
+            ),
+        ],
+        extract=lambda: [["A", "B"], ["C", "D"]],
+        header=SimpleNamespace(
+            names=["A", "B"],
+            external=False,
+        ),
+    )
+    monkeypatch.setattr(
+        fitz.Page,
+        "find_tables",
+        lambda self, **kwargs: SimpleNamespace(tables=[raw_table]),
+    )
+    document = fitz.open()
+    page = document.new_page(width=400, height=300)
+    projected, warnings = _extract_page_tables(
+        page,
+        page_width=400,
+        page_height=300,
+    )
+    document.close()
+
+    assert projected == []
+    assert len(warnings) == 1
+    assert warnings[0].startswith(
+        "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: table=1"
+    )
+    assert "overlap in physical PDF space" in warnings[0]
+
+
 def test_pdf_v2_groups_large_table_and_projects_header(tmp_path: Path):
     path = tmp_path / "large-table.pdf"
     document = fitz.open()
@@ -636,6 +695,108 @@ def test_pdf_v2_groups_large_table_and_projects_header(tmp_path: Path):
         "cell_00000001_r0001_c0002",
     ]
     validate_evidence_index_against_parsed_document(index, parsed)
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_v2_table_cell_union_overlays_rotated_preview_pixels(
+    tmp_path: Path,
+    rotation: int,
+):
+    path = tmp_path / f"rotated-table-{rotation}.pdf"
+    document = fitz.open()
+    page = document.new_page(width=300, height=200)
+    for x in (40, 120, 280):
+        page.draw_line((x, 50), (x, 150))
+    for y in (50, 100, 150):
+        page.draw_line((40, y), (280, y))
+    page.insert_text((50, 80), "Key")
+    page.insert_text((130, 80), "Requirement")
+    page.insert_text((50, 130), "R1")
+    page.insert_text((130, 130), "Rotated table target")
+    page.set_rotation(rotation)
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    table_block = next(block for block in parsed.blocks if block.type == "table")
+    selected_row_index = 1
+    selected_cells = sorted(
+        (
+            cell
+            for cell in index.cells
+            if cell.row_index == selected_row_index
+        ),
+        key=lambda cell: cell.column_index,
+    )
+    source_cell_ids = [
+        cell.cell_id for cell in selected_cells
+    ]
+    source_quote = table_block.text.splitlines()[0]
+    requirement = RequirementIR(
+        id=f"REQ-PDF-TABLE-{rotation}",
+        statement=source_quote,
+        sources=[
+            SourceSpan(
+                document_id=parsed.document_id,
+                block_id=table_block.block_id,
+                quote=source_quote,
+                source_cell_ids_raw=source_cell_ids,
+                canonical_source_cell_ids=source_cell_ids,
+                source_table_row_index=selected_row_index,
+            )
+        ],
+    )
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    validated, report, failures = SourceLocatorValidator().validate(
+        [requirement],
+        index,
+        registry,
+        policy="structured_required",
+        document_blocks=parsed.blocks,
+    )
+    source = requirement.sources[0]
+    assert validated == [requirement]
+    assert report.valid is True
+    assert failures == []
+    assert source.locator_status == "PASS_STRUCTURED"
+    assert source.table_locator is not None
+    assert source.table_locator.bbox is not None
+    assert source.page_locator is not None
+    assert source.page_locator.source_rotation == rotation
+    assert source.page_locator.derivation == "table_cell_union"
+    assert source.page_locator.bbox == source.table_locator.bbox
+
+    preview_png, preview_width, preview_height = render_pdf_page(path, 1)
+    pixmap = fitz.Pixmap(preview_png)
+    scale_x = preview_width / source.page_locator.page_width
+    scale_y = preview_height / source.page_locator.page_height
+    assert scale_x == pytest.approx(scale_y)
+    bbox = source.page_locator.bbox
+    tolerance = 2
+    x0 = max(0, int(bbox.x0 * scale_x) - tolerance)
+    y0 = max(0, int(bbox.y0 * scale_y) - tolerance)
+    x1 = min(pixmap.width, int(bbox.x1 * scale_x) + tolerance + 1)
+    y1 = min(pixmap.height, int(bbox.y1 * scale_y) + tolerance + 1)
+    darkest = min(
+        pixmap.samples[y * pixmap.stride + x * pixmap.n + channel]
+        for y in range(y0, y1)
+        for x in range(x0, x1)
+        for channel in range(min(3, pixmap.n))
+    )
+    assert darkest < 128
 
 
 def test_pdf_v2_keeps_text_and_downgrades_page_region_for_bad_span_bbox(

@@ -365,6 +365,14 @@ trusted table produces:
 - `text_range`, `page_region`, and `table_cell` as both expected and available
   capabilities.
 
+Physical-grid validation is independent from the logical Evidence topology
+check. With a 0.5-point boundary tolerance, every detected cell must remain
+inside the table bbox, row and column boundaries must align, adjacent cells
+must meet without a gap or area overlap, the cells must cover the table bbox,
+and every pair of non-merged cells must have no material intersection. A
+detector result that violates any of these invariants is downgraded before an
+`EvidenceIndex` can claim `topology_status="complete"`.
+
 Merged or incomplete PDF grids are not guessed. Their ordinary PDF text blocks
 remain available, a `PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the
 reason, and no `table_cell` capability is exposed.
@@ -376,6 +384,15 @@ capabilities pass, and the page locator is independently derived from the
 selected cell bbox union. The browser fixture is generated from that backend
 projection, reuses `table_evidence_view_v1`, and fixes both the real PDF page
 overlay and selected grid cells in the Playwright screenshot gate.
+
+Backend acceptance projects a real detected table at 0°, 90°, 180°, and 270°,
+derives `TableLocator` and `PageLocator(table_cell_union)`, renders the same
+preview PNG used by the API, and verifies that the selected bbox contains
+rendered pixels. The checked visual projection is compared with a freshly
+built backend projection, and the checked page PNG is byte-hash compared with
+the current public renderer output. A stale JSON or PNG fixture therefore
+fails Python acceptance before Playwright can approve an impossible or old
+browser response.
 
 ## Next acceptance steps
 

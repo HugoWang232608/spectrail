@@ -78,6 +78,8 @@ PDF_TABLE_CELL_SEPARATOR = " | "
 PDF_TABLE_ROW_SEPARATOR = "\n"
 PDF_TABLE_TEXT_BLOCK_OVERLAP_RATIO = 0.80
 PDF_TABLE_DETECTION_STRATEGY = "lines_strict"
+PDF_TABLE_GEOMETRY_TOLERANCE = 0.5
+PDF_TABLE_OVERLAP_AREA_EPSILON = 0.25
 
 
 class _PdfTableEvidenceUnavailable(ValueError):
@@ -335,6 +337,13 @@ class _ProjectedPdfTableCell:
 
 
 @dataclass(frozen=True)
+class _RawPdfTableCellGeometry:
+    row_index: int
+    column_index: int
+    bbox: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
 class _ProjectedPdfTable:
     source_table_number: int
     bbox: BoundingBox
@@ -533,13 +542,14 @@ def _project_pdf_table(
     if len(rows) != row_count or len(extracted) != row_count:
         raise _PdfTableEvidenceUnavailable("table row count is inconsistent")
 
+    raw_table_bbox = _raw_bbox(getattr(raw_table, "bbox", None))
     table_bbox = _rotated_bbox(
         page,
         getattr(raw_table, "bbox", None),
         page_width=page_width,
         page_height=page_height,
     )
-    if table_bbox is None:
+    if raw_table_bbox is None or table_bbox is None:
         raise _PdfTableEvidenceUnavailable("table bbox is unavailable")
 
     header = getattr(raw_table, "header", None)
@@ -559,6 +569,7 @@ def _project_pdf_table(
     )
 
     cells: list[_ProjectedPdfTableCell] = []
+    raw_geometry: list[_RawPdfTableCellGeometry] = []
     raw_cell_boxes: set[tuple[float, float, float, float]] = set()
     for row_index, (row, values) in enumerate(zip(rows, extracted), start=1):
         row_cells = list(getattr(row, "cells", []))
@@ -587,6 +598,13 @@ def _project_pdf_table(
                     "merged or duplicated cell geometry is not yet supported"
                 )
             raw_cell_boxes.add(normalized_raw_bbox)
+            raw_geometry.append(
+                _RawPdfTableCellGeometry(
+                    row_index=row_index,
+                    column_index=column_index,
+                    bbox=normalized_raw_bbox,
+                )
+            )
             cells.append(
                 _ProjectedPdfTableCell(
                     row_index=row_index,
@@ -599,6 +617,12 @@ def _project_pdf_table(
 
     if len(cells) != row_count * column_count:
         raise _PdfTableEvidenceUnavailable("table grid is incomplete")
+    _validate_pdf_table_geometry(
+        raw_table_bbox,
+        raw_geometry,
+        row_count=row_count,
+        column_count=column_count,
+    )
     if not any(cell.text.strip() for cell in cells):
         raise _PdfTableEvidenceUnavailable("table has no extractable cell text")
     return _ProjectedPdfTable(
@@ -608,6 +632,148 @@ def _project_pdf_table(
         column_count=column_count,
         cells=tuple(cells),
     )
+
+
+def _validate_pdf_table_geometry(
+    table_bbox: tuple[float, float, float, float],
+    cells: list[_RawPdfTableCellGeometry],
+    *,
+    row_count: int,
+    column_count: int,
+) -> None:
+    tolerance = PDF_TABLE_GEOMETRY_TOLERANCE
+    table_x0, table_y0, table_x1, table_y1 = table_bbox
+    by_position = {
+        (cell.row_index, cell.column_index): cell
+        for cell in cells
+    }
+    if len(by_position) != row_count * column_count:
+        raise _PdfTableEvidenceUnavailable(
+            "table physical cell coordinates are incomplete or duplicated"
+        )
+
+    for cell in cells:
+        x0, y0, x1, y1 = cell.bbox
+        if (
+            x0 < table_x0 - tolerance
+            or y0 < table_y0 - tolerance
+            or x1 > table_x1 + tolerance
+            or y1 > table_y1 + tolerance
+        ):
+            raise _PdfTableEvidenceUnavailable(
+                "cell bbox lies outside table bbox: "
+                f"r{cell.row_index}c{cell.column_index}"
+            )
+
+    grid_x0 = min(cell.bbox[0] for cell in cells)
+    grid_y0 = min(cell.bbox[1] for cell in cells)
+    grid_x1 = max(cell.bbox[2] for cell in cells)
+    grid_y1 = max(cell.bbox[3] for cell in cells)
+    if not all(
+        _pdf_geometry_close(actual, expected)
+        for actual, expected in (
+            (grid_x0, table_x0),
+            (grid_y0, table_y0),
+            (grid_x1, table_x1),
+            (grid_y1, table_y1),
+        )
+    ):
+        raise _PdfTableEvidenceUnavailable(
+            "cell grid does not cover the detected table bbox"
+        )
+
+    for row_index in range(1, row_count + 1):
+        row = [
+            by_position[(row_index, column_index)]
+            for column_index in range(1, column_count + 1)
+        ]
+        reference_y0, reference_y1 = row[0].bbox[1], row[0].bbox[3]
+        if any(
+            not _pdf_geometry_close(cell.bbox[1], reference_y0)
+            or not _pdf_geometry_close(cell.bbox[3], reference_y1)
+            for cell in row[1:]
+        ):
+            raise _PdfTableEvidenceUnavailable(
+                f"cell row boundaries are not aligned: row {row_index}"
+            )
+        for left, right in zip(row, row[1:]):
+            if right.bbox[0] < left.bbox[0] - tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    f"cell columns are not ordered: row {row_index}"
+                )
+            boundary_delta = right.bbox[0] - left.bbox[2]
+            if boundary_delta < -tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell bboxes overlap in physical PDF space: "
+                    f"row {row_index}, columns "
+                    f"{left.column_index}/{right.column_index}"
+                )
+            if boundary_delta > tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell column boundaries contain a gap: "
+                    f"row {row_index}, columns "
+                    f"{left.column_index}/{right.column_index}"
+                )
+
+    for column_index in range(1, column_count + 1):
+        column = [
+            by_position[(row_index, column_index)]
+            for row_index in range(1, row_count + 1)
+        ]
+        reference_x0, reference_x1 = column[0].bbox[0], column[0].bbox[2]
+        if any(
+            not _pdf_geometry_close(cell.bbox[0], reference_x0)
+            or not _pdf_geometry_close(cell.bbox[2], reference_x1)
+            for cell in column[1:]
+        ):
+            raise _PdfTableEvidenceUnavailable(
+                f"cell column boundaries are not aligned: column {column_index}"
+            )
+        for upper, lower in zip(column, column[1:]):
+            if lower.bbox[1] < upper.bbox[1] - tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    f"cell rows are not ordered: column {column_index}"
+                )
+            boundary_delta = lower.bbox[1] - upper.bbox[3]
+            if boundary_delta < -tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell bboxes overlap in physical PDF space: "
+                    f"column {column_index}, rows "
+                    f"{upper.row_index}/{lower.row_index}"
+                )
+            if boundary_delta > tolerance:
+                raise _PdfTableEvidenceUnavailable(
+                    "adjacent cell row boundaries contain a gap: "
+                    f"column {column_index}, rows "
+                    f"{upper.row_index}/{lower.row_index}"
+                )
+
+    for index, cell in enumerate(cells):
+        for following in cells[index + 1 :]:
+            overlap_x = max(
+                0.0,
+                min(cell.bbox[2], following.bbox[2])
+                - max(cell.bbox[0], following.bbox[0]),
+            )
+            overlap_y = max(
+                0.0,
+                min(cell.bbox[3], following.bbox[3])
+                - max(cell.bbox[1], following.bbox[1]),
+            )
+            adjusted_overlap_area = (
+                max(0.0, overlap_x - tolerance)
+                * max(0.0, overlap_y - tolerance)
+            )
+            if adjusted_overlap_area > PDF_TABLE_OVERLAP_AREA_EPSILON:
+                raise _PdfTableEvidenceUnavailable(
+                    "cell bboxes overlap in physical PDF space: "
+                    f"r{cell.row_index}c{cell.column_index}/"
+                    f"r{following.row_index}c{following.column_index}"
+                )
+
+
+def _pdf_geometry_close(left: float, right: float) -> bool:
+    return abs(left - right) <= PDF_TABLE_GEOMETRY_TOLERANCE
 
 
 def _table_page_block(table: _ProjectedPdfTable) -> _PageTextBlock:
@@ -1620,7 +1786,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.11",
+        parser_version="2.12",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -1634,7 +1800,10 @@ def _parser_identity() -> ParserIdentity:
             "repeated_page_edges": "preserve_stable_candidate_v1",
             "geometry_failure_policy": "text_only_block_v1",
             "table_detection": (
-                "pymupdf_find_tables_lines_strict_complete_grid_v1"
+                "pymupdf_find_tables_lines_strict_physical_grid_v2"
+            ),
+            "table_geometry_validation": (
+                "contained_aligned_complete_non_overlapping_v1"
             ),
             "table_block_mode": "complete_row_groups",
             "max_primary_rows_per_table_block": (

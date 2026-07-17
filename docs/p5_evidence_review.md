@@ -116,6 +116,13 @@ never replace an existing canonical primary identity. Table sources with
 identical text but different structured cells remain stable across reorder,
 enrichment lifecycle transitions, and task switches.
 
+Once selected, a valid final `source_evidence_key` is matched exactly. Replacing
+it with a different key denotes a new Evidence version and explicitly resets
+selection to the first source, even when a canonical alias still describes the
+same logical quote. Initial assignment of a final key remains continuous
+because the prior canonical/raw identity can match a lower-priority alias on
+the newly keyed source.
+
 Identity generation, alias matching, and occurrence resolution live in the
 pure `frontend/src/evidence/sourceSelection.ts` module. Its migration matrix is
 tested independently from SourceViewer, while component tests verify that

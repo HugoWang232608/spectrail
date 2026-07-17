@@ -67,6 +67,25 @@ describe('source selection identity', () => {
     expect(identities[0]).toBe(source.source_evidence_key)
     expect(identities).toHaveLength(4)
   })
+
+  it('does not match a replaced final evidence key through canonical aliases', () => {
+    const oldSource = makeSource({
+      canonical_source_cell_ids: ['cell_00000001_r0001_c0002'],
+      source_table_row_index: 1,
+      source_evidence_key: 'src_111111111111111111111111'
+    })
+    const oldSelection = sourceSelectionAt([oldSource], 0)
+    const newSource = {
+      ...oldSource,
+      source_evidence_key: 'src_222222222222222222222222'
+    }
+
+    expect(findSourceSelectionIndex(
+      [newSource],
+      oldSelection!.sourceIdentity,
+      oldSelection!.sourceOccurrence
+    )).toBe(-1)
+  })
 })
 
 function makeSource(overrides: Partial<SourceSpan> = {}): SourceSpan {

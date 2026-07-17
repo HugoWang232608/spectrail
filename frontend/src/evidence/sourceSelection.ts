@@ -1,5 +1,7 @@
 import type { SourceSpan } from '../api/types'
 
+const SOURCE_EVIDENCE_KEY_RE = /^src_[0-9a-f]{24}$/
+
 export type SourceIdentitySelection = {
   sourceIdentity: string
   sourceOccurrence: number
@@ -16,7 +18,7 @@ export function sourceSelectionAt(
   const sourceIdentity = sourceSelectionIdentities(source)[0]
   let sourceOccurrence = 0
   for (let current = 0; current < index; current += 1) {
-    if (sourceSelectionIdentities(sources[current]).includes(sourceIdentity)) {
+    if (sourceMatchesSelectionIdentity(sources[current], sourceIdentity)) {
       sourceOccurrence += 1
     }
   }
@@ -30,7 +32,7 @@ export function findSourceSelectionIndex(
 ): number {
   let currentOccurrence = 0
   for (let index = 0; index < sources.length; index += 1) {
-    if (!sourceSelectionIdentities(sources[index]).includes(sourceIdentity)) {
+    if (!sourceMatchesSelectionIdentity(sources[index], sourceIdentity)) {
       continue
     }
     if (currentOccurrence === sourceOccurrence) {
@@ -39,6 +41,16 @@ export function findSourceSelectionIndex(
     currentOccurrence += 1
   }
   return -1
+}
+
+function sourceMatchesSelectionIdentity(
+  source: SourceSpan,
+  sourceIdentity: string
+): boolean {
+  if (SOURCE_EVIDENCE_KEY_RE.test(sourceIdentity)) {
+    return source.source_evidence_key === sourceIdentity
+  }
+  return sourceSelectionIdentities(source).includes(sourceIdentity)
 }
 
 export function sourceSelectionIdentities(source: SourceSpan): string[] {

@@ -563,6 +563,56 @@ describe('SourceViewer', () => {
     expect(screen.getByText('2 / 2')).toBeTruthy()
   })
 
+  it('resets selection when final evidence keys are replaced', () => {
+    const block = makeBlock('blk_evidence_version', 'Evidence version quote')
+    const textSource = locatedSource(block, block.text)
+    const versionedSource = (
+      cellId: string,
+      locatorScore: number,
+      sourceEvidenceKey: string
+    ) => makeSource({
+      ...textSource,
+      canonical_source_cell_ids: [cellId],
+      source_table_row_index: 1,
+      locator_score: locatorScore,
+      source_evidence_key: sourceEvidenceKey
+    })
+    const oldSources = [
+      versionedSource('cell_00000001_r0001_c0001', 0.1, 'src_aaaaaaaaaaaaaaaaaaaaaaaa'),
+      versionedSource('cell_00000001_r0001_c0002', 0.2, 'src_bbbbbbbbbbbbbbbbbbbbbbbb'),
+      versionedSource('cell_00000001_r0001_c0003', 0.3, 'src_cccccccccccccccccccccccc')
+    ]
+    const requirementId = 'req_evidence_version'
+    const { rerender } = render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, oldSources)}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(sourceMetadataValue('Locator')).toBe('0.200')
+
+    const newSources = [
+      versionedSource('cell_00000001_r0001_c0003', 0.3, 'src_333333333333333333333333'),
+      versionedSource('cell_00000001_r0001_c0001', 0.1, 'src_111111111111111111111111'),
+      versionedSource('cell_00000001_r0001_c0002', 0.2, 'src_222222222222222222222222')
+    ]
+    rerender(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement(requirementId, newSources)}
+        blocks={[block]}
+        blocksError={null}
+      />
+    )
+
+    expect(sourceMetadataValue('Locator')).toBe('0.300')
+    expect(screen.getByText('1 / 3')).toBeTruthy()
+  })
+
   it('keeps block text unmarked when the locator belongs to another block', () => {
     const block = makeBlock('blk_current', 'Current evidence')
     const source = makeSource({

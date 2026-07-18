@@ -280,7 +280,7 @@ def test_api_table_evidence_exposes_pdf_continuation_lineage(
     )
 
 
-def test_api_rejects_legacy_pdf_continuation_before_fingerprint_validation(
+def test_task_store_rejects_legacy_pdf_continuation_before_fingerprint_validation(
     api_client: TestClient,
 ):
     task_id, parsed = _create_completed_pdf_table_task(
@@ -290,12 +290,7 @@ def test_api_rejects_legacy_pdf_continuation_before_fingerprint_validation(
     assert parsed.evidence_index is not None
     _, continued, _ = parsed.evidence_index.tables
     task_dir = api_client.app.state.task_store.get_task_dir(task_id)
-    evidence_path = task_dir / "parsed" / "evidence_index.json"
-    legacy_payload = read_json(evidence_path)
-    for table_payload in legacy_payload["tables"]:
-        table_payload.pop("continuation_basis")
-        table_payload.pop("continuation_label")
-    write_json(evidence_path, legacy_payload)
+    _write_legacy_continuation_evidence(task_dir)
     store = api_client.app.state.task_store
 
     with pytest.raises(
@@ -311,12 +306,38 @@ def test_api_rejects_legacy_pdf_continuation_before_fingerprint_validation(
             ),
         )
 
-    response = api_client.get(
-        f"/api/tasks/{task_id}/tables/{continued.table_id}"
-        f"/blocks/{continued.block_ids[0]}/evidence"
-        f"?expected_evidence_fingerprint="
-        f"{parsed.evidence_index.evidence_fingerprint}"
+
+@pytest.mark.parametrize("route", ["blocks", "table", "page-preview"])
+def test_api_source_routes_require_rebuild_for_legacy_pdf_continuation(
+    api_client: TestClient,
+    route: str,
+):
+    task_id, parsed = _create_completed_pdf_table_task(
+        api_client,
+        source=Path("tests/fixtures/pdf_table_continuation.pdf"),
     )
+    assert parsed.evidence_index is not None
+    _, continued, _ = parsed.evidence_index.tables
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    _write_legacy_continuation_evidence(task_dir)
+    fingerprint = parsed.evidence_index.evidence_fingerprint
+    if route == "blocks":
+        endpoint = _blocks_url(task_id, fingerprint)
+    elif route == "table":
+        endpoint = (
+            f"/api/tasks/{task_id}/tables/{continued.table_id}"
+            f"/blocks/{continued.block_ids[0]}/evidence"
+            f"?expected_evidence_fingerprint={fingerprint}"
+        )
+    else:
+        endpoint = _preview_url(
+            api_client,
+            task_id,
+            2,
+            expected_evidence_fingerprint=fingerprint,
+        )
+
+    response = api_client.get(endpoint)
 
     assert response.status_code == 409
     assert response.json()["detail"] == {
@@ -967,6 +988,15 @@ def _create_completed_pdf_table_task(
     )
     api_client.app.state.task_store.update_task(task_id, status="completed")
     return task_id, parsed
+
+
+def _write_legacy_continuation_evidence(task_dir: Path) -> None:
+    evidence_path = task_dir / "parsed" / "evidence_index.json"
+    legacy_payload = read_json(evidence_path)
+    for table_payload in legacy_payload["tables"]:
+        table_payload.pop("continuation_basis")
+        table_payload.pop("continuation_label")
+    write_json(evidence_path, legacy_payload)
 
 
 def _mark_repeating_header(row) -> None:

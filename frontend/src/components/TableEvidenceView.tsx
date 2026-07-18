@@ -9,6 +9,8 @@ import type {
   TableEvidenceResponse,
   TableEvidenceRow
 } from '../api/types'
+import { requiresTaskRerun } from '../evidence/evidenceRecovery'
+import EvidenceRerunRecovery from './EvidenceRerunRecovery'
 
 type TableEvidenceViewProps = {
   taskId: string
@@ -17,6 +19,8 @@ type TableEvidenceViewProps = {
   expectedEvidenceFingerprint: string | null
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
+  rerunningEvidence: boolean
+  onRerunEvidence?: () => void
 }
 
 function TableEvidenceView({
@@ -25,7 +29,9 @@ function TableEvidenceView({
   tableCellStatus,
   expectedEvidenceFingerprint,
   reloadingEvidence,
-  onReloadEvidence
+  onReloadEvidence,
+  rerunningEvidence,
+  onRerunEvidence
 }: TableEvidenceViewProps) {
   const locator = source.table_locator
   const validated = tableCellStatus === 'PASS'
@@ -126,7 +132,12 @@ function TableEvidenceView({
         <p className="muted-text" role="status">Loading table evidence…</p>
       ) : error ? (
         <div className="preview-unavailable" role="alert">
-          {error.code === 'EVIDENCE_VERSION_CHANGED' ? (
+          {requiresTaskRerun(error) ? (
+            <EvidenceRerunRecovery
+              rerunning={rerunningEvidence}
+              onRerun={onRerunEvidence}
+            />
+          ) : error.code === 'EVIDENCE_VERSION_CHANGED' ? (
             <>
               <p className="muted-text">
                 Evidence version changed. Reload ReqIR before reviewing table evidence.

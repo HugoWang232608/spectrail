@@ -19,6 +19,7 @@ jobs:
           python -m py_compile
           tests/fixtures/build_pdf_merged_table_libreoffice_fixture.py
           tests/fixtures/build_pdf_table_continuation_fixture.py
+          scripts/update_pdf_continuation_visual_fixture.py
       - name: Test fixture toolchain guards
         run: pytest tests/test_fixture_tooling.py
       - name: Verify deterministic PDF continuation fixture

@@ -13,7 +13,9 @@ import {
   sourceSelectionAt
 } from '../evidence/sourceSelection'
 import type { SourceIdentitySelection } from '../evidence/sourceSelection'
+import { requiresTaskRerun } from '../evidence/evidenceRecovery'
 import { resolveTextHighlight } from '../evidence/textHighlight'
+import EvidenceRerunRecovery from './EvidenceRerunRecovery'
 import TableEvidenceView from './TableEvidenceView'
 
 type SourceViewerProps = {
@@ -25,6 +27,8 @@ type SourceViewerProps = {
   blocksEvidenceFingerprint: string | null
   reloadingEvidence?: boolean
   onReloadEvidence?: () => void
+  rerunningEvidence?: boolean
+  onRerunEvidence?: () => void
 }
 
 type SourceSelection = {
@@ -42,7 +46,9 @@ function SourceViewer({
   evidenceFingerprint,
   blocksEvidenceFingerprint,
   reloadingEvidence = false,
-  onReloadEvidence
+  onReloadEvidence,
+  rerunningEvidence = false,
+  onRerunEvidence
 }: SourceViewerProps) {
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
     taskId: null,
@@ -214,7 +220,7 @@ function SourceViewer({
             <p>{source.quote}</p>
           </div>
 
-          {source.page_locator && taskId ? (
+          {source.page_locator && taskId && evidenceContextTrusted ? (
             <PageEvidencePreview
               key={`${taskId}:${sourcePreviewIdentity}`}
               taskId={taskId}
@@ -223,6 +229,8 @@ function SourceViewer({
               expectedEvidenceFingerprint={evidenceFingerprint ?? null}
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
+              rerunningEvidence={rerunningEvidence}
+              onRerunEvidence={onRerunEvidence}
             />
           ) : null}
 
@@ -237,6 +245,8 @@ function SourceViewer({
               expectedEvidenceFingerprint={evidenceFingerprint ?? null}
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
+              rerunningEvidence={rerunningEvidence}
+              onRerunEvidence={onRerunEvidence}
             />
           ) : null}
 
@@ -259,19 +269,28 @@ function SourceViewer({
             <h3>Block Text</h3>
             {blockContextError ? (
               <div className="block-context-unavailable" role="alert">
-                <p className="muted-text">
-                  Block context unavailable: {blockContextError.code}{' '}
-                  {blockContextError.message}
-                </p>
-                {onReloadEvidence ? (
-                  <button
-                    type="button"
-                    disabled={reloadingEvidence}
-                    onClick={onReloadEvidence}
-                  >
-                    {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
-                  </button>
-                ) : null}
+                {requiresTaskRerun(blockContextError) ? (
+                  <EvidenceRerunRecovery
+                    rerunning={rerunningEvidence}
+                    onRerun={onRerunEvidence}
+                  />
+                ) : (
+                  <>
+                    <p className="muted-text">
+                      Block context unavailable: {blockContextError.code}{' '}
+                      {blockContextError.message}
+                    </p>
+                    {onReloadEvidence ? (
+                      <button
+                        type="button"
+                        disabled={reloadingEvidence}
+                        onClick={onReloadEvidence}
+                      >
+                        {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
+                      </button>
+                    ) : null}
+                  </>
+                )}
               </div>
             ) : block ? (
               <p>{renderHighlightedBlock(block.text, source)}</p>
@@ -293,7 +312,9 @@ function PageEvidencePreview({
   pageRegionStatus,
   expectedEvidenceFingerprint,
   reloadingEvidence,
-  onReloadEvidence
+  onReloadEvidence,
+  rerunningEvidence,
+  onRerunEvidence
 }: {
   taskId: string
   source: SourceSpan
@@ -301,6 +322,8 @@ function PageEvidencePreview({
   expectedEvidenceFingerprint: string | null
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
+  rerunningEvidence: boolean
+  onRerunEvidence?: () => void
 }) {
   const locator = source.page_locator
   const [attempt, setAttempt] = useState(0)
@@ -422,29 +445,38 @@ function PageEvidencePreview({
         <p className="muted-text" role="status">Loading PDF preview…</p>
       ) : previewError ? (
         <div className="preview-unavailable" role="alert">
-          <p className="muted-text">
-            {previewError.code === 'EVIDENCE_VERSION_CHANGED'
-              ? 'Evidence version changed. Reload task evidence before reviewing this page.'
-              : `PDF preview unavailable: ${previewError.code} ${previewError.message}`}
-          </p>
-          {previewError.code === 'EVIDENCE_VERSION_CHANGED'
-            ? onReloadEvidence ? (
-                <button
-                  type="button"
-                  disabled={reloadingEvidence}
-                  onClick={onReloadEvidence}
-                >
-                  {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
-                </button>
-              ) : null
-            : (
-              <button
-                type="button"
-                onClick={() => setAttempt((current) => current + 1)}
-              >
-                Retry preview
-              </button>
-            )}
+          {requiresTaskRerun(previewError) ? (
+            <EvidenceRerunRecovery
+              rerunning={rerunningEvidence}
+              onRerun={onRerunEvidence}
+            />
+          ) : (
+            <>
+              <p className="muted-text">
+                {previewError.code === 'EVIDENCE_VERSION_CHANGED'
+                  ? 'Evidence version changed. Reload task evidence before reviewing this page.'
+                  : `PDF preview unavailable: ${previewError.code} ${previewError.message}`}
+              </p>
+              {previewError.code === 'EVIDENCE_VERSION_CHANGED'
+                ? onReloadEvidence ? (
+                    <button
+                      type="button"
+                      disabled={reloadingEvidence}
+                      onClick={onReloadEvidence}
+                    >
+                      {reloadingEvidence ? 'Reloading…' : 'Reload task evidence'}
+                    </button>
+                  ) : null
+                : (
+                    <button
+                      type="button"
+                      onClick={() => setAttempt((current) => current + 1)}
+                    >
+                      Retry preview
+                    </button>
+                  )}
+            </>
+          )}
         </div>
       ) : previewUrl ? (
         <div

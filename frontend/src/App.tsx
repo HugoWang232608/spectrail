@@ -123,6 +123,20 @@ function App() {
     })
   }
 
+  async function handleRerunEvidence() {
+    if (!task) {
+      return
+    }
+
+    await perform('run', async () => {
+      clearReviewEvidence()
+      await runTask(task.task_id)
+      const loaded = await getTask(task.task_id)
+      setTask(loaded)
+      await loadReqIRIfCompleted(loaded)
+    })
+  }
+
   async function handleReview(request: ReviewRequest) {
     if (!task) {
       return
@@ -145,6 +159,14 @@ function App() {
       setTask(loaded)
       await loadReqIRIfCompleted(loaded)
     })
+  }
+
+  function clearReviewEvidence() {
+    setReqir(null)
+    setBlocks([])
+    setBlocksEvidenceFingerprint(null)
+    setBlocksError(null)
+    setSelectedRequirementId(null)
   }
 
   async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
@@ -274,6 +296,8 @@ function App() {
                 blocksEvidenceFingerprint={blocksEvidenceFingerprint}
                 reloadingEvidence={busyAction === 'load'}
                 onReloadEvidence={() => void handleReloadEvidence()}
+                rerunningEvidence={busyAction === 'run'}
+                onRerunEvidence={() => void handleRerunEvidence()}
               />
             </div>
           </div>

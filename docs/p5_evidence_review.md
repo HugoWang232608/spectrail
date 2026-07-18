@@ -491,6 +491,10 @@ continuation marker is absent. Artifacts produced by the short-lived earlier
 geometry-only implementation are not silently migrated: loading fails with
 `EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED` before fingerprint
 verification, and the task must be rerun with the current PDF parser.
+Review recognizes that code across canonical blocks, page previews, and table
+projections. It suppresses ineffective reload/retry actions and offers one
+`Rerun task` recovery action, which clears the stale ReqIR, blocks, and source
+selection before running the pipeline and loading the rebuilt Evidence.
 
 The authored-marker v1 grammar is intentionally strict and fail-closed. It
 accepts an ASCII `Table <token>` root label plus `Table <token> (continued)`,

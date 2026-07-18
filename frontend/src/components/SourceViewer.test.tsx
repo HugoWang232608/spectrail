@@ -1166,6 +1166,120 @@ describe('SourceViewer', () => {
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
+  it('requires a task rerun when canonical blocks use legacy continuation Evidence', async () => {
+    const block = makeBlock('blk_legacy_blocks', 'Legacy block evidence')
+    const rerun = vi.fn()
+    const reload = vi.fn()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_legacy_blocks', [
+          locatedSource(block, 'Legacy')
+        ])}
+        blocks={[block]}
+        blocksError={{
+          code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+          message: 'legacy Evidence must be rebuilt'
+        }}
+        evidenceFingerprint={'a'.repeat(64)}
+        blocksEvidenceFingerprint={null}
+        onReloadEvidence={reload}
+        onRerunEvidence={rerun}
+      />
+    )
+
+    await Promise.resolve()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByText(/Evidence was produced by an older parser/)).toBeTruthy()
+    expect(screen.queryByRole('button', {
+      name: 'Reload task evidence'
+    })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun task' }))
+    expect(rerun).toHaveBeenCalledTimes(1)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('requires a task rerun instead of retrying a legacy page preview', async () => {
+    const block = makeBlock('blk_legacy_preview', 'Legacy preview evidence')
+    const rerun = vi.fn()
+    const reload = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      apiErrorResponse('EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED')
+    ))
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')]
+    })
+
+    renderViewer(
+      makeRequirement('req_legacy_preview', [source]),
+      [block],
+      'a'.repeat(64),
+      'a'.repeat(64),
+      reload,
+      rerun
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(
+      'Evidence was produced by an older parser'
+    )
+    expect(screen.queryByRole('button', { name: 'Retry preview' })).toBeNull()
+    expect(screen.queryByRole('button', {
+      name: 'Reload task evidence'
+    })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun task' }))
+    expect(rerun).toHaveBeenCalledTimes(1)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('requires a task rerun instead of retrying legacy table evidence', async () => {
+    const block = {
+      ...makeBlock(
+        'blk_legacy_table',
+        'Header | Status\nREQ-1 | Approved'
+      ),
+      type: 'table' as const
+    }
+    const rerun = vi.fn()
+    const reload = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      apiErrorResponse('EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED')
+    ))
+
+    renderViewer(
+      makeRequirement('req_legacy_table', [
+        makeTableSource(block.block_id)
+      ]),
+      [block],
+      'a'.repeat(64),
+      'a'.repeat(64),
+      reload,
+      rerun
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain(
+      'Evidence was produced by an older parser'
+    )
+    expect(screen.queryByRole('button', {
+      name: 'Retry table evidence'
+    })).toBeNull()
+    expect(screen.queryByRole('button', {
+      name: 'Reload task evidence'
+    })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun task' }))
+    expect(rerun).toHaveBeenCalledTimes(1)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
   it('withholds a preview whose response fingerprint does not match ReqIR', async () => {
     const block = makeBlock('blk_stale_preview', 'Stale preview evidence')
     const reload = vi.fn()
@@ -1250,7 +1364,8 @@ function renderViewer(
   blocks: DocumentBlock[],
   evidenceFingerprint = 'a'.repeat(64),
   blocksEvidenceFingerprint = evidenceFingerprint,
-  onReloadEvidence?: () => void
+  onReloadEvidence?: () => void,
+  onRerunEvidence?: () => void
 ) {
   return render(
     <SourceViewer
@@ -1261,6 +1376,7 @@ function renderViewer(
       evidenceFingerprint={evidenceFingerprint}
       blocksEvidenceFingerprint={blocksEvidenceFingerprint}
       onReloadEvidence={onReloadEvidence}
+      onRerunEvidence={onRerunEvidence}
     />
   )
 }
@@ -1487,6 +1603,18 @@ function tableCellResult(
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  })
+}
+
+function apiErrorResponse(code: string): Response {
+  return new Response(JSON.stringify({
+    detail: {
+      code,
+      message: 'legacy Evidence must be rebuilt'
+    }
+  }), {
+    status: 409,
     headers: { 'Content-Type': 'application/json' }
   })
 }

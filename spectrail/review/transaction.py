@@ -37,6 +37,10 @@ class ReviewTransactionRecoveryError(RuntimeError):
     pass
 
 
+class ReviewTransactionPathError(ValueError):
+    pass
+
+
 class ReviewTransactionTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -322,19 +326,24 @@ def _preparation_transaction_id(preparation: Path) -> str:
 
 
 def _review_target_relative_path(root: Path, target: Path) -> str:
-    resolved = _path_within_root(root, target)
-    relative = resolved.relative_to(root).as_posix()
+    lexical = _lexical_path_within_root(root, target)
+    _reject_symlink_path(root, lexical)
+    relative = lexical.relative_to(root).as_posix()
     if relative not in _REVIEW_TARGETS:
-        raise ValueError(f"unsupported review transaction target: {relative}")
+        raise ReviewTransactionPathError(
+            f"unsupported review transaction target: {relative}"
+        )
     return relative
 
 
 def _review_target_path(root: Path, relative: str) -> Path:
     if relative not in _REVIEW_TARGETS:
-        raise ReviewTransactionRecoveryError(
+        raise ReviewTransactionPathError(
             "review transaction target is not allowed"
         )
-    return _path_within_root(root, root / relative)
+    target = _lexical_path_within_root(root, root / relative)
+    _reject_symlink_path(root, target)
+    return target
 
 
 def _transaction_artifact_path(
@@ -362,6 +371,29 @@ def _path_within_root(root: Path, path: Path) -> Path:
             "review transaction path escapes its task directory"
         ) from exc
     return resolved_path
+
+
+def _lexical_path_within_root(root: Path, path: Path) -> Path:
+    lexical_root = Path(os.path.abspath(root))
+    lexical_path = Path(os.path.abspath(path))
+    try:
+        lexical_path.relative_to(lexical_root)
+    except ValueError as exc:
+        raise ReviewTransactionPathError(
+            "review transaction path escapes its task directory"
+        ) from exc
+    return lexical_path
+
+
+def _reject_symlink_path(root: Path, path: Path) -> None:
+    relative = path.relative_to(root)
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ReviewTransactionPathError(
+                f"review transaction path cannot contain symlinks: {relative}"
+            )
 
 
 def _write_state_atomic(

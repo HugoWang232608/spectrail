@@ -217,6 +217,14 @@ Abandoned pre-publication directories are safely removed. Successful
 `ReviewResponse` bodies return the actual `run_generation` and incremented
 `review_revision`.
 
+If publication and its immediate rollback both fail, the same review request
+returns `409 TASK_REVIEW_RECOVERY_REQUIRED` with `retryable=false`; callers do
+not need to issue a second request to discover the damaged transaction state.
+Transaction targets are lexical, fixed allowlist paths. The `review/` and
+`exports/` path chains, including the target files themselves, must not contain
+symbolic links, even when a link resolves to another location inside the same
+task directory.
+
 Downloads and auxiliary review artifacts are conditional reads as well:
 
 ```text

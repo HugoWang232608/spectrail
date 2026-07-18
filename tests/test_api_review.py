@@ -3,6 +3,7 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 
+import spectrail.api.routes.review as review_routes
 import spectrail.review.service as review_service
 import spectrail.review.transaction as review_transaction
 from spectrail.core.io import read_json, write_json
@@ -275,6 +276,129 @@ def test_task_read_rejects_invalid_review_transaction_state(
         "TASK_REVIEW_RECOVERY_REQUIRED"
     )
     assert response.json()["detail"]["retryable"] is False
+
+
+def test_api_review_maps_immediate_recovery_failure_to_structured_conflict(
+    api_client: TestClient,
+    completed_api_task: dict,
+    monkeypatch,
+):
+    task_id = completed_api_task["task_id"]
+
+    def fail_with_recovery_required(**kwargs):
+        del kwargs
+        raise review_transaction.ReviewTransactionRecoveryError(
+            "review publication failed and persistent recovery is required"
+        )
+
+    monkeypatch.setattr(
+        review_routes,
+        "apply_review_to_package",
+        fail_with_recovery_required,
+    )
+
+    response = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={
+            "requirement_id": "REQ-0001",
+            "expected_run_generation": 1,
+            "expected_review_revision": 0,
+            "action": "approve",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "TASK_REVIEW_RECOVERY_REQUIRED",
+        "message": (
+            "review publication failed and persistent recovery is required"
+        ),
+        "retryable": False,
+    }
+
+
+def test_api_review_rejects_internal_artifact_symlink(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    reqir_path = task_dir / "exports" / "reqir.json"
+    xlsx_path = task_dir / "exports" / "requirements.xlsx"
+    task_record_path = task_dir / "task.json"
+    before_reqir = reqir_path.read_bytes()
+    before_task_record = task_record_path.read_bytes()
+    xlsx_path.unlink()
+    try:
+        xlsx_path.symlink_to("../task.json")
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    response = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={
+            "requirement_id": "REQ-0001",
+            "expected_run_generation": 1,
+            "expected_review_revision": 0,
+            "action": "approve",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "REVIEW_TRANSACTION_PATH_INVALID"
+    )
+    assert response.json()["detail"]["retryable"] is False
+    assert reqir_path.read_bytes() == before_reqir
+    assert task_record_path.read_bytes() == before_task_record
+    assert xlsx_path.is_symlink()
+    assert not (task_dir / ".review_transaction").exists()
+    assert not list(task_dir.glob(".review_prepare_*"))
+
+
+def test_review_transaction_rejects_symlinked_parent_directory(
+    tmp_path,
+):
+    task_dir = tmp_path / "task"
+    real_exports = task_dir / "real_exports"
+    review_dir = task_dir / "review"
+    real_exports.mkdir(parents=True)
+    review_dir.mkdir()
+    try:
+        (task_dir / "exports").symlink_to("real_exports", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+    targets = [
+        review_dir / "review_log.json",
+        task_dir / "exports" / "reqir.json",
+        task_dir / "exports" / "requirements.xlsx",
+    ]
+    for target in targets:
+        target.write_bytes(f"old:{target.name}".encode())
+    preparation = task_dir / f".review_prepare_{'c' * 32}"
+    staged = [
+        preparation / "staged" / "review" / "review_log.json",
+        preparation / "staged" / "exports" / "reqir.json",
+        preparation / "staged" / "exports" / "requirements.xlsx",
+    ]
+    for path in staged:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"new:{path.name}".encode())
+
+    with pytest.raises(
+        review_transaction.ReviewTransactionPathError,
+        match="cannot contain symlinks",
+    ):
+        review_transaction.publish_review_transaction(
+            task_dir,
+            preparation,
+            list(zip(staged, targets, strict=True)),
+        )
+
+    assert [target.read_bytes() for target in targets] == [
+        f"old:{target.name}".encode() for target in targets
+    ]
+    assert not (task_dir / ".review_transaction").exists()
 
 
 def test_api_review_xlsx_failure_leaves_all_artifacts_unchanged(

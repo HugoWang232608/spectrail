@@ -9,6 +9,11 @@ from spectrail.review.service import (
     ReviewRevisionChangedError,
     apply_review_to_package,
 )
+from spectrail.review.transaction import (
+    REVIEW_TRANSACTION_RECOVERY_REQUIRED,
+    ReviewTransactionPathError,
+    ReviewTransactionRecoveryError,
+)
 from spectrail.task_transactions import TaskTransactionError, task_operation
 from spectrail.tasks import (
     LocalTaskStore,
@@ -53,6 +58,20 @@ def review_requirement(
         raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
     except ReviewRevisionChangedError as exc:
         raise _error(409, "REVIEW_REVISION_CHANGED", str(exc)) from exc
+    except ReviewTransactionRecoveryError as exc:
+        raise _error(
+            409,
+            REVIEW_TRANSACTION_RECOVERY_REQUIRED,
+            str(exc),
+            retryable=False,
+        ) from exc
+    except ReviewTransactionPathError as exc:
+        raise _error(
+            409,
+            "REVIEW_TRANSACTION_PATH_INVALID",
+            str(exc),
+            retryable=False,
+        ) from exc
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
     except TaskTransactionError as exc:
@@ -73,5 +92,14 @@ def review_requirement(
     }
 
 
-def _error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+def _error(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    retryable: bool | None = None,
+) -> HTTPException:
+    detail: dict[str, object] = {"code": code, "message": message}
+    if retryable is not None:
+        detail["retryable"] = retryable
+    return HTTPException(status_code=status_code, detail=detail)

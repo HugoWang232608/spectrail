@@ -146,6 +146,7 @@ class ReviewRecord(BaseModel):
 class RequirementIR(BaseModel):
     id: str
     version: int = 1
+    review_revision: int = Field(default=0, ge=0)
     title: str | None = None
     type: RequirementType = "unknown"
     ears_pattern: EARSPattern = "unknown"

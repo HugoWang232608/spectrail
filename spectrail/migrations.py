@@ -104,6 +104,20 @@ class MigrationTransactionState(BaseModel):
 def migrate_task(task_dir: str | Path) -> dict[str, Any]:
     root = Path(task_dir).resolve(strict=False)
     with task_lock(root, operation="migrate", reclaim_stale=True):
+        from spectrail.review.transaction import (
+            REVIEW_TRANSACTION_RECOVERY_REQUIRED,
+            ReviewTransactionRecoveryError,
+            cleanup_review_transaction_artifacts,
+            recover_review_transaction,
+        )
+
+        try:
+            cleanup_review_transaction_artifacts(root)
+            recover_review_transaction(root)
+        except ReviewTransactionRecoveryError as exc:
+            raise ValueError(
+                f"{REVIEW_TRANSACTION_RECOVERY_REQUIRED}: {root}; {exc}"
+            ) from exc
         _cleanup_abandoned_preparations(root)
         _recover_interrupted_migration(root)
         return _migrate_task_locked(root)

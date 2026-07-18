@@ -53,6 +53,7 @@ describe('App pipeline run reconciliation', () => {
       task_id: 'task-1',
       run_generation: 1,
       requirement_id: 'req_review',
+      review_revision: 1,
       action: 'approve',
       review_status: 'approved'
     })
@@ -72,6 +73,7 @@ describe('App pipeline run reconciliation', () => {
         expect.objectContaining({
           requirement_id: 'req_review',
           expected_run_generation: 1,
+          expected_review_revision: 0,
           action: 'approve'
         })
       )
@@ -108,6 +110,42 @@ describe('App pipeline run reconciliation', () => {
       'task-1',
       'reqir.json',
       1
+    )
+    expect(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    })).toBeTruthy()
+  })
+
+  it('rejects a stale review revision and offers to reload Evidence', async () => {
+    const response = reqirPackage('req_stale', 'Stale review evidence')
+    response.package.items[0].review_revision = 4
+    api.getTask.mockResolvedValueOnce(completedTask(1))
+    api.getReqIR.mockResolvedValueOnce(response)
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'Stale review evidence')
+    )
+    api.reviewRequirement.mockRejectedValueOnce({
+      code: 'REVIEW_REVISION_CHANGED',
+      message: 'expected requirement review revision 4, found 5'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await screen.findByText('Stale review evidence', { selector: 'mark' })
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('REVIEW_REVISION_CHANGED')
+    expect(api.reviewRequirement).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        requirement_id: 'req_stale',
+        expected_run_generation: 1,
+        expected_review_revision: 4
+      })
     )
     expect(screen.getByRole('button', {
       name: 'Reload task evidence'
@@ -679,6 +717,7 @@ function reqirPackage(
       items: [{
         id,
         version: 1,
+        review_revision: 0,
         title: statement,
         type: 'functional',
         ears_pattern: 'ubiquitous',

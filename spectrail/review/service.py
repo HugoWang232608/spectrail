@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from openpyxl import load_workbook
 from pydantic import TypeAdapter
@@ -20,10 +20,15 @@ from spectrail.core.models import ReqIRPackage, RequirementIR
 from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.review.review_log import collect_review_log
 from spectrail.review.review_state import apply_review_action
+from spectrail.review.transaction import publish_review_transaction
 from spectrail.task_transactions import task_operation, task_root_for_artifact
 
 
 ReqListAdapter = TypeAdapter(list[RequirementIR])
+
+
+class ReviewRevisionChangedError(ValueError):
+    pass
 
 
 def load_requirements(path: str | Path) -> list[RequirementIR]:
@@ -83,14 +88,14 @@ def _refresh_review_package_locked(
             "export_state": "review_snapshot",
         },
     )
-    with tempfile.TemporaryDirectory(
-        prefix=".review_prepare_",
-        dir=staging_parent,
-    ) as temporary:
-        staging_root = Path(temporary)
-        staged_review_log = staging_root / "review_log.json"
-        staged_reqir = staging_root / "reqir.json"
-        staged_xlsx = staging_root / "requirements.xlsx"
+    staging_root = staging_parent / f".review_prepare_{uuid4().hex}"
+    staging_root.mkdir()
+    try:
+        staged_review_log = staging_root / "staged" / "review" / "review_log.json"
+        staged_reqir = staging_root / "staged" / "exports" / "reqir.json"
+        staged_xlsx = (
+            staging_root / "staged" / "exports" / "requirements.xlsx"
+        )
         write_json(staged_review_log, review_log_payload)
         write_json(staged_reqir, reqir_payload)
         export_requirements_xlsx(requirements, staged_xlsx)
@@ -103,14 +108,25 @@ def _refresh_review_package_locked(
                 requirement.id for requirement in requirements
             ],
         )
-        _publish_review_artifacts(
-            staging_root=staging_root,
-            artifacts=[
-                (staged_review_log, review_log_target),
-                (staged_reqir, reqir_target),
-                (staged_xlsx, xlsx_target),
-            ],
-        )
+        artifacts = [
+            (staged_review_log, review_log_target),
+            (staged_reqir, reqir_target),
+            (staged_xlsx, xlsx_target),
+        ]
+        if task_root is None:
+            _publish_review_artifacts_in_process(
+                staging_root=staging_root,
+                artifacts=artifacts,
+            )
+        else:
+            publish_review_transaction(
+                task_root,
+                staging_root,
+                artifacts,
+            )
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
 
 
 def _validate_staged_review_artifacts(
@@ -136,7 +152,7 @@ def _validate_staged_review_artifacts(
         workbook.close()
 
 
-def _publish_review_artifacts(
+def _publish_review_artifacts_in_process(
     *,
     staging_root: Path,
     artifacts: list[tuple[Path, Path]],
@@ -204,6 +220,7 @@ def apply_review_to_package(
     xlsx_path: str | Path,
     requirement_id: str,
     action: str,
+    expected_review_revision: int | None = None,
     patch: dict[str, Any] | None = None,
     reviewer: str | None = None,
     reason: str | None = None,
@@ -216,6 +233,7 @@ def apply_review_to_package(
             xlsx_path=xlsx_path,
             requirement_id=requirement_id,
             action=action,
+            expected_review_revision=expected_review_revision,
             patch=patch,
             reviewer=reviewer,
             reason=reason,
@@ -227,6 +245,7 @@ def apply_review_to_package(
             xlsx_path=xlsx_path,
             requirement_id=requirement_id,
             action=action,
+            expected_review_revision=expected_review_revision,
             patch=patch,
             reviewer=reviewer,
             reason=reason,
@@ -239,6 +258,7 @@ def _apply_review_to_package_locked(
     xlsx_path: str | Path,
     requirement_id: str,
     action: str,
+    expected_review_revision: int | None = None,
     patch: dict[str, Any] | None = None,
     reviewer: str | None = None,
     reason: str | None = None,
@@ -248,6 +268,14 @@ def _apply_review_to_package_locked(
     target = next((req for req in requirements if req.id == requirement_id), None)
     if target is None:
         raise ValueError(f"requirement not found: {requirement_id}")
+    if (
+        expected_review_revision is not None
+        and target.review_revision != expected_review_revision
+    ):
+        raise ReviewRevisionChangedError(
+            "expected requirement review revision "
+            f"{expected_review_revision}, found {target.review_revision}"
+        )
 
     apply_review_action(
         target,

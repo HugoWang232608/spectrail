@@ -188,6 +188,7 @@ Review writes are conditional on the same snapshot:
 POST /api/tasks/{task_id}/review
 {
   "expected_run_generation": <loaded task generation>,
+  "expected_review_revision": <loaded requirement review revision>,
   "requirement_id": "...",
   "action": "approve | reject | edit | restore | request_recheck",
   ...
@@ -198,14 +199,23 @@ One outer task transaction covers the generation and readable-status checks,
 ReqIR mutation, reviewer log update, and XLSX regeneration. A concurrent rerun
 therefore returns `RUN_GENERATION_CHANGED` before any review artifact is
 written, even when the new run happens to reuse the same requirement ID.
+Each `RequirementIR` also carries a monotonically increasing
+`review_revision`. The server compares `expected_review_revision` while holding
+the same task lock and returns `REVIEW_REVISION_CHANGED` before mutation when a
+second reviewer submits an edit based on an older item snapshot.
 The three resulting artifacts are first generated in a same-filesystem staging
 directory. The staged review log and ReqIR are read back and validated, and the
-workbook must reopen with the expected sheet and row count. Only then are
-backups created and the three targets replaced. An in-process publication
-failure restores every original target; a generation or XLSX-generation
-failure occurs before publication and leaves all three target files byte-for-
-byte unchanged. Successful `ReviewResponse` bodies return the actual
-`run_generation`.
+workbook must reopen with the expected sheet and row count. Durable backups and
+a `review_transaction_v1` state are fsynced before the preparation directory is
+atomically published as `.review_transaction`. The state records
+`prepared`, `committing`, and `committed`, plus the old and new hashes of the
+fixed review target set. Every task read or write holds the task lock and first
+recovers this marker: pre-commit state rolls all targets back from immutable
+backups, while committed state verifies the new target hashes and completes
+publication. Invalid state fails closed as `TASK_REVIEW_RECOVERY_REQUIRED`.
+Abandoned pre-publication directories are safely removed. Successful
+`ReviewResponse` bodies return the actual `run_generation` and incremented
+`review_revision`.
 
 Downloads and auxiliary review artifacts are conditional reads as well:
 

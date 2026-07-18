@@ -17,10 +17,14 @@ def req(status: str = "pending") -> RequirementIR:
 def test_approve_and_reject_transitions():
     approved = apply_review_action(req(), "approve", reviewer="tester")
     assert approved.review_status == "approved"
+    assert approved.review_revision == 1
     assert approved.review_log[-1].action == "approve"
+    assert approved.review_log[-1].before["review_revision"] == 0
+    assert approved.review_log[-1].after["review_revision"] == 1
 
     rejected = apply_review_action(approved, "reject", reason="duplicate")
     assert rejected.review_status == "rejected"
+    assert rejected.review_revision == 2
     assert rejected.review_log[-1].action == "reject"
 
 

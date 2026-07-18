@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import ReviewRequest, ReviewResponse
 from spectrail.api.transaction_errors import task_transaction_http_error
-from spectrail.review.service import apply_review_to_package
+from spectrail.review.service import (
+    ReviewRevisionChangedError,
+    apply_review_to_package,
+)
 from spectrail.task_transactions import TaskTransactionError, task_operation
 from spectrail.tasks import (
     LocalTaskStore,
@@ -37,6 +40,7 @@ def review_requirement(
                 xlsx_path=task_dir / "exports" / "requirements.xlsx",
                 requirement_id=request.requirement_id,
                 action=request.action,
+                expected_review_revision=request.expected_review_revision,
                 patch=request.patch,
                 reviewer=request.reviewer,
                 reason=request.reason,
@@ -47,6 +51,8 @@ def review_requirement(
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
     except RunGenerationChangedError as exc:
         raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
+    except ReviewRevisionChangedError as exc:
+        raise _error(409, "REVIEW_REVISION_CHANGED", str(exc)) from exc
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
     except TaskTransactionError as exc:
@@ -61,6 +67,7 @@ def review_requirement(
         "task_id": task_id,
         "run_generation": run_generation,
         "requirement_id": updated.id,
+        "review_revision": updated.review_revision,
         "action": request.action,
         "review_status": updated.review_status,
     }

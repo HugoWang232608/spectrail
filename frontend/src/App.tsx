@@ -243,11 +243,19 @@ function App() {
     if (!task) {
       return
     }
+    const reviewedRequirement = reqir?.items.find(
+      (item) => item.id === request.requirement_id
+    )
+    if (!reviewedRequirement) {
+      return
+    }
 
     await perform('review', async () => {
       const reviewResponse = await reviewRequirement(task.task_id, {
         ...request,
-        expected_run_generation: task.run_generation
+        expected_run_generation: task.run_generation,
+        expected_review_revision:
+          reviewedRequirement.review_revision ?? 0
       })
       requireRunGeneration(
         reviewResponse.run_generation,
@@ -420,13 +428,13 @@ function App() {
         error={error}
         onDismiss={() => setError(null)}
         actionLabel={
-          error?.code === 'RUN_GENERATION_CHANGED'
+          errorRequiresEvidenceReload(error)
             ? 'Reload task evidence'
             : undefined
         }
         actionDisabled={busy}
         onAction={
-          error?.code === 'RUN_GENERATION_CHANGED'
+          errorRequiresEvidenceReload(error)
             ? () => void handleReloadEvidence()
             : undefined
         }
@@ -636,6 +644,13 @@ function requireRunGeneration(
       )
     } satisfies ApiError
   }
+}
+
+function errorRequiresEvidenceReload(error: ApiError | null): boolean {
+  return (
+    error?.code === 'RUN_GENERATION_CHANGED'
+    || error?.code === 'REVIEW_REVISION_CHANGED'
+  )
 }
 
 function saveDownloadedBlob(blob: Blob, filename: string): void {

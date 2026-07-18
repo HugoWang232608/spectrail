@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - POSIX
 
 TASK_TRANSACTION_LOCKED = "TASK_TRANSACTION_LOCKED"
 TASK_MIGRATION_INCOMPLETE = "TASK_MIGRATION_INCOMPLETE"
+TASK_REVIEW_RECOVERY_REQUIRED = "TASK_REVIEW_RECOVERY_REQUIRED"
 _MALFORMED_LOCK_STALE_AFTER_SECONDS = 300
 
 
@@ -118,6 +119,20 @@ def ensure_task_transaction_clean(task_dir: str | Path) -> None:
             TASK_MIGRATION_INCOMPLETE,
             f"run: spectrail migrate {root}",
         )
+    from spectrail.review.transaction import (
+        ReviewTransactionRecoveryError,
+        cleanup_review_transaction_artifacts,
+        recover_review_transaction,
+    )
+
+    try:
+        cleanup_review_transaction_artifacts(root)
+        recover_review_transaction(root)
+    except ReviewTransactionRecoveryError as exc:
+        raise TaskTransactionError(
+            TASK_REVIEW_RECOVERY_REQUIRED,
+            f"{root}; {exc}",
+        ) from exc
 
 
 def task_root_for_artifact(path: str | Path) -> Path | None:
@@ -129,6 +144,7 @@ def task_root_for_artifact(path: str | Path) -> Path | None:
                 "run_manifest.json",
                 "task.json",
                 ".migration_tmp",
+                ".review_transaction",
                 ".task.lock",
                 ".task.lock.guard",
             )

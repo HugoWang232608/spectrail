@@ -54,6 +54,7 @@ def apply_review_action(
     else:
         raise ValueError(f"unknown review action: {action}")
 
+    requirement.review_revision += 1
     after = requirement.model_dump(mode="json")
     record = ReviewRecord(
         action=action,  # type: ignore[arg-type]

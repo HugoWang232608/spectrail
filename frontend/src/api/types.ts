@@ -215,6 +215,7 @@ export type ReviewRecord = {
 export type RequirementIR = {
   id: string
   version: number
+  review_revision?: number
   title?: string | null
   type: string
   ears_pattern: string
@@ -286,12 +287,14 @@ export type ReviewActionRequest = {
 
 export type ReviewRequest = ReviewActionRequest & {
   expected_run_generation: number
+  expected_review_revision: number
 }
 
 export type ReviewResponse = {
   task_id: string
   run_generation: number
   requirement_id: string
+  review_revision: number
   action: string
   review_status: ReviewStatus
 }

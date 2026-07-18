@@ -1,8 +1,16 @@
+import shutil
+
 import pytest
 from fastapi.testclient import TestClient
 
 import spectrail.review.service as review_service
-from spectrail.core.io import read_json
+import spectrail.review.transaction as review_transaction
+from spectrail.core.io import read_json, write_json
+from spectrail.evidence.fingerprint import sha256_bytes, sha256_file
+from spectrail.review.transaction import (
+    ReviewTransactionState,
+    ReviewTransactionTarget,
+)
 
 
 def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_api_task: dict):
@@ -13,12 +21,14 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0001",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "approve",
             "reviewer": "local",
         },
     )
     assert approved.status_code == 200
     assert approved.json()["run_generation"] == 1
+    assert approved.json()["review_revision"] == 1
     assert approved.json()["review_status"] == "approved"
 
     edited_tags = api_client.post(
@@ -26,6 +36,7 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0001",
             "expected_run_generation": 1,
+            "expected_review_revision": 1,
             "action": "edit",
             "patch": {"tags": ["user-management", "reviewed"]},
             "reviewer": "local",
@@ -39,6 +50,7 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0003",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "edit",
             "patch": {"statement": "系统应记录完整的用户账号状态变更审计信息。"},
             "reviewer": "local",
@@ -52,6 +64,7 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0002",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "reject",
             "reviewer": "local",
         },
@@ -64,6 +77,7 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0002",
             "expected_run_generation": 1,
+            "expected_review_revision": 1,
             "action": "approve",
             "reviewer": "local",
         },
@@ -76,6 +90,7 @@ def test_api_review_actions_refresh_outputs(api_client: TestClient, completed_ap
         json={
             "requirement_id": "REQ-0002",
             "expected_run_generation": 1,
+            "expected_review_revision": 1,
             "action": "restore",
             "reviewer": "local",
         },
@@ -96,6 +111,7 @@ def test_api_review_rejects_unsupported_patch(api_client: TestClient, completed_
         json={
             "requirement_id": "REQ-0001",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "edit",
             "patch": {"sources": []},
         },
@@ -128,6 +144,7 @@ def test_api_review_rejects_stale_generation_without_writing_artifacts(
         json={
             "requirement_id": "REQ-0001",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "approve",
             "reviewer": "stale-client",
         },
@@ -139,6 +156,125 @@ def test_api_review_rejects_stale_generation_without_writing_artifacts(
         path: path.read_bytes() if path.exists() else None
         for path in artifact_paths
     } == before
+
+
+def test_api_review_rejects_stale_item_revision_without_writing_artifacts(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    accepted = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={
+            "requirement_id": "REQ-0001",
+            "expected_run_generation": 1,
+            "expected_review_revision": 0,
+            "action": "edit",
+            "patch": {"tags": ["security"]},
+            "reviewer": "client-a",
+        },
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["review_revision"] == 1
+    artifact_paths = [
+        task_dir / "exports" / "reqir.json",
+        task_dir / "exports" / "requirements.xlsx",
+        task_dir / "review" / "review_log.json",
+    ]
+    before = {path: path.read_bytes() for path in artifact_paths}
+
+    stale = api_client.post(
+        f"/api/tasks/{task_id}/review",
+        json={
+            "requirement_id": "REQ-0001",
+            "expected_run_generation": 1,
+            "expected_review_revision": 0,
+            "action": "edit",
+            "patch": {"tags": ["backend"]},
+            "reviewer": "client-b",
+        },
+    )
+
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "REVIEW_REVISION_CHANGED"
+    assert {path: path.read_bytes() for path in artifact_paths} == before
+
+
+def test_task_read_recovers_interrupted_review_publication(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    relative_targets = [
+        "review/review_log.json",
+        "exports/reqir.json",
+        "exports/requirements.xlsx",
+    ]
+    before = {
+        relative: (task_dir / relative).read_bytes()
+        for relative in relative_targets
+    }
+    transaction_id = "a" * 32
+    marker = task_dir / ".review_transaction"
+    targets = []
+    for relative in relative_targets:
+        target = task_dir / relative
+        backup = marker / "backup" / relative
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup)
+        targets.append(
+            ReviewTransactionTarget(
+                path=relative,
+                existed=True,
+                old_sha256=sha256_file(target),
+                new_sha256=sha256_bytes(f"new:{relative}".encode()),
+            )
+        )
+    write_json(
+        marker / "transaction.json",
+        ReviewTransactionState(
+            schema_version="review_transaction_v1",
+            transaction_id=transaction_id,
+            status="committing",
+            targets=targets,
+        ).model_dump(mode="json"),
+    )
+    (task_dir / relative_targets[0]).write_bytes(b"partially published review")
+    abandoned = task_dir / f".review_prepare_{'b' * 32}"
+    abandoned.mkdir()
+    (abandoned / "staged-sensitive-data").write_text("stale")
+
+    response = api_client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 200
+    assert {
+        relative: (task_dir / relative).read_bytes()
+        for relative in relative_targets
+    } == before
+    assert not marker.exists()
+    assert not abandoned.exists()
+
+
+def test_task_read_rejects_invalid_review_transaction_state(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    write_json(
+        task_dir / ".review_transaction" / "transaction.json",
+        {"schema_version": "review_transaction_v1", "targets": []},
+    )
+
+    response = api_client.get(f"/api/tasks/{task_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "TASK_REVIEW_RECOVERY_REQUIRED"
+    )
+    assert response.json()["detail"]["retryable"] is False
 
 
 def test_api_review_xlsx_failure_leaves_all_artifacts_unchanged(
@@ -177,6 +313,7 @@ def test_api_review_xlsx_failure_leaves_all_artifacts_unchanged(
             json={
                 "requirement_id": "REQ-0001",
                 "expected_run_generation": 1,
+                "expected_review_revision": 0,
                 "action": "approve",
                 "reviewer": "failure-injection",
             },
@@ -205,7 +342,7 @@ def test_api_review_publication_failure_rolls_back_all_artifacts(
         path: path.read_bytes() if path.exists() else None
         for path in artifact_paths
     }
-    real_replace = review_service.os.replace
+    real_replace = review_transaction.os.replace
     failure_injected = False
 
     def fail_second_publication(source, target):
@@ -214,13 +351,17 @@ def test_api_review_publication_failure_rolls_back_all_artifacts(
         if (
             not failure_injected
             and source_path.name == "reqir.json"
-            and source_path.parent.name.startswith(".review_prepare_")
+            and ".review_transaction" in source_path.parts
         ):
             failure_injected = True
             raise OSError("injected review publication failure")
         return real_replace(source, target)
 
-    monkeypatch.setattr(review_service.os, "replace", fail_second_publication)
+    monkeypatch.setattr(
+        review_transaction.os,
+        "replace",
+        fail_second_publication,
+    )
 
     with pytest.raises(
         OSError,
@@ -231,6 +372,7 @@ def test_api_review_publication_failure_rolls_back_all_artifacts(
             json={
                 "requirement_id": "REQ-0001",
                 "expected_run_generation": 1,
+                "expected_review_revision": 0,
                 "action": "approve",
                 "reviewer": "failure-injection",
             },

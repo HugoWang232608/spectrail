@@ -207,6 +207,7 @@ def test_completed_with_warnings_remains_readable_reviewable_and_exportable(
         json={
             "requirement_id": requirement_id,
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "approve",
         },
     )
@@ -250,6 +251,7 @@ def test_api_reads_and_writes_reject_incomplete_migration(
             json={
                 "requirement_id": "REQ-0001",
                 "expected_run_generation": 1,
+                "expected_review_revision": 0,
                 "action": "approve",
             },
         ),
@@ -275,6 +277,7 @@ def test_api_distinguishes_active_task_lock_from_incomplete_migration(
                 json={
                     "requirement_id": "REQ-0001",
                     "expected_run_generation": 1,
+                    "expected_review_revision": 0,
                     "action": "approve",
                 },
             ),
@@ -363,6 +366,7 @@ def test_review_race_preserves_transaction_error_code(
         json={
             "requirement_id": "REQ-0001",
             "expected_run_generation": 1,
+            "expected_review_revision": 0,
             "action": "approve",
         },
     )

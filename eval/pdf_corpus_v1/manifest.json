@@ -3,18 +3,28 @@
   "name": "SpecTrail real-world PDF corpus v1",
   "metadata": {
     "annotation_policy": "selected source observations plus exhaustive page-level heading sets",
-    "core_target": "4-6 checked-in, redistribution-reviewed PDFs",
+    "core_target": "4-6 checked-in PDFs with a separately gated reviewed-redistribution count",
     "extended_target": "8-12 provenance-locked PDFs",
     "trust_policy": "abstention is acceptable; unsupported structure must not become trusted Evidence"
   },
   "thresholds": {
     "case_pass_rate_min": 1.0,
+    "case_evaluated_count_min": 5,
+    "producer_family_count_min": 4,
+    "external_document_case_count_min": 2,
+    "redistribution_reviewed_case_count_min": 4,
     "gate_observation_pass_rate_min": 1.0,
-    "gate_observation_evaluated_count_min": 5,
+    "gate_observation_evaluated_count_min": 20,
     "text_source_accuracy_min": 1.0,
-    "text_source_evaluated_count_min": 5,
+    "text_source_evaluated_count_min": 10,
     "page_region_availability_rate_min": 1.0,
-    "page_region_evaluated_count_min": 5
+    "page_region_evaluated_count_min": 10,
+    "selected_table_topology_precision_min": 1.0,
+    "selected_table_topology_recall_min": 1.0,
+    "table_topology_evaluated_count_min": 7,
+    "continuation_pair_accuracy_min": 1.0,
+    "continuation_pair_evaluated_count_min": 3,
+    "continuation_false_positive_count_max": 0
   },
   "cases": [
     {
@@ -27,7 +37,12 @@
         "source_url": "https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf",
         "redistribution_status": "existing_checked_fixture_terms_unverified",
         "license_note": "Existing repository fixture; provenance is recorded, but redistribution terms have not yet been independently classified.",
-        "source_sha256": "db505b45a4771b5b4a444a6a88f48e19167fb4d0ba84058c18b6a9875aff83b0"
+        "source_sha256": "db505b45a4771b5b4a444a6a88f48e19167fb4d0ba84058c18b6a9875aff83b0",
+        "expected_pdf_metadata": {
+          "creator": "Microsoft® Word for Office 365",
+          "producer": "Microsoft® Word for Office 365",
+          "title": "Example Software Requirements Specification Document for ReqView"
+        }
       },
       "expected_parser_name": "pdf_parser_v2",
       "expected_parser_version": "2.18",
@@ -116,6 +131,304 @@
           "page": 1,
           "expected_headings": [],
           "notes": "The date currently exposes a known heading false positive and intentionally remains report-only."
+        }
+      ]
+    },
+    {
+      "case_id": "booktabs_pdftex_manual",
+      "document": "../../tests/fixtures/pdf_corpus_booktabs.pdf",
+      "tier": "core",
+      "source": {
+        "provenance": "external_document",
+        "producer_family": "pdfTeX",
+        "source_url": "https://mirrors.ctan.org/macros/latex/contrib/booktabs/booktabs.pdf",
+        "redistribution_status": "redistribution_permitted",
+        "license_note": "CTAN identifies booktabs 1.61803398 as LPPL 1.3c; the checked PDF is the unmodified package documentation produced by pdfLaTeX.",
+        "source_sha256": "7052d0760750c97a9fa3ae6e00942768a809f84a05466d36dc9e38f906d98dfe",
+        "expected_pdf_metadata": {
+          "creator": "TeX",
+          "producer": "pdfTeX-1.40.20"
+        }
+      },
+      "expected_parser_name": "pdf_parser_v2",
+      "expected_parser_version": "2.18",
+      "expected_evidence_fingerprint": "d03739e3301c1032ce3550a1605e00815f12ccb7482395f5c76a880d5075a438",
+      "observations": [
+        {
+          "observation_id": "abstract-source",
+          "kind": "text_source",
+          "quote": "This article describes some additional commands to enhance the quality of tables in LATEX.",
+          "page": 1,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "Abstract"
+          ]
+        },
+        {
+          "observation_id": "bordered-table-source",
+          "kind": "text_source",
+          "quote": "gnats | gram $13.65",
+          "page": 2,
+          "expected_block_type": "table",
+          "expected_section_path": [
+            "Abstract"
+          ],
+          "required_expected_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ],
+          "required_available_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ]
+        },
+        {
+          "observation_id": "bordered-table-topology",
+          "kind": "table_page",
+          "page": 2,
+          "expected_tables": [
+            {
+              "row_count": 5,
+              "column_count": 4,
+              "topology_status": "complete",
+              "continuation_role": "single"
+            }
+          ]
+        },
+        {
+          "observation_id": "numeric-headings-page-3",
+          "kind": "heading_page",
+          "gate": false,
+          "page": 3,
+          "expected_headings": [
+            "1.1 A note on terminology",
+            "2 The layout of formal tables"
+          ],
+          "notes": "Report-only baseline: pdfTeX separates the heading number and title in the current span layout."
+        }
+      ]
+    },
+    {
+      "case_id": "libreoffice_merged_tables",
+      "document": "../../tests/fixtures/pdf_table_merged_libreoffice.pdf",
+      "tier": "core",
+      "source": {
+        "provenance": "project_fixture",
+        "producer_family": "LibreOffice",
+        "redistribution_status": "redistribution_permitted",
+        "license_note": "Project-authored Apache-2.0 fixture generated through LibreOffice; the locked toolchain is recorded in pdf_table_merged_libreoffice.manifest.json.",
+        "source_sha256": "1f1979f0625ed797ed346a513ac45f0c0e8c3b4295ac6a81404039b8df6c3e9d",
+        "expected_pdf_metadata": {
+          "creator": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5",
+          "producer": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5; metadata normalized by pypdf",
+          "title": "SpecTrail LibreOffice merged PDF table corpus"
+        }
+      },
+      "expected_parser_name": "pdf_parser_v2",
+      "expected_parser_version": "2.18",
+      "expected_evidence_fingerprint": "00205d9f82fffa5e86907aff6f3ccc7ca433793660e841fecff9eab8ce570738",
+      "observations": [
+        {
+          "observation_id": "horizontal-merge-topology",
+          "kind": "table_page",
+          "page": 1,
+          "expected_tables": [
+            {
+              "row_count": 2,
+              "column_count": 2,
+              "topology_status": "complete",
+              "continuation_role": "single"
+            }
+          ]
+        },
+        {
+          "observation_id": "vertical-merge-topology",
+          "kind": "table_page",
+          "page": 2,
+          "expected_tables": [
+            {
+              "row_count": 2,
+              "column_count": 2,
+              "topology_status": "complete",
+              "continuation_role": "single"
+            }
+          ]
+        },
+        {
+          "observation_id": "row-span-source",
+          "kind": "text_source",
+          "quote": "LO shared control | LO second state",
+          "page": 2,
+          "expected_block_type": "table",
+          "expected_section_path": [],
+          "required_expected_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ],
+          "required_available_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ]
+        },
+        {
+          "observation_id": "adjacent-isomorphic-tables-remain-independent",
+          "kind": "continuation_pair",
+          "root_page": 1,
+          "continued_page": 2,
+          "expected_linked": false,
+          "notes": "Two adjacent 2x2 tables without authored continuation markers must not acquire lineage."
+        }
+      ]
+    },
+    {
+      "case_id": "reportlab_simple_table",
+      "document": "../../tests/fixtures/pdf_table_requirements.pdf",
+      "tier": "core",
+      "source": {
+        "provenance": "project_fixture",
+        "producer_family": "ReportLab",
+        "redistribution_status": "redistribution_permitted",
+        "license_note": "Project-authored Apache-2.0 deterministic simple-table fixture.",
+        "source_sha256": "9afb9da02d86b91fec786aaa42172de8d6f2ba0bec9b0c8ccff3ccb985567e81",
+        "expected_pdf_metadata": {
+          "creator": "anonymous",
+          "producer": "ReportLab PDF Library - (opensource)",
+          "title": "SpecTrail PDF table evidence fixture"
+        }
+      },
+      "expected_parser_name": "pdf_parser_v2",
+      "expected_parser_version": "2.18",
+      "expected_evidence_fingerprint": "4362ff3bc2b26002a2222c30ee99726e8eabd24428a5df243a75a69c26268833",
+      "observations": [
+        {
+          "observation_id": "requirements-table-topology",
+          "kind": "table_page",
+          "page": 1,
+          "expected_tables": [
+            {
+              "row_count": 3,
+              "column_count": 3,
+              "topology_status": "complete",
+              "continuation_role": "single"
+            }
+          ]
+        },
+        {
+          "observation_id": "requirements-table-source",
+          "kind": "text_source",
+          "quote": "REQ-001 | Approved within 2 seconds | Safety",
+          "page": 1,
+          "expected_block_type": "table",
+          "expected_section_path": [
+            "M5 PDF Table Evidence"
+          ],
+          "required_expected_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ],
+          "required_available_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "reportlab_authored_continuation",
+      "document": "../../tests/fixtures/pdf_table_continuation.pdf",
+      "tier": "core",
+      "source": {
+        "provenance": "project_fixture",
+        "producer_family": "ReportLab",
+        "redistribution_status": "redistribution_permitted",
+        "license_note": "Project-authored Apache-2.0 deterministic authored-continuation fixture.",
+        "source_sha256": "76232e9019b9f95c6c6a12a8814387de20e7411d56ed435c7e1b0b6179de4e8f",
+        "expected_pdf_metadata": {
+          "creator": "anonymous",
+          "producer": "ReportLab PDF Library - (opensource)",
+          "title": "SpecTrail multi-page PDF table continuation"
+        }
+      },
+      "expected_parser_name": "pdf_parser_v2",
+      "expected_parser_version": "2.18",
+      "expected_evidence_fingerprint": "dd80b110b972295757855b7568c5d8a3ff809ff254e8a4490ce8902b89ab2ea8",
+      "observations": [
+        {
+          "observation_id": "root-table",
+          "kind": "table_page",
+          "page": 1,
+          "expected_tables": [
+            {
+              "row_count": 3,
+              "column_count": 2,
+              "topology_status": "complete",
+              "continuation_role": "start"
+            }
+          ]
+        },
+        {
+          "observation_id": "second-page-table",
+          "kind": "table_page",
+          "page": 2,
+          "expected_tables": [
+            {
+              "row_count": 3,
+              "column_count": 2,
+              "topology_status": "complete",
+              "continuation_role": "continuation"
+            }
+          ]
+        },
+        {
+          "observation_id": "third-page-table",
+          "kind": "table_page",
+          "page": 3,
+          "expected_tables": [
+            {
+              "row_count": 3,
+              "column_count": 2,
+              "topology_status": "complete",
+              "continuation_role": "continuation"
+            }
+          ]
+        },
+        {
+          "observation_id": "root-to-second-page-lineage",
+          "kind": "continuation_pair",
+          "root_page": 1,
+          "continued_page": 2,
+          "expected_linked": true
+        },
+        {
+          "observation_id": "root-to-third-page-lineage",
+          "kind": "continuation_pair",
+          "root_page": 1,
+          "continued_page": 3,
+          "expected_linked": true
+        },
+        {
+          "observation_id": "continued-table-source",
+          "kind": "text_source",
+          "quote": "REQ-CONT-003 | Open",
+          "page": 2,
+          "expected_block_type": "table",
+          "expected_section_path": [],
+          "required_expected_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ],
+          "required_available_capabilities": [
+            "text_range",
+            "page_region",
+            "table_cell"
+          ]
         }
       ]
     }

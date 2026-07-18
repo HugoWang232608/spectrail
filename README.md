@@ -467,8 +467,12 @@ python -m spectrail evaluate-pdf-corpus \
   --output outputs/pdf-corpus
 ```
 
-The initial seed is the externally authored Microsoft Word IEEE 29148 example
-already checked into the repository. Heading precision/recall is report-only
-while the corpus is expanded; trusted text/page observations are release
+The checked core currently contains five cases from four PDF producer families:
+Microsoft Word, pdfTeX, LibreOffice, and ReportLab. It includes two external
+documents, simple and merged tables, authored continuation, and an adjacent
+same-shape table pair that must remain independent without authored markers.
+Source bytes, PDF creator/producer metadata, parser identity, and Evidence
+fingerprints are locked. Heading precision/recall remains report-only while
+trusted text/page, table topology, and continuation precision are release
 gates. See [docs/pdf_corpus_v1.md](docs/pdf_corpus_v1.md) for the manifest
 contract, provenance policy, metrics, and expansion plan.

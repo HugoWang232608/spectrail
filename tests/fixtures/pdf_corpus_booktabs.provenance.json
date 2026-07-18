@@ -1,0 +1,20 @@
+{
+  "schema_version": "pdf_corpus_provenance_v1",
+  "fixture": "pdf_corpus_booktabs.pdf",
+  "source_url": "https://mirrors.ctan.org/macros/latex/contrib/booktabs/booktabs.pdf",
+  "catalog_url": "https://ctan.org/pkg/booktabs",
+  "downloaded_at": "2026-07-19",
+  "source_sha256": "7052d0760750c97a9fa3ae6e00942768a809f84a05466d36dc9e38f906d98dfe",
+  "package": {
+    "name": "booktabs",
+    "version": "1.61803398",
+    "license": "LPPL-1.3c",
+    "copyright": "1995-2020 Simon Fear, Danie Els"
+  },
+  "pdf_metadata": {
+    "creator": "TeX",
+    "producer": "pdfTeX-1.40.20",
+    "creation_date": "2020-01-14T14:48:06+02:00"
+  },
+  "redistribution_decision": "The unmodified documentation PDF is checked in under the package's LPPL-1.3c distribution terms."
+}

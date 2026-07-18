@@ -16,7 +16,7 @@ from spectrail.evaluation.pdf_corpus import (
 from spectrail.evidence import sha256_file
 
 
-def test_checked_pdf_corpus_seed_reports_parser_and_heading_baseline(
+def test_checked_pdf_corpus_reports_multi_producer_structural_baseline(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "pdf-corpus"
@@ -32,21 +32,36 @@ def test_checked_pdf_corpus_seed_reports_parser_and_heading_baseline(
 
     report = read_json(output / "pdf_corpus_report.json")
     assert report["passed"] is True
-    assert report["case_count"] == 1
+    assert report["case_count"] == 5
+    assert report["metrics"]["producer_family_count"] == 4
+    assert report["metrics"]["external_document_case_count"] == 2
+    assert report["metrics"]["redistribution_reviewed_case_count"] == 4
     assert report["metrics"]["text_source_accuracy"] == 1.0
     assert report["metrics"]["page_region_availability_rate"] == 1.0
+    assert report["metrics"]["selected_table_topology_precision"] == 1.0
+    assert report["metrics"]["selected_table_topology_recall"] == 1.0
+    assert report["metrics"]["continuation_pair_accuracy"] == 1.0
+    assert report["metrics"]["continuation_false_positive_count"] == 0
     assert report["metrics"]["heading_precision"] == pytest.approx(0.9)
-    assert report["metrics"]["heading_recall"] == 1.0
-    assert report["cases"][0]["actual_parser_identity"]["parser_version"] == "2.18"
+    assert report["metrics"]["heading_recall"] == pytest.approx(9 / 11)
+    word_case = next(
+        item
+        for item in report["cases"]
+        if item["case_id"] == "ieee29148_word_export"
+    )
+    assert word_case["actual_parser_identity"]["parser_version"] == "2.18"
     assert (
-        report["cases"][0]["actual_evidence_fingerprint"]
+        word_case["actual_evidence_fingerprint"]
         == "b2793917b65cd81781a3bce68f010bbc8178fb02263615acbbd5d568d6e8ce97"
+    )
+    assert word_case["actual_pdf_metadata"]["creator"] == (
+        "Microsoft® Word for Office 365"
     )
     assert read_json(output / ".spectrail-pdf-corpus-output") == (
         PDF_CORPUS_OUTPUT_MARKER_PAYLOAD
     )
 
-    observations = report["cases"][0]["observations"]
+    observations = word_case["observations"]
     decoration = next(
         item
         for item in observations
@@ -54,6 +69,20 @@ def test_checked_pdf_corpus_seed_reports_parser_and_heading_baseline(
     )
     assert decoration["gate"] is False
     assert decoration["passed"] is False
+
+    libreoffice_case = next(
+        item
+        for item in report["cases"]
+        if item["case_id"] == "libreoffice_merged_tables"
+    )
+    independence = next(
+        item
+        for item in libreoffice_case["observations"]
+        if item["observation_id"]
+        == "adjacent-isomorphic-tables-remain-independent"
+    )
+    assert independence["passed"] is True
+    assert independence["details"]["actual_linked"] is False
 
 
 def test_pdf_corpus_runner_covers_table_fallback_and_continuation_observations(
@@ -196,6 +225,74 @@ def test_pdf_corpus_identity_drift_fails_without_hiding_observations(
     assert report["cases"][0]["identity_passed"] is False
     assert "evidence_fingerprint" in report["cases"][0]["identity_issues"][0]
     assert report["cases"][0]["observations"][0]["passed"] is True
+
+
+def test_pdf_corpus_pdf_metadata_drift_fails_identity(
+    tmp_path: Path,
+) -> None:
+    source = Path("tests/fixtures/pdf_table_requirements.pdf").resolve()
+    manifest = tmp_path / "manifest.json"
+    case = _case(
+        "metadata-drift",
+        source,
+        [
+            {
+                "observation_id": "known-table",
+                "kind": "table_page",
+                "page": 1,
+                "expected_tables": [
+                    {
+                        "row_count": 3,
+                        "column_count": 3,
+                    }
+                ],
+            }
+        ],
+    )
+    case["source"]["expected_pdf_metadata"] = {
+        "producer": "Not the checked producer"
+    }
+    write_json(
+        manifest,
+        {
+            "schema_version": "pdf_corpus_v1",
+            "name": "metadata identity drift",
+            "cases": [case],
+        },
+    )
+
+    report = PdfCorpusRunner().run(manifest, tmp_path / "output")
+
+    assert report["passed"] is False
+    assert report["cases"][0]["identity_passed"] is False
+    assert report["cases"][0]["observations"][0]["passed"] is True
+    assert report["cases"][0]["identity_issues"] == [
+        "PDF metadata producer expected='Not the checked producer' "
+        "actual='ReportLab PDF Library - (opensource)'"
+    ]
+
+
+def test_booktabs_provenance_record_matches_checked_corpus_case() -> None:
+    manifest = read_json("eval/pdf_corpus_v1/manifest.json")
+    case = next(
+        item
+        for item in manifest["cases"]
+        if item["case_id"] == "booktabs_pdftex_manual"
+    )
+    provenance = read_json(
+        "tests/fixtures/pdf_corpus_booktabs.provenance.json"
+    )
+
+    assert provenance["fixture"] == Path(case["document"]).name
+    assert provenance["source_url"] == case["source"]["source_url"]
+    assert provenance["source_sha256"] == case["source"]["source_sha256"]
+    assert provenance["pdf_metadata"]["creator"] == (
+        case["source"]["expected_pdf_metadata"]["creator"]
+    )
+    assert provenance["pdf_metadata"]["producer"] == (
+        case["source"]["expected_pdf_metadata"]["producer"]
+    )
+    assert provenance["package"]["license"] == "LPPL-1.3c"
 
 
 def test_pdf_corpus_missing_document_fails_one_case_and_continues(

@@ -48,14 +48,16 @@ document
 tier = core | extended
 source provenance, producer family, URL and redistribution status
 source_sha256
+optional expected PDF title, creator and producer metadata
 expected parser name/version
 optional Evidence fingerprint
 typed observations
 ```
 
 Paths are resolved relative to the manifest. Source SHA-256, parser identity,
-and an optional Evidence fingerprint are checked before a case can pass.
-Fingerprint changes therefore report an intentional stale fixture instead of
+declared PDF metadata, and an optional Evidence fingerprint are checked before
+a case can pass. This prevents `producer_family` from being only an unchecked
+label. Fingerprint changes report an intentional stale fixture instead of
 silently accepting new parser output.
 
 The observation types are:
@@ -89,6 +91,8 @@ The suite reports:
 
 ```text
 case pass rate
+case count, producer-family count, external-document count and
+redistribution-reviewed count
 gated observation pass rate and evaluated count
 selected text-source accuracy and evaluated count
 page-region availability rate and evaluated count
@@ -108,21 +112,33 @@ quality failure with a `null` value.
 
 ## Provenance tiers
 
-The target corpus has two layers:
+The corpus has two layers:
 
-- `core`: 4–6 small, checked-in PDFs with reviewed redistribution status;
+- `core`: 4–6 small, checked-in PDFs, with a separately gated reviewed-
+  redistribution count;
 - `extended`: 8–12 provenance-locked PDFs that may be download-only or
   customer-controlled and run on demand.
 
-The initial seed is the existing external IEEE 29148 example produced by
-Microsoft Word for Office 365. Its origin URL and checked bytes are recorded,
-but its redistribution terms have not yet been independently classified; the
-manifest says so explicitly rather than claiming a license.
+The checked core now contains five cases across four actual producer families:
+
+- the external IEEE 29148 example produced by Microsoft Word for Office 365;
+- the external `booktabs` package manual produced by pdfTeX;
+- the locked LibreOffice merged-table corpus fixture;
+- deterministic ReportLab simple-table and authored-continuation fixtures.
+
+The `booktabs` PDF is the unmodified CTAN package documentation under LPPL
+1.3c; its download URL, package version, hash, and PDF metadata are recorded in
+`tests/fixtures/pdf_corpus_booktabs.provenance.json`. The IEEE source URL and
+checked bytes are recorded, but its redistribution terms have not yet been
+independently classified; the manifest says so explicitly rather than claiming
+a license. Project-authored fixtures are labelled `project_fixture`, not
+presented as external documents.
 
 New checked-in documents must record their source URL or origin, producer
-family, SHA-256, redistribution decision, and license note. Release CI must not
-download mutable URLs. Download-only sources belong in the extended tier and
-must be materialized by a separate provenance- and hash-checking workflow.
+family, SHA-256, PDF metadata expectation, redistribution decision, and license
+note. Release CI never downloads mutable URLs. Download-only sources belong in
+the extended tier and must be materialized by a separate provenance- and
+hash-checking workflow.
 
 ## Trust policy
 
@@ -131,8 +147,10 @@ The corpus follows the same Evidence rule as the parser:
 > Abstention is acceptable; plausible but unsupported structured Evidence is
 > not.
 
-Accepted table topology and continuation relations should eventually gate at
-precision `1.0`, with negative examples and non-zero evaluated counts.
+Accepted table topology and continuation relations gate at precision `1.0`,
+with non-zero evaluated counts. The LibreOffice case is also a continuation
+false-positive control: two adjacent 2x2 tables without authored markers remain
+independent.
 Unsupported or ambiguous structures must remain readable text while
 `table_cell` is expected but unavailable. Heading precision and recall remain
 separate report-only metrics until real corpus failures drive the next parser

@@ -5,6 +5,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import fitz
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from spectrail.core.io import read_json, write_json
@@ -24,6 +25,10 @@ PDF_CORPUS_OUTPUT_MARKER_PAYLOAD = {
 PDF_CORPUS_METRIC_NAMES = frozenset(
     {
         "case_pass_rate",
+        "case_evaluated_count",
+        "producer_family_count",
+        "external_document_case_count",
+        "redistribution_reviewed_case_count",
         "gate_observation_pass_rate",
         "gate_observation_evaluated_count",
         "text_source_accuracy",
@@ -49,6 +54,18 @@ class PdfCorpusModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PdfMetadataExpectation(PdfCorpusModel):
+    creator: str | None = None
+    producer: str | None = None
+    title: str | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "PdfMetadataExpectation":
+        if not any((self.creator, self.producer, self.title)):
+            raise ValueError("expected_pdf_metadata must declare at least one field")
+        return self
+
+
 class PdfCorpusSource(PdfCorpusModel):
     provenance: Literal["external_document", "project_fixture"]
     producer_family: str = Field(min_length=1)
@@ -61,6 +78,7 @@ class PdfCorpusSource(PdfCorpusModel):
     ]
     license_note: str = Field(min_length=1)
     source_sha256: str
+    expected_pdf_metadata: PdfMetadataExpectation | None = None
 
     @field_validator("source_sha256")
     @classmethod
@@ -300,8 +318,10 @@ class PdfCorpusRunner:
         actual_parser_identity: dict[str, Any] | None = None
         actual_evidence_fingerprint: str | None = None
         actual_source_sha256: str | None = None
+        actual_pdf_metadata: dict[str, Any] | None = None
         try:
             document = _resolve_document(case.document, manifest_dir)
+            actual_pdf_metadata = _read_pdf_metadata(document)
             parsed = parse_document(document, document_id="doc_001")
             evidence_index = parsed.evidence_index
             if evidence_index is None:
@@ -314,7 +334,12 @@ class PdfCorpusRunner:
             )
             actual_evidence_fingerprint = evidence_index.evidence_fingerprint
             actual_source_sha256 = evidence_index.source_sha256
-            identity_issues = _identity_issues(case, parsed, evidence_index)
+            identity_issues = _identity_issues(
+                case,
+                parsed,
+                evidence_index,
+                actual_pdf_metadata,
+            )
             observation_results = [
                 _evaluate_observation(item, parsed.blocks, evidence_index)
                 for item in case.observations
@@ -344,6 +369,7 @@ class PdfCorpusRunner:
             "actual_parser_identity": actual_parser_identity,
             "actual_evidence_fingerprint": actual_evidence_fingerprint,
             "actual_source_sha256": actual_source_sha256,
+            "actual_pdf_metadata": actual_pdf_metadata,
             "error": error,
             "observation_count": len(case.observations),
             "gated_observation_count": len(gated_results),
@@ -358,6 +384,7 @@ def _identity_issues(
     case: PdfCorpusCase,
     parsed: Any,
     evidence_index: EvidenceIndex,
+    pdf_metadata: dict[str, Any],
 ) -> list[str]:
     issues: list[str] = []
     identity = parsed.parser_identity
@@ -391,6 +418,18 @@ def _identity_issues(
             f"expected={case.expected_evidence_fingerprint!r} "
             f"actual={evidence_index.evidence_fingerprint!r}"
         )
+    expected_metadata = case.source.expected_pdf_metadata
+    if expected_metadata is not None:
+        for name, expected_value in expected_metadata.model_dump(
+            mode="json",
+            exclude_none=True,
+        ).items():
+            actual_value = pdf_metadata.get(name)
+            if actual_value != expected_value:
+                issues.append(
+                    "PDF metadata "
+                    f"{name} expected={expected_value!r} actual={actual_value!r}"
+                )
     return issues
 
 
@@ -794,6 +833,22 @@ def _build_suite_metrics(reports: list[dict[str, Any]]) -> dict[str, Any]:
             sum(report["passed"] for report in reports),
             len(reports),
         ),
+        "case_evaluated_count": len(reports),
+        "producer_family_count": len(
+            {
+                report["source"]["producer_family"]
+                for report in reports
+            }
+        ),
+        "external_document_case_count": sum(
+            report["source"]["provenance"] == "external_document"
+            for report in reports
+        ),
+        "redistribution_reviewed_case_count": sum(
+            report["source"]["redistribution_status"]
+            in {"public_domain", "redistribution_permitted"}
+            for report in reports
+        ),
         "gate_observation_pass_rate": _ratio(
             sum(item["passed"] for item in gated),
             len(gated),
@@ -888,6 +943,25 @@ def _resolve_document(value: str, manifest_dir: Path) -> Path:
     if resolved.suffix.lower() != ".pdf":
         raise ValueError(f"PDF corpus document must be a PDF: {resolved}")
     return resolved.resolve()
+
+
+def _read_pdf_metadata(path: Path) -> dict[str, Any]:
+    document = None
+    try:
+        document = fitz.open(path)
+        return {
+            key: value
+            for key, value in document.metadata.items()
+            if key in {"creator", "producer", "title"}
+        }
+    except Exception as exc:
+        raise ValueError(f"PDF_CORPUS_METADATA_UNAVAILABLE: {path}") from exc
+    finally:
+        if document is not None:
+            try:
+                document.close()
+            except Exception:
+                pass
 
 
 def _prepare_output(output: Path) -> Path:

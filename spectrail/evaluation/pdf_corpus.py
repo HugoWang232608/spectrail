@@ -21,6 +21,28 @@ PDF_CORPUS_OUTPUT_MARKER_PAYLOAD = {
         "pdf_corpus_report.md",
     ],
 }
+PDF_CORPUS_METRIC_NAMES = frozenset(
+    {
+        "case_pass_rate",
+        "gate_observation_pass_rate",
+        "gate_observation_evaluated_count",
+        "text_source_accuracy",
+        "text_source_evaluated_count",
+        "page_region_availability_rate",
+        "page_region_evaluated_count",
+        "selected_table_topology_precision",
+        "selected_table_topology_recall",
+        "table_topology_evaluated_count",
+        "fallback_accuracy",
+        "fallback_evaluated_count",
+        "continuation_pair_accuracy",
+        "continuation_pair_evaluated_count",
+        "continuation_false_positive_count",
+        "heading_precision",
+        "heading_recall",
+        "heading_evaluated_count",
+    }
+)
 
 
 class PdfCorpusModel(BaseModel):
@@ -184,6 +206,16 @@ class PdfCorpusManifest(PdfCorpusModel):
                 "PDF corpus threshold names must end in _min or _max: "
                 + ", ".join(sorted(invalid))
             )
+        unknown = sorted(
+            name
+            for name in value
+            if name[:-4] not in PDF_CORPUS_METRIC_NAMES
+        )
+        if unknown:
+            raise ValueError(
+                "PDF_CORPUS_THRESHOLD_UNKNOWN_METRIC: "
+                + ", ".join(unknown)
+            )
         return value
 
     @model_validator(mode="after")
@@ -222,6 +254,7 @@ class PdfCorpusRunner:
         if not selected_cases:
             raise ValueError("PDF_CORPUS_NO_SELECTED_CASES")
 
+        output = _prepare_output(Path(output_dir))
         reports = [
             self._run_case(case, manifest_file.parent)
             for case in selected_cases
@@ -244,7 +277,6 @@ class PdfCorpusRunner:
             "threshold_results": threshold_results,
             "cases": reports,
         }
-        output = _prepare_output(Path(output_dir))
         write_json(output / "pdf_corpus_report.json", suite)
         (output / "pdf_corpus_report.md").write_text(
             _suite_markdown(suite),
@@ -874,6 +906,23 @@ def _prepare_output(output: Path) -> Path:
         output.mkdir(parents=True)
     if not _valid_output_marker(marker):
         write_json(marker, PDF_CORPUS_OUTPUT_MARKER_PAYLOAD)
+    managed_targets = [
+        output / relative
+        for relative in PDF_CORPUS_OUTPUT_MARKER_PAYLOAD["managed_paths"]
+    ]
+    invalid_targets = [
+        target
+        for target in managed_targets
+        if target.exists() and not target.is_symlink() and not target.is_file()
+    ]
+    if invalid_targets:
+        rendered = ", ".join(path.as_posix() for path in invalid_targets)
+        raise ValueError(
+            "PDF_CORPUS_MANAGED_PATH_NOT_FILE: " + rendered
+        )
+    for target in managed_targets:
+        if target.is_symlink() or target.is_file():
+            target.unlink()
     return output
 
 

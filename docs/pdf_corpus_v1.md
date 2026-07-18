@@ -32,8 +32,11 @@ outputs/pdf-corpus/pdf_corpus_report.md
 ```
 
 An existing non-empty output directory must contain the ownership marker.
-The runner only replaces its two known report files and never recursively
-deletes the output root.
+After manifest validation, the runner removes its two known report files before
+parsing any case, so an interrupted run cannot leave an earlier successful
+report looking current. A managed file or symlink is unlinked without following
+the link; a managed directory fails closed. Other files are left untouched, and
+the runner never recursively deletes the output root.
 
 ## Manifest contract
 
@@ -98,7 +101,10 @@ heading precision / recall and evaluated count
 A metric with no evaluated observations is `null`, not a synthetic perfect
 score. Any threshold applied to a `null` metric fails. Count thresholds should
 accompany rate thresholds as the corpus grows so an empty category cannot pass
-the release gate.
+the release gate. Threshold names are checked against the report's metric
+allowlist; a typo fails manifest loading with
+`PDF_CORPUS_THRESHOLD_UNKNOWN_METRIC` instead of appearing as an ordinary
+quality failure with a `null` value.
 
 ## Provenance tiers
 

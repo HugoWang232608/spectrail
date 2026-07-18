@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from spectrail.cli import main
-from spectrail.core.io import read_json
+from spectrail.core.io import read_json, write_json
 from spectrail.evaluation.pdf_corpus import (
     PDF_CORPUS_OUTPUT_MARKER_PAYLOAD,
     PdfCorpusManifest,
@@ -293,6 +293,116 @@ def test_pdf_corpus_output_refuses_nonempty_unowned_directory(
         PdfCorpusRunner().run("eval/pdf_corpus_v1/manifest.json", output)
 
     assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_pdf_corpus_clears_stale_reports_before_case_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "owned"
+    output.mkdir()
+    write_json(
+        output / ".spectrail-pdf-corpus-output",
+        PDF_CORPUS_OUTPUT_MARKER_PAYLOAD,
+    )
+    json_report = output / "pdf_corpus_report.json"
+    markdown_report = output / "pdf_corpus_report.md"
+    json_report.write_text('{"passed":true}', encoding="utf-8")
+    markdown_report.write_text("# stale success\n", encoding="utf-8")
+    sentinel = output / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    def crash_during_parse(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("unexpected parser crash")
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.pdf_corpus.parse_document",
+        crash_during_parse,
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected parser crash"):
+        PdfCorpusRunner().run("eval/pdf_corpus_v1/manifest.json", output)
+
+    assert not json_report.exists()
+    assert not markdown_report.exists()
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_pdf_corpus_replaces_managed_symlink_without_following_it(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "owned"
+    output.mkdir()
+    write_json(
+        output / ".spectrail-pdf-corpus-output",
+        PDF_CORPUS_OUTPUT_MARKER_PAYLOAD,
+    )
+    external = tmp_path / "external.json"
+    external.write_text("do not overwrite", encoding="utf-8")
+    report = output / "pdf_corpus_report.json"
+    report.symlink_to(external)
+    (output / "pdf_corpus_report.md").write_text(
+        "# stale success\n",
+        encoding="utf-8",
+    )
+    sentinel = output / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    result = PdfCorpusRunner().run(
+        "eval/pdf_corpus_v1/manifest.json",
+        output,
+    )
+
+    assert result["passed"] is True
+    assert not report.is_symlink()
+    assert read_json(report)["schema_version"] == "pdf_corpus_report_v1"
+    assert external.read_text(encoding="utf-8") == "do not overwrite"
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_pdf_corpus_rejects_managed_report_directory_before_cleanup(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "owned"
+    output.mkdir()
+    write_json(
+        output / ".spectrail-pdf-corpus-output",
+        PDF_CORPUS_OUTPUT_MARKER_PAYLOAD,
+    )
+    (output / "pdf_corpus_report.json").mkdir()
+    markdown_report = output / "pdf_corpus_report.md"
+    markdown_report.write_text("# stale success\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="PDF_CORPUS_MANAGED_PATH_NOT_FILE"):
+        PdfCorpusRunner().run("eval/pdf_corpus_v1/manifest.json", output)
+
+    assert (output / "pdf_corpus_report.json").is_dir()
+    assert markdown_report.read_text(encoding="utf-8") == "# stale success\n"
+
+
+def test_pdf_corpus_unknown_threshold_is_a_configuration_error(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    payload = read_json("eval/pdf_corpus_v1/manifest.json")
+    payload["thresholds"] = {"text_sorce_accuracy_min": 1.0}
+    write_json(manifest, payload)
+
+    with pytest.raises(
+        SystemExit,
+        match="PDF_CORPUS_THRESHOLD_UNKNOWN_METRIC.*text_sorce_accuracy_min",
+    ):
+        main(
+            [
+                "evaluate-pdf-corpus",
+                str(manifest),
+                "--output",
+                str(tmp_path / "output"),
+            ]
+        )
+
+    assert not (tmp_path / "output").exists()
 
 
 def _case(

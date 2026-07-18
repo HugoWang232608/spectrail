@@ -368,13 +368,17 @@ the corresponding page and overlays the source bounding box in the canonical
 rotated preview coordinate space. For DOCX sources with a validated
 `table_locator`, it renders the block's occurrence-aware table grid and
 highlights the selected physical-row cells by canonical cell ID.
-M5 extends the same table path to complete grids detected in PDF files:
+M5 extends the same table path to complete grids detected in PDF files.
 `PdfParserV2` emits stable logical cells, cell occurrences, page geometry, and
 all three structured capabilities, while the existing table API and Review grid
-remain unchanged. Incomplete or merged detections retain readable PDF text but
-do not claim available `table_cell`; fallback blocks retain it as an expected
-capability so optional policy reports `WARNING_UNAVAILABLE` and strict
-structured policy rejects the source.
+remain unchanged. M5.1 also accepts horizontal and vertical merged cells when a
+boundary-lattice proof yields a unique anchor, contiguous spans, and exact
+single-owner coverage of every physical coordinate. Vertical merges use the
+same logical cell ID with `row_span_projection` occurrences on subsequent
+physical rows. Incomplete, ambiguous, or geometrically invalid detections keep
+readable PDF text but do not claim available `table_cell`; fallback blocks
+retain it as an expected capability so optional policy reports
+`WARNING_UNAVAILABLE` and strict structured policy rejects the source.
 
 The evidence endpoints are task-scoped and read-only:
 

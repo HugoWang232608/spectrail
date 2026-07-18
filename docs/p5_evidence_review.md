@@ -351,10 +351,11 @@ real-PDF parser/renderer pixel test.
 
 ## M5 PDF table detection
 
-PDF V2 now runs PyMuPDF `find_tables(strategy="lines_strict")` and treats a
-result as structured evidence only when every detected physical row exposes a
-complete, non-overlapping cell grid with valid canonical preview geometry. A
-trusted table produces:
+PDF V2 now runs PyMuPDF
+`find_tables(strategy="lines_strict", snap_tolerance=0.5)` and treats a result
+as structured evidence only when its physical grid can be proven complete,
+non-overlapping, and geometrically valid in canonical preview space. A trusted
+table produces:
 
 - `TableRecord(parser_method="pymupdf_find_tables", topology_status="complete")`;
 - stable canonical `TableCellRecord` IDs with page-space bounding boxes;
@@ -367,17 +368,32 @@ trusted table produces:
 
 Physical-grid validation is independent from the logical Evidence topology
 check. With a 0.5-point boundary tolerance, every detected cell must remain
-inside the table bbox, row and column boundaries must align, adjacent cells
-must meet without a gap or area overlap, the cells must cover the table bbox,
-and non-merged cells must form a disjoint tiling. A detector result that
-violates any of these invariants is downgraded before an `EvidenceIndex` can
-claim `topology_status="complete"`. The physical check is linear in the number
-of detected cells: aligned row/column boundaries plus monotonic, meeting
-adjacent boundaries prove the global tiling without an all-pairs intersection
-scan.
+inside the table bbox, adjacent boundaries must align without a gap or area
+overlap, and the occupied cells must tile the whole physical grid exactly once.
+A detector result that violates any invariant is downgraded before an
+`EvidenceIndex` can claim `topology_status="complete"`.
 
-Merged, incomplete, or physically invalid PDF grids are not guessed. Their
-ordinary PDF text blocks remain available, a
+M5.1 extends that proof to merged cells through a deterministic boundary
+lattice. The parser clusters the table and cell x/y boundaries, maps every
+unique detector bbox to one contiguous lattice rectangle, and derives its
+anchor, `row_span`, and `column_span`. It accepts the result only when:
+
+- every boundary maps uniquely within tolerance;
+- every physical coordinate is covered by exactly one logical cell;
+- every detector projection refers to the same inferred owner;
+- every merged cell has one unambiguous anchor; and
+- the detector does not assign conflicting non-empty text to one logical cell.
+
+An accepted vertical merge is serialized once per occupied physical row. The
+anchor occurrence is `original`; subsequent rows use
+`row_span_projection` while retaining the same canonical cell ID. Horizontal
+merges retain one logical cell with `column_span > 1`. These records flow
+unchanged through prompt cell maps, source identity canonicalization,
+`TableLocator`, `PageLocator(table_cell_union)`, `table_evidence_view_v1`, and
+the existing Review grid.
+
+Ambiguous merges, incomplete grids, and physically invalid PDF geometry are not
+guessed. Their ordinary PDF text blocks remain available, a
 `PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE` warning records the reason, and no
 `TableRecord` or available `table_cell` capability is exposed. The rejected
 candidate bbox is retained long enough to mark a fallback block when at least
@@ -390,13 +406,16 @@ to nearby captions or geometry-free text. Associated blocks expect
 the source with `table_cell=WARNING_UNAVAILABLE`, whereas
 `structured_required` rejects it.
 
-The checked-in `pdf_table_requirements.pdf` fixture runs through prompt cell
-mapping, source identity canonicalization, quote matching, enrichment, quote
-validation, and `structured_required` locator validation. All three
-capabilities pass, and the page locator is independently derived from the
-selected cell bbox union. The browser fixture is generated from that backend
-projection, reuses `table_evidence_view_v1`, and fixes both the real PDF page
-overlay and selected grid cells in the Playwright screenshot gate.
+The checked-in `pdf_table_requirements.pdf` fixture runs the simple-grid path.
+Three deterministic M5.1 fixtures additionally cover a horizontal merged
+header, a vertical merged cell, and a boundary-ambiguous candidate that must
+downgrade. The vertical fixture runs through prompt cell mapping, source
+identity canonicalization, quote matching, enrichment, quote validation, and
+`structured_required` locator validation. All three capabilities pass, and the
+page locator is independently derived from the selected cell bbox union. The
+browser fixture is generated from that checked backend projection, reuses
+`table_evidence_view_v1`, and fixes the real PDF page overlay, selected grid
+cells, and second-row `row_span_projection` in the Playwright screenshot gate.
 
 Backend acceptance projects a real detected table at 0°, 90°, 180°, and 270°,
 derives `TableLocator` and `PageLocator(table_cell_union)`, renders the same
@@ -409,10 +428,10 @@ browser response.
 
 ## Next acceptance steps
 
-- expand PDF table support to explicitly represented merged cells once
-  PyMuPDF topology can prove their anchor and occupied spans;
 - add multi-page PDF table/header continuation fixtures without weakening
   per-page table identity;
+- expand the merged-cell corpus with independently authored PDFs from multiple
+  producers while preserving the same proof-or-downgrade contract;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

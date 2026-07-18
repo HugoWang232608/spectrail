@@ -79,6 +79,7 @@ PDF_TABLE_ROW_SEPARATOR = "\n"
 PDF_TABLE_TEXT_BLOCK_OVERLAP_RATIO = 0.80
 PDF_TABLE_DETECTION_STRATEGY = "lines_strict"
 PDF_TABLE_GEOMETRY_TOLERANCE = 0.5
+PDF_TABLE_DETECTION_SNAP_TOLERANCE = 0.5
 PDF_TABLE_OVERLAP_AREA_EPSILON = 0.25
 
 
@@ -343,6 +344,8 @@ class _ProjectedPdfTableCell:
     text: str
     bbox: BoundingBox
     is_header: bool
+    row_span: int = 1
+    column_span: int = 1
 
 
 @dataclass(frozen=True)
@@ -350,6 +353,12 @@ class _RawPdfTableCellGeometry:
     row_index: int
     column_index: int
     bbox: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class _PdfTableBoundaryGrid:
+    x_boundaries: tuple[float, ...]
+    y_boundaries: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -508,7 +517,10 @@ def _extract_page_tables(
     list[str],
 ]:
     try:
-        finder = page.find_tables(strategy=PDF_TABLE_DETECTION_STRATEGY)
+        finder = page.find_tables(
+            strategy=PDF_TABLE_DETECTION_STRATEGY,
+            snap_tolerance=PDF_TABLE_DETECTION_SNAP_TOLERANCE,
+        )
     except Exception as exc:
         return [], [], [
             "PDF_TABLE_DETECTION_UNAVAILABLE: "
@@ -619,11 +631,83 @@ def _project_pdf_table(
         and header_names == first_row_text
     )
 
+    row_cell_boxes = [
+        list(getattr(row, "cells", []))
+        for row in rows
+    ]
+    if any(len(row_cells) != column_count for row_cells in row_cell_boxes):
+        raise _PdfTableEvidenceUnavailable(
+            "table rows do not cover the declared column count"
+        )
+    if any(len(list(values)) != column_count for values in extracted):
+        raise _PdfTableEvidenceUnavailable(
+            "table text rows do not cover the declared column count"
+        )
+    normalized_boxes = [
+        _raw_bbox(raw_bbox)
+        for row_cells in row_cell_boxes
+        for raw_bbox in row_cells
+    ]
+    non_empty_boxes = [bbox for bbox in normalized_boxes if bbox is not None]
+    merged_candidate = (
+        len(non_empty_boxes) != row_count * column_count
+        or len(set(non_empty_boxes)) != len(non_empty_boxes)
+    )
+    if merged_candidate:
+        cells = _project_pdf_merged_table_cells(
+            page,
+            raw_table_bbox,
+            row_cell_boxes,
+            extracted,
+            row_count=row_count,
+            column_count=column_count,
+            first_row_is_header=first_row_is_header,
+            page_width=page_width,
+            page_height=page_height,
+        )
+    else:
+        cells = _project_pdf_simple_table_cells(
+            page,
+            raw_table_bbox,
+            row_cell_boxes,
+            extracted,
+            row_count=row_count,
+            column_count=column_count,
+            first_row_is_header=first_row_is_header,
+            page_width=page_width,
+            page_height=page_height,
+        )
+
+    if not any(cell.text.strip() for cell in cells):
+        raise _PdfTableEvidenceUnavailable("table has no extractable cell text")
+    return _ProjectedPdfTable(
+        source_table_number=source_table_number,
+        bbox=table_bbox,
+        row_count=row_count,
+        column_count=column_count,
+        cells=tuple(cells),
+    )
+
+
+def _project_pdf_simple_table_cells(
+    page: object,
+    raw_table_bbox: tuple[float, float, float, float],
+    row_cell_boxes: list[list[object]],
+    extracted: list[object],
+    *,
+    row_count: int,
+    column_count: int,
+    first_row_is_header: bool,
+    page_width: float,
+    page_height: float,
+) -> list[_ProjectedPdfTableCell]:
     cells: list[_ProjectedPdfTableCell] = []
     raw_geometry: list[_RawPdfTableCellGeometry] = []
     raw_cell_boxes: set[tuple[float, float, float, float]] = set()
-    for row_index, (row, values) in enumerate(zip(rows, extracted), start=1):
-        row_cells = list(getattr(row, "cells", []))
+    for row_index, (row_cells, values) in enumerate(
+        zip(row_cell_boxes, extracted),
+        start=1,
+    ):
         row_values = list(values)
         if len(row_cells) != column_count or len(row_values) != column_count:
             raise _PdfTableEvidenceUnavailable(
@@ -674,15 +758,261 @@ def _project_pdf_table(
         row_count=row_count,
         column_count=column_count,
     )
-    if not any(cell.text.strip() for cell in cells):
-        raise _PdfTableEvidenceUnavailable("table has no extractable cell text")
-    return _ProjectedPdfTable(
-        source_table_number=source_table_number,
-        bbox=table_bbox,
+    return cells
+
+
+def _project_pdf_merged_table_cells(
+    page: object,
+    raw_table_bbox: tuple[float, float, float, float],
+    row_cell_boxes: list[list[object]],
+    extracted: list[object],
+    *,
+    row_count: int,
+    column_count: int,
+    first_row_is_header: bool,
+    page_width: float,
+    page_height: float,
+) -> list[_ProjectedPdfTableCell]:
+    normalized_by_slot = {
+        (row_index, column_index): _raw_bbox(raw_bbox)
+        for row_index, row in enumerate(row_cell_boxes, start=1)
+        for column_index, raw_bbox in enumerate(row, start=1)
+    }
+    non_empty_boxes = [
+        bbox for bbox in normalized_by_slot.values() if bbox is not None
+    ]
+    if not non_empty_boxes:
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: no cell geometry"
+        )
+    grid = _build_pdf_table_boundary_grid(
+        raw_table_bbox,
+        non_empty_boxes,
         row_count=row_count,
         column_count=column_count,
-        cells=tuple(cells),
     )
+
+    slot_keys: dict[tuple[int, int], tuple[int, int, int, int] | None] = {}
+    references: dict[
+        tuple[int, int, int, int],
+        list[tuple[int, int]],
+    ] = {}
+    for slot, bbox in normalized_by_slot.items():
+        if bbox is None:
+            slot_keys[slot] = None
+            continue
+        key = _pdf_bbox_lattice_key(bbox, grid)
+        slot_keys[slot] = key
+        references.setdefault(key, []).append(slot)
+
+    occupied: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    for key in references:
+        row_start, row_end, column_start, column_end = key
+        if row_start >= row_end or column_start >= column_end:
+            raise _PdfTableEvidenceUnavailable(
+                "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: "
+                "cell span has no physical area"
+            )
+        for row_index in range(row_start + 1, row_end + 1):
+            for column_index in range(column_start + 1, column_end + 1):
+                coordinate = (row_index, column_index)
+                owner = occupied.get(coordinate)
+                if owner is not None and owner != key:
+                    raise _PdfTableEvidenceUnavailable(
+                        "PDF_TABLE_MERGED_SLOT_CONFLICT: "
+                        f"row={row_index}, column={column_index}"
+                    )
+                occupied[coordinate] = key
+
+    expected_slots = {
+        (row_index, column_index)
+        for row_index in range(1, row_count + 1)
+        for column_index in range(1, column_count + 1)
+    }
+    missing_slots = sorted(expected_slots - set(occupied))
+    if missing_slots:
+        row_index, column_index = missing_slots[0]
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_SLOT_UNCOVERED: "
+            f"row={row_index}, column={column_index}"
+        )
+
+    for slot in sorted(expected_slots):
+        owner = occupied[slot]
+        declared = slot_keys[slot]
+        anchor = (owner[0] + 1, owner[2] + 1)
+        if declared is None:
+            if slot == anchor:
+                raise _PdfTableEvidenceUnavailable(
+                    "PDF_TABLE_MERGED_ANCHOR_MISSING: "
+                    f"row={slot[0]}, column={slot[1]}"
+                )
+            continue
+        if declared != owner:
+            raise _PdfTableEvidenceUnavailable(
+                "PDF_TABLE_MERGED_SLOT_CONFLICT: "
+                f"row={slot[0]}, column={slot[1]}"
+            )
+
+    projected: list[_ProjectedPdfTableCell] = []
+    extracted_rows = [list(values) for values in extracted]
+    for key in sorted(references):
+        row_start, row_end, column_start, column_end = key
+        anchor = (row_start + 1, column_start + 1)
+        if anchor not in references[key]:
+            raise _PdfTableEvidenceUnavailable(
+                "PDF_TABLE_MERGED_ANCHOR_MISSING: "
+                f"row={anchor[0]}, column={anchor[1]}"
+            )
+        candidate_texts = [
+            _canonicalize_pdf_table_cell_text(
+                extracted_rows[row_index - 1][column_index - 1] or ""
+            )
+            for row_index, column_index in references[key]
+        ]
+        non_empty_texts = {
+            text for text in candidate_texts if text.strip()
+        }
+        if len(non_empty_texts) > 1:
+            raise _PdfTableEvidenceUnavailable(
+                "PDF_TABLE_MERGED_TEXT_CONFLICT: "
+                f"row={anchor[0]}, column={anchor[1]}"
+            )
+        text = next(iter(non_empty_texts), "")
+        raw_bbox = (
+            grid.x_boundaries[column_start],
+            grid.y_boundaries[row_start],
+            grid.x_boundaries[column_end],
+            grid.y_boundaries[row_end],
+        )
+        bbox = _rotated_bbox(
+            page,
+            raw_bbox,
+            page_width=page_width,
+            page_height=page_height,
+        )
+        if bbox is None:
+            raise _PdfTableEvidenceUnavailable(
+                "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: "
+                f"cell bbox is unavailable at row={anchor[0]}, "
+                f"column={anchor[1]}"
+            )
+        projected.append(
+            _ProjectedPdfTableCell(
+                row_index=anchor[0],
+                column_index=anchor[1],
+                row_span=row_end - row_start,
+                column_span=column_end - column_start,
+                text=text,
+                bbox=bbox,
+                is_header=first_row_is_header and anchor[0] == 1,
+            )
+        )
+    return sorted(
+        projected,
+        key=lambda cell: (cell.row_index, cell.column_index),
+    )
+
+
+def _build_pdf_table_boundary_grid(
+    table_bbox: tuple[float, float, float, float],
+    cell_boxes: list[tuple[float, float, float, float]],
+    *,
+    row_count: int,
+    column_count: int,
+) -> _PdfTableBoundaryGrid:
+    x_boundaries = _cluster_pdf_table_boundaries(
+        [table_bbox[0], table_bbox[2]]
+        + [value for bbox in cell_boxes for value in (bbox[0], bbox[2])],
+        expected_count=column_count + 1,
+        axis="x",
+    )
+    y_boundaries = _cluster_pdf_table_boundaries(
+        [table_bbox[1], table_bbox[3]]
+        + [value for bbox in cell_boxes for value in (bbox[1], bbox[3])],
+        expected_count=row_count + 1,
+        axis="y",
+    )
+    if (
+        not _pdf_geometry_close(x_boundaries[0], table_bbox[0])
+        or not _pdf_geometry_close(x_boundaries[-1], table_bbox[2])
+        or not _pdf_geometry_close(y_boundaries[0], table_bbox[1])
+        or not _pdf_geometry_close(y_boundaries[-1], table_bbox[3])
+    ):
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: "
+            "lattice does not match table bbox"
+        )
+    return _PdfTableBoundaryGrid(
+        x_boundaries=x_boundaries,
+        y_boundaries=y_boundaries,
+    )
+
+
+def _cluster_pdf_table_boundaries(
+    values: list[float],
+    *,
+    expected_count: int,
+    axis: str,
+) -> tuple[float, ...]:
+    clusters: list[list[float]] = []
+    for value in sorted(values):
+        if (
+            not clusters
+            or value - clusters[-1][0] > PDF_TABLE_GEOMETRY_TOLERANCE
+        ):
+            clusters.append([value])
+        else:
+            clusters[-1].append(value)
+    boundaries = tuple(
+        sum(cluster) / len(cluster)
+        for cluster in clusters
+    )
+    if len(boundaries) != expected_count:
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: "
+            f"axis={axis}, expected={expected_count}, actual={len(boundaries)}"
+        )
+    if any(
+        following - current <= 2 * PDF_TABLE_GEOMETRY_TOLERANCE
+        for current, following in zip(boundaries, boundaries[1:])
+    ):
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_BOUNDARY_AMBIGUOUS: "
+            f"axis={axis}"
+        )
+    return boundaries
+
+
+def _pdf_bbox_lattice_key(
+    bbox: tuple[float, float, float, float],
+    grid: _PdfTableBoundaryGrid,
+) -> tuple[int, int, int, int]:
+    return (
+        _pdf_boundary_index(bbox[1], grid.y_boundaries, axis="y0"),
+        _pdf_boundary_index(bbox[3], grid.y_boundaries, axis="y1"),
+        _pdf_boundary_index(bbox[0], grid.x_boundaries, axis="x0"),
+        _pdf_boundary_index(bbox[2], grid.x_boundaries, axis="x1"),
+    )
+
+
+def _pdf_boundary_index(
+    value: float,
+    boundaries: tuple[float, ...],
+    *,
+    axis: str,
+) -> int:
+    matches = [
+        index
+        for index, boundary in enumerate(boundaries)
+        if abs(value - boundary) <= PDF_TABLE_GEOMETRY_TOLERANCE
+    ]
+    if len(matches) != 1:
+        raise _PdfTableEvidenceUnavailable(
+            "PDF_TABLE_MERGED_BOUNDARY_UNRESOLVED: "
+            f"axis={axis}, matches={len(matches)}"
+        )
+    return matches[0]
 
 
 def _validate_pdf_table_geometry(
@@ -929,6 +1259,8 @@ def _build_pdf_table_evidence(
             table_id=table_identifier,
             row_index=cell.row_index,
             column_index=cell.column_index,
+            row_span=cell.row_span,
+            column_span=cell.column_span,
             text=cell.text,
             text_sha256=sha256_text(cell.text),
             is_header=cell.is_header,
@@ -943,7 +1275,9 @@ def _build_pdf_table_evidence(
     occurrences: list[CellBlockOccurrence] = []
     table_occurrence_ids: list[str] = []
     header_available = all(
-        cell.is_header for cell in table.cells if cell.row_index == 1
+        cell.is_header and cell.row_span == 1
+        for cell in table.cells
+        if cell.row_index == 1
     )
     row_groups = [
         (
@@ -981,7 +1315,8 @@ def _build_pdf_table_evidence(
         primary_cells = [
             cell
             for cell in table.cells
-            if row_start <= cell.row_index <= row_end
+            if cell.row_index <= row_end
+            and cell.row_index + cell.row_span - 1 >= row_start
         ]
         block_bbox = _bbox_union([cell.bbox for cell in primary_cells])
         block = DocumentBlock(
@@ -1100,7 +1435,12 @@ def _render_pdf_table_row_group(
             parts.append(PDF_TABLE_ROW_SEPARATOR)
             cursor += len(PDF_TABLE_ROW_SEPARATOR)
         row_cells = sorted(
-            (cell for cell in table.cells if cell.row_index == row_index),
+            (
+                cell
+                for cell in table.cells
+                if cell.row_index <= row_index
+                < cell.row_index + cell.row_span
+            ),
             key=lambda cell: cell.column_index,
         )
         for cell_index, cell in enumerate(row_cells):
@@ -1113,7 +1453,13 @@ def _render_pdf_table_row_group(
                     physical_row_index=row_index,
                     start=start,
                     end=cursor,
-                    role="repeated_header" if repeated else "original",
+                    role=(
+                        "repeated_header"
+                        if repeated
+                        else "original"
+                        if row_index == cell.row_index
+                        else "row_span_projection"
+                    ),
                 )
             )
             if cell_index < len(row_cells) - 1:
@@ -1866,7 +2212,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.14",
+        parser_version="2.15",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -1880,17 +2226,25 @@ def _parser_identity() -> ParserIdentity:
             "repeated_page_edges": "preserve_stable_candidate_v1",
             "geometry_failure_policy": "text_only_block_v1",
             "table_detection": (
-                "pymupdf_find_tables_lines_strict_physical_grid_v2"
+                "pymupdf_find_tables_lines_strict_boundary_lattice_v3"
+            ),
+            "table_detection_snap_tolerance": (
+                PDF_TABLE_DETECTION_SNAP_TOLERANCE
             ),
             "table_geometry_validation": (
                 "contained_aligned_complete_non_overlapping_v1"
+            ),
+            "merged_table_topology": (
+                "unique_boundary_lattice_complete_slot_coverage_v1"
             ),
             "table_block_mode": "complete_row_groups",
             "max_primary_rows_per_table_block": (
                 MAX_PRIMARY_ROWS_PER_PDF_TABLE_BLOCK
             ),
             "repeat_header_rows": 1,
-            "canonical_table_serializer": "escaped_cells_v1",
+            "canonical_table_serializer": (
+                "escaped_cells_with_row_span_projection_v2"
+            ),
             "unsupported_table_topology": (
                 "preserve_text_expected_table_cell_unavailable_v2"
             ),

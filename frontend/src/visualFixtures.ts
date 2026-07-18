@@ -8,6 +8,9 @@ import type {
 import generatedPdfTableFixture from './fixtures/pdf-table-evidence.json' with {
   type: 'json'
 }
+import generatedPdfMergedTableFixture from './fixtures/pdf-merged-table-evidence.json' with {
+  type: 'json'
+}
 
 export const VISUAL_TASK_ID = 'visual-task'
 
@@ -16,6 +19,7 @@ export type VisualFixture = {
   requirement: RequirementIR
   blocks: DocumentBlock[]
   tableEvidence?: TableEvidenceResponse
+  evidenceFingerprint?: string
 }
 
 type GeneratedVisualFixture = VisualFixture & {
@@ -25,6 +29,9 @@ type GeneratedVisualFixture = VisualFixture & {
 
 const PDF_TABLE_VISUAL_FIXTURE = (
   generatedPdfTableFixture as unknown as GeneratedVisualFixture
+)
+const PDF_MERGED_TABLE_VISUAL_FIXTURE = (
+  generatedPdfMergedTableFixture as unknown as GeneratedVisualFixture
 )
 
 export const VISUAL_EVIDENCE_FINGERPRINT = (
@@ -345,8 +352,21 @@ export function makePdfTableVisualFixture(): VisualFixture {
     name: PDF_TABLE_VISUAL_FIXTURE.name,
     requirement: PDF_TABLE_VISUAL_FIXTURE.requirement,
     blocks: PDF_TABLE_VISUAL_FIXTURE.blocks,
+    evidenceFingerprint: PDF_TABLE_VISUAL_FIXTURE.evidenceFingerprint,
     tableEvidence: validateVisualTableEvidence(
       PDF_TABLE_VISUAL_FIXTURE.tableEvidence
+    )
+  }
+}
+
+export function makePdfMergedTableVisualFixture(): VisualFixture {
+  return {
+    name: PDF_MERGED_TABLE_VISUAL_FIXTURE.name,
+    requirement: PDF_MERGED_TABLE_VISUAL_FIXTURE.requirement,
+    blocks: PDF_MERGED_TABLE_VISUAL_FIXTURE.blocks,
+    evidenceFingerprint: PDF_MERGED_TABLE_VISUAL_FIXTURE.evidenceFingerprint,
+    tableEvidence: validateVisualTableEvidence(
+      PDF_MERGED_TABLE_VISUAL_FIXTURE.tableEvidence
     )
   }
 }
@@ -363,6 +383,8 @@ export function visualFixture(name: string): VisualFixture {
       return makePdfVisualFixture(270)
     case 'pdf-table':
       return makePdfTableVisualFixture()
+    case 'pdf-merged-table':
+      return makePdfMergedTableVisualFixture()
     case 'docx-merged':
       return makeMergedDocxVisualFixture()
     case 'docx-row-group':

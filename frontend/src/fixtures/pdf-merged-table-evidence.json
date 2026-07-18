@@ -1,0 +1,295 @@
+{
+  "name": "PDF vertical merged-cell evidence",
+  "evidenceFingerprint": "1a1d875fb875ca8d8ced6e30e846247156c5c859f47ebe3a692b5da7d373f5a9",
+  "requirement": {
+    "id": "req_pdf_merged_table",
+    "version": 1,
+    "title": "PDF merged-table structured evidence",
+    "type": "unknown",
+    "ears_pattern": "unknown",
+    "statement": "The system shall preserve the shared control in the second state.",
+    "subject": null,
+    "condition": null,
+    "response": null,
+    "priority": "unknown",
+    "verification_method": "unknown",
+    "sources": [
+      {
+        "document_id": "doc_001",
+        "document_name": "pdf_table_vertical_merge.pdf",
+        "page": 1,
+        "section": null,
+        "section_path": [],
+        "block_id": "blk_0001",
+        "quote": "Shared control | Second state",
+        "match_status": "PASS_EXACT",
+        "match_score": 1.0,
+        "bbox": null,
+        "table_cell": null,
+        "image_region": null,
+        "text_locator": {
+          "block_id": "blk_0001",
+          "start": 29,
+          "end": 58,
+          "offset_encoding": "unicode_code_point",
+          "match_basis": "exact"
+        },
+        "page_locator": {
+          "page": 1,
+          "bbox": {
+            "x0": 50.0,
+            "y0": 50.0,
+            "x1": 300.0,
+            "y1": 150.0,
+            "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+          },
+          "page_width": 400.0,
+          "page_height": 250.0,
+          "source_rotation": 0,
+          "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
+          "derivation": "table_cell_union"
+        },
+        "table_locator": {
+          "table_id": "tbl_00000001",
+          "cell_ids": [
+            "cell_00000001_r0001_c0001",
+            "cell_00000001_r0002_c0002"
+          ],
+          "row_indices": [
+            1,
+            2
+          ],
+          "selected_row_index": 2,
+          "column_indices": [
+            1,
+            2
+          ],
+          "bbox": {
+            "x0": 50.0,
+            "y0": 50.0,
+            "x1": 300.0,
+            "y1": 150.0,
+            "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+          }
+        },
+        "source_cell_ids_raw": [
+          "cell_00000001_r0001_c0001",
+          "cell_00000001_r0002_c0002"
+        ],
+        "canonical_source_cell_ids": [
+          "cell_00000001_r0001_c0001",
+          "cell_00000001_r0002_c0002"
+        ],
+        "source_table_row_index": 2,
+        "source_evidence_key": "src_08f2dc854f4ff4b34f16cc45",
+        "provisional_text_locator": null,
+        "locator_status": "PASS_STRUCTURED",
+        "capability_results": [
+          {
+            "capability": "text_range",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          },
+          {
+            "capability": "page_region",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          },
+          {
+            "capability": "table_cell",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          }
+        ],
+        "locator_score": 1.0
+      }
+    ],
+    "confidence": 0.0,
+    "grounding_score": null,
+    "review_status": "pending",
+    "duplicate_group_id": null,
+    "possible_duplicate_ids": [],
+    "derived_from": [],
+    "tags": [
+      "visual-acceptance",
+      "pdf-table",
+      "merged-cell"
+    ],
+    "review_log": [],
+    "metadata": {
+      "source_block_id": "blk_0001",
+      "model_mode": "mock",
+      "extractor_version": "reqir_extractor_v4_table_row_evidence",
+      "raw_item_index": 0
+    }
+  },
+  "blocks": [
+    {
+      "block_id": "blk_0001",
+      "document_id": "doc_001",
+      "type": "table",
+      "text": "Shared control | First state\nShared control | Second state",
+      "page": 1,
+      "section_path": [],
+      "order": 1,
+      "metadata": {
+        "source_format": "pdf",
+        "parser": "pdf_parser_v2",
+        "page": 1,
+        "source_index": 1,
+        "source_table_number": 1,
+        "layout_column_index": 1,
+        "layout_column_count": 1,
+        "page_region_available": true,
+        "structured_table_evidence": true,
+        "table_id": "tbl_00000001",
+        "table_index": 1,
+        "table_row_start": 1,
+        "table_row_end": 2,
+        "repeated_header_rows": []
+      }
+    }
+  ],
+  "tableEvidence": {
+    "schema_version": "table_evidence_view_v1",
+    "task_id": "visual-task",
+    "evidence_fingerprint": "1a1d875fb875ca8d8ced6e30e846247156c5c859f47ebe3a692b5da7d373f5a9",
+    "table_id": "tbl_00000001",
+    "block_id": "blk_0001",
+    "row_count": 2,
+    "column_count": 2,
+    "topology_status": "complete",
+    "page": 1,
+    "bbox": {
+      "x0": 50.0,
+      "y0": 50.0,
+      "x1": 300.0,
+      "y1": 150.0,
+      "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+    },
+    "primary_row_start": 1,
+    "primary_row_end": 2,
+    "warnings": [],
+    "rows": [
+      {
+        "physical_row_index": 1,
+        "rendered_start": 0,
+        "rendered_end": 28,
+        "repeated_header": false,
+        "cells": [
+          {
+            "cell_id": "cell_00000001_r0001_c0001",
+            "row_index": 1,
+            "column_index": 1,
+            "row_span": 2,
+            "column_span": 1,
+            "text": "Shared control",
+            "is_header": true,
+            "page": 1,
+            "bbox": {
+              "x0": 50.0,
+              "y0": 50.0,
+              "x1": 175.0,
+              "y1": 150.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000001",
+                "occurrence_role": "original",
+                "canonical_start": 0,
+                "canonical_end": 14
+              }
+            ]
+          },
+          {
+            "cell_id": "cell_00000001_r0001_c0002",
+            "row_index": 1,
+            "column_index": 2,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "First state",
+            "is_header": true,
+            "page": 1,
+            "bbox": {
+              "x0": 175.0,
+              "y0": 50.0,
+              "x1": 300.0,
+              "y1": 100.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000002",
+                "occurrence_role": "original",
+                "canonical_start": 17,
+                "canonical_end": 28
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "physical_row_index": 2,
+        "rendered_start": 29,
+        "rendered_end": 58,
+        "repeated_header": false,
+        "cells": [
+          {
+            "cell_id": "cell_00000001_r0001_c0001",
+            "row_index": 1,
+            "column_index": 1,
+            "row_span": 2,
+            "column_span": 1,
+            "text": "Shared control",
+            "is_header": true,
+            "page": 1,
+            "bbox": {
+              "x0": 50.0,
+              "y0": 50.0,
+              "x1": 175.0,
+              "y1": 150.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000003",
+                "occurrence_role": "row_span_projection",
+                "canonical_start": 29,
+                "canonical_end": 43
+              }
+            ]
+          },
+          {
+            "cell_id": "cell_00000001_r0002_c0002",
+            "row_index": 2,
+            "column_index": 2,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "Second state",
+            "is_header": false,
+            "page": 1,
+            "bbox": {
+              "x0": 175.0,
+              "y0": 100.0,
+              "x1": 300.0,
+              "y1": 150.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000004",
+                "occurrence_role": "original",
+                "canonical_start": 46,
+                "canonical_end": 58
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

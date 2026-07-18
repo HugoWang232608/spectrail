@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   makeLargeRowGroupVisualFixture,
+  makePdfMergedTableVisualFixture,
   makePdfTableVisualFixture,
   VISUAL_EVIDENCE_FINGERPRINT,
   validateVisualTableEvidence
@@ -51,6 +52,21 @@ describe('visual table evidence fixtures', () => {
     expect(fixture.tableEvidence?.rows).toHaveLength(3)
     expect(fixture.tableEvidence?.rows[1].cells[1].text).toBe(
       'Approved within 2 seconds'
+    )
+  })
+
+  it('loads the checked backend PDF merged-cell projection', () => {
+    const fixture = makePdfMergedTableVisualFixture()
+    const source = fixture.requirement.sources[0]
+    const projected = fixture.tableEvidence?.rows[1].cells[0]
+
+    expect(fixture.evidenceFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    expect(source.locator_status).toBe('PASS_STRUCTURED')
+    expect(source.page_locator?.derivation).toBe('table_cell_union')
+    expect(source.table_locator?.selected_row_index).toBe(2)
+    expect(projected?.row_span).toBe(2)
+    expect(projected?.occurrences[0].occurrence_role).toBe(
+      'row_span_projection'
     )
   })
 })

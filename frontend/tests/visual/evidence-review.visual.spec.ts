@@ -5,6 +5,7 @@ import path from 'node:path'
 import {
   makeLargeRowGroupVisualFixture,
   makeMergedDocxVisualFixture,
+  makePdfMergedTableVisualFixture,
   makePdfTableVisualFixture,
   makePdfVisualFixture,
   VISUAL_EVIDENCE_FINGERPRINT
@@ -145,6 +146,39 @@ test('PDF table renders validated page region and structured cell grid', async (
   await expectLinuxScreenshot(
     page.locator('.visual-harness'),
     'pdf-table-structured-evidence.png'
+  )
+})
+
+test('PDF merged table renders row-span projection with page evidence', async ({ page }) => {
+  const fixture = makePdfMergedTableVisualFixture()
+  const locator = fixture.requirement.sources[0].page_locator
+  if (!locator || !fixture.evidenceFingerprint) {
+    throw new Error('PDF merged-table fixture must provide trusted page evidence')
+  }
+  await page.route('**/api/tasks/**/pages/**/preview.png**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      headers: {
+        'X-Spectrail-Evidence-Fingerprint': fixture.evidenceFingerprint ?? ''
+      },
+      path: path.resolve('tests/visual/fixtures/pdf-merged-table-page.png')
+    })
+  })
+  await routeTableEvidence(page, fixture.tableEvidence)
+  await page.goto('/visual.html?fixture=pdf-merged-table')
+
+  const preview = page.locator('.page-preview')
+  await expect(preview.locator('img')).toBeVisible()
+  await expect(preview.locator('.page-locator-overlay')).toBeVisible()
+  const grid = page.getByRole('grid', { name: /Table evidence/ })
+  await expect(grid).toBeVisible()
+  await expect(grid.getByText(/row_span_projection/)).toBeVisible()
+  await expect(grid.getByText(/row span 2/).first()).toBeVisible()
+  await expect(grid.locator('[aria-selected="true"]')).toHaveCount(2)
+  await expectLinuxScreenshot(
+    page.locator('.visual-harness'),
+    'pdf-merged-table-structured-evidence.png'
   )
 })
 

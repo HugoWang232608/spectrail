@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.14"
+    assert parsed.parser_identity.parser_version == "2.15"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -469,6 +469,309 @@ def test_pdf_v2_checked_in_table_fixture_builds_structured_evidence():
     )
 
 
+def test_pdf_v2_checked_horizontal_merge_infers_column_span():
+    path = Path("tests/fixtures/pdf_table_horizontal_merge.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert parsed.warnings == []
+    assert parsed.blocks[0].text == (
+        "Merged requirement header\nREQ-H | Approved"
+    )
+    assert len(index.tables) == 1
+    assert [
+        (
+            cell.row_index,
+            cell.column_index,
+            cell.row_span,
+            cell.column_span,
+            cell.text,
+        )
+        for cell in index.cells
+    ] == [
+        (1, 1, 1, 2, "Merged requirement header"),
+        (2, 1, 1, 1, "REQ-H"),
+        (2, 2, 1, 1, "Approved"),
+    ]
+    assert [
+        (occurrence.physical_row_index, occurrence.occurrence_role)
+        for occurrence in index.cell_occurrences
+    ] == [
+        (1, "original"),
+        (2, "original"),
+        (2, "original"),
+    ]
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+
+def test_pdf_v2_checked_vertical_merge_passes_structured_projection():
+    path = Path("tests/fixtures/pdf_table_vertical_merge.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    table_block = parsed.blocks[0]
+    assert table_block.text == (
+        "Shared control | First state\n"
+        "Shared control | Second state"
+    )
+    assert [
+        (
+            cell.row_index,
+            cell.column_index,
+            cell.row_span,
+            cell.column_span,
+            cell.text,
+        )
+        for cell in index.cells
+    ] == [
+        (1, 1, 2, 1, "Shared control"),
+        (1, 2, 1, 1, "First state"),
+        (2, 2, 1, 1, "Second state"),
+    ]
+    merged_cell_id = "cell_00000001_r0001_c0001"
+    selected_cell_id = "cell_00000001_r0002_c0002"
+    assert [
+        (
+            occurrence.cell_id,
+            occurrence.physical_row_index,
+            occurrence.occurrence_role,
+        )
+        for occurrence in index.cell_occurrences
+    ] == [
+        (merged_cell_id, 1, "original"),
+        ("cell_00000001_r0001_c0002", 1, "original"),
+        (merged_cell_id, 2, "row_span_projection"),
+        (selected_cell_id, 2, "original"),
+    ]
+
+    prompt = build_reqir_prompt(
+        ModelRequest(
+            document_text=parsed.text,
+            document_name=parsed.document_name,
+            source_format=parsed.source_format,
+            parser_name=parsed.parser_name,
+            model_mode="mock",
+            blocks=parsed.blocks,
+            evidence_index=index,
+            metadata={"evidence_policy": "structured_required"},
+        )
+    )
+    assert "row_span=2" in prompt
+    assert merged_cell_id in prompt
+    assert selected_cell_id in prompt
+
+    requirement = ReqIRExtractor().extract(
+        {
+            "items": [
+                {
+                    "statement": (
+                        "The system shall preserve the shared control "
+                        "in the second state."
+                    ),
+                    "source_block_id": table_block.block_id,
+                    "source_quote": "Shared control | Second state",
+                    "source_cell_ids": [
+                        merged_cell_id,
+                        selected_cell_id,
+                    ],
+                    "source_table_row_index": 2,
+                }
+            ]
+        },
+        parsed.blocks,
+        document_name=parsed.document_name,
+    )[0]
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    quote_validated, quote_report = SourceQuoteValidator().validate(
+        [requirement],
+        parsed.blocks,
+        registry,
+    )
+    locator_validated, locator_report, failures = (
+        SourceLocatorValidator().validate(
+            quote_validated,
+            index,
+            registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+    source = requirement.sources[0]
+    assert quote_report.valid is True
+    assert locator_report.valid is True
+    assert failures == []
+    assert locator_validated == [requirement]
+    assert source.locator_status == "PASS_STRUCTURED"
+    assert source.table_locator is not None
+    assert source.table_locator.selected_row_index == 2
+    assert source.table_locator.cell_ids == [
+        merged_cell_id,
+        selected_cell_id,
+    ]
+    assert source.page_locator is not None
+    assert source.page_locator.derivation == "table_cell_union"
+    assert source.page_locator.bbox == source.table_locator.bbox
+
+    projection = build_table_evidence_view(
+        index,
+        task_id="merged-fixture-task",
+        table_id=index.tables[0].table_id,
+        block_id=table_block.block_id,
+    )
+    assert [row.physical_row_index for row in projection.rows] == [1, 2]
+    projected_merged = projection.rows[1].cells[0]
+    assert projected_merged.cell_id == merged_cell_id
+    assert projected_merged.row_span == 2
+    assert projected_merged.occurrences[0].occurrence_role == (
+        "row_span_projection"
+    )
+    visual_fixture = read_json(
+        "frontend/src/fixtures/pdf-merged-table-evidence.json"
+    )
+    assert visual_fixture["evidenceFingerprint"] == index.evidence_fingerprint
+    assert visual_fixture["blocks"] == [
+        table_block.model_dump(mode="json")
+    ]
+    expected_visual_projection = build_table_evidence_view(
+        index,
+        task_id="visual-task",
+        table_id=index.tables[0].table_id,
+        block_id=table_block.block_id,
+    )
+    assert visual_fixture["tableEvidence"] == (
+        expected_visual_projection.model_dump(mode="json")
+    )
+    current_preview, _, _ = render_pdf_page(path, 1)
+    checked_preview = Path(
+        "frontend/tests/visual/fixtures/pdf-merged-table-page.png"
+    ).read_bytes()
+    assert hashlib.sha256(checked_preview).digest() == (
+        hashlib.sha256(current_preview).digest()
+    )
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_pdf_v2_merged_topology_survives_page_rotation(
+    tmp_path: Path,
+    rotation: int,
+):
+    source = fitz.open("tests/fixtures/pdf_table_vertical_merge.pdf")
+    rotated = fitz.open()
+    rotated.insert_pdf(source)
+    source.close()
+    rotated[0].set_rotation(rotation)
+    path = tmp_path / f"pdf-table-vertical-merge-{rotation}.pdf"
+    rotated.save(path)
+    rotated.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert len(index.tables) == 1
+    assert index.tables[0].topology_status == "complete"
+    assert any(
+        cell.row_span > 1 or cell.column_span > 1
+        for cell in index.cells
+    )
+    table_block_ids = set(index.tables[0].block_ids)
+    assert all(
+        block.expected_capabilities
+        == ["text_range", "page_region", "table_cell"]
+        and block.available_capabilities
+        == ["text_range", "page_region", "table_cell"]
+        for block in index.blocks
+        if block.block_id in table_block_ids
+    )
+    assert index.pages[0].source_rotation == rotation
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+
+def test_pdf_v2_checked_ambiguous_merge_downgrades_table_cell():
+    path = Path("tests/fixtures/pdf_table_ambiguous_merge.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert index.tables == []
+    assert index.cells == []
+    assert index.cell_occurrences == []
+    assert any(
+        "PDF_TABLE_MERGED_BOUNDARY_AMBIGUOUS: axis=x" in warning
+        for warning in parsed.warnings
+    )
+    assert all(
+        block.expected_capabilities
+        == ["text_range", "page_region", "table_cell"]
+        and block.available_capabilities == ["text_range", "page_region"]
+        for block in index.blocks
+    )
+
+    source_block = next(
+        block for block in parsed.blocks if "Ambiguous header" in block.text
+    )
+    requirement = RequirementIR(
+        id="REQ-PDF-AMBIGUOUS-MERGE",
+        statement="Ambiguous header",
+        sources=[
+            SourceSpan(
+                document_id=parsed.document_id,
+                block_id=source_block.block_id,
+                quote="Ambiguous header",
+            )
+        ],
+    )
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    optional, optional_report, optional_failures = (
+        SourceLocatorValidator().validate(
+            [requirement],
+            index,
+            registry,
+            policy="structured_if_available",
+            document_blocks=parsed.blocks,
+        )
+    )
+    assert optional == [requirement]
+    assert optional_report.valid is True
+    assert optional_failures == []
+    assert requirement.sources[0].locator_status == "WARNING_UNAVAILABLE"
+
+    strict, strict_report, strict_failures = (
+        SourceLocatorValidator().validate(
+            [requirement],
+            index,
+            registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+    assert strict == []
+    assert strict_report.valid is False
+    assert len(strict_failures) == 1
+
+
 def test_pdf_v2_table_source_passes_structured_locator_validation():
     path = Path("tests/fixtures/pdf_table_requirements.pdf")
     parsed = PdfParserV2().parse(path)
@@ -560,120 +863,6 @@ def test_pdf_v2_table_source_passes_structured_locator_validation():
     assert source.page_locator is not None
     assert source.page_locator.derivation == "table_cell_union"
     assert source.page_locator.bbox == source.table_locator.bbox
-
-
-def test_pdf_v2_merged_table_detection_keeps_text_without_table_cell(
-    tmp_path: Path,
-):
-    path = tmp_path / "merged-table.pdf"
-    document = fitz.open()
-    page = document.new_page(width=400, height=300)
-    for x in (50, 300):
-        page.draw_line((x, 50), (x, 150))
-    page.draw_line((150, 100), (150, 150))
-    for y in (50, 100, 150):
-        page.draw_line((50, y), (300, y))
-    page.insert_text((60, 80), "Merged Header")
-    page.insert_text((60, 130), "C")
-    page.insert_text((160, 130), "D")
-    document.save(path)
-    document.close()
-
-    parsed = PdfParserV2().parse(path)
-    index = parsed.evidence_index
-    assert index is not None
-    assert index.tables == []
-    assert index.cells == []
-    assert index.cell_occurrences == []
-    assert "Merged Header" in parsed.text
-    assert "C" in parsed.text
-    assert "D" in parsed.text
-    assert any(
-        warning.startswith(
-            "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: page=1, table=1"
-        )
-        for warning in parsed.warnings
-    )
-    assert all(
-        block.expected_capabilities
-        == ["text_range", "page_region", "table_cell"]
-        and block.available_capabilities == ["text_range", "page_region"]
-        for block in index.blocks
-    )
-    source_block = next(
-        block for block in parsed.blocks if block.text == "Merged Header"
-    )
-    assert source_block.metadata["table_cell_expected"] is True
-    assert source_block.metadata["rejected_table_candidates"] == [1]
-
-    def prepare_requirement() -> tuple[RequirementIR, object]:
-        requirement = RequirementIR(
-            id="REQ-PDF-MERGED",
-            statement="Merged Header",
-            sources=[
-                SourceSpan(
-                    document_id=parsed.document_id,
-                    block_id=source_block.block_id,
-                    quote="Merged Header",
-                )
-            ],
-        )
-        registry = build_quote_match_registry(
-            [requirement],
-            parsed.blocks,
-            evidence_fingerprint=index.evidence_fingerprint,
-            evidence_index=index,
-        )
-        SourceEvidenceEnricher().enrich(
-            [requirement],
-            index,
-            registry,
-            parsed.blocks,
-        )
-        return requirement, registry
-
-    optional_requirement, optional_registry = prepare_requirement()
-    optional_validated, optional_report, optional_failures = (
-        SourceLocatorValidator().validate(
-            [optional_requirement],
-            index,
-            optional_registry,
-            policy="structured_if_available",
-            document_blocks=parsed.blocks,
-        )
-    )
-    optional_source = optional_requirement.sources[0]
-    assert optional_validated == [optional_requirement]
-    assert optional_report.valid is True
-    assert optional_failures == []
-    assert optional_source.locator_status == "WARNING_UNAVAILABLE"
-    assert {
-        result.capability: result.status
-        for result in optional_source.capability_results
-    } == {
-        "text_range": "PASS",
-        "page_region": "PASS",
-        "table_cell": "WARNING_UNAVAILABLE",
-    }
-
-    required_requirement, required_registry = prepare_requirement()
-    required_validated, required_report, required_failures = (
-        SourceLocatorValidator().validate(
-            [required_requirement],
-            index,
-            required_registry,
-            policy="structured_required",
-            document_blocks=parsed.blocks,
-        )
-    )
-    assert required_validated == []
-    assert required_report.valid is False
-    assert len(required_failures) == 1
-    assert any(
-        issue.code == "SOURCE_TABLE_CELL_UNAVAILABLE"
-        and issue.level == "error"
-        for issue in required_report.issues
-    )
 
 
 def test_pdf_v2_rejected_table_marks_only_related_mixed_page_blocks(

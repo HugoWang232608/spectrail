@@ -11,6 +11,9 @@ import './styles/visual.css'
 
 const fixtureName = new URLSearchParams(window.location.search).get('fixture') ?? 'pdf-0'
 const fixture = visualFixture(fixtureName)
+const evidenceFingerprint = (
+  fixture.evidenceFingerprint ?? VISUAL_EVIDENCE_FINGERPRINT
+)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -21,8 +24,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         requirement={fixture.requirement}
         blocks={fixture.blocks}
         blocksError={null}
-        evidenceFingerprint={VISUAL_EVIDENCE_FINGERPRINT}
-        blocksEvidenceFingerprint={VISUAL_EVIDENCE_FINGERPRINT}
+        evidenceFingerprint={evidenceFingerprint}
+        blocksEvidenceFingerprint={evidenceFingerprint}
       />
     </main>
   </React.StrictMode>

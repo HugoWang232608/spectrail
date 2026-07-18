@@ -26,6 +26,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         blocksError={null}
         evidenceFingerprint={evidenceFingerprint}
         blocksEvidenceFingerprint={evidenceFingerprint}
+        runGeneration={1}
+        blocksRunGeneration={1}
         rerunningEvidence={false}
         evidenceRecoveryDisabled={false}
       />

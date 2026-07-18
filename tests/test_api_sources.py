@@ -34,8 +34,10 @@ def test_api_blocks_returns_completed_task_blocks(api_client: TestClient, comple
     assert response.status_code == 200
     payload = response.json()
     assert payload["task_id"] == task_id
+    assert payload["run_generation"] == 1
     assert payload["evidence_fingerprint"] == fingerprint
     assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-spectrail-run-generation"] == "1"
     assert len(payload["items"]) > 0
     first = payload["items"][0]
     assert {"block_id", "document_id", "type", "text", "section_path", "order", "metadata"} <= set(first)
@@ -46,7 +48,11 @@ def test_api_blocks_before_completion_returns_409(api_client: TestClient):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
 
-    response = api_client.get(_blocks_url(task_id, "0" * 64))
+    response = api_client.get(
+        f"/api/tasks/{task_id}/blocks"
+        "?expected_run_generation=0"
+        f"&expected_evidence_fingerprint={'0' * 64}"
+    )
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "TASK_NOT_COMPLETED"
@@ -167,16 +173,18 @@ def test_task_store_returns_fresh_block_projections_from_immutable_cache(
     fingerprint = _reqir_evidence_fingerprint(api_client, task_id)
     store = api_client.app.state.task_store
 
-    _, first = store.read_blocks(
+    _, _, first = store.read_blocks(
         task_id,
         expected_evidence_fingerprint=fingerprint,
+        expected_run_generation=1,
     )
     original_text = first[0]["text"]
     first[0]["text"] = "caller mutation"
 
-    _, second = store.read_blocks(
+    _, _, second = store.read_blocks(
         task_id,
         expected_evidence_fingerprint=fingerprint,
+        expected_run_generation=1,
     )
 
     assert second[0]["text"] == original_text
@@ -193,11 +201,12 @@ def test_api_table_evidence_returns_block_scoped_logical_grid(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{block.block_id}/evidence"
-        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-spectrail-run-generation"] == "1"
     payload = response.json()
     assert payload["schema_version"] == "table_evidence_view_v1"
     assert payload["task_id"] == task_id
@@ -229,7 +238,7 @@ def test_api_table_evidence_reuses_projection_for_pdf_table(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{block_id}/evidence"
-        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 200
@@ -261,7 +270,7 @@ def test_api_table_evidence_exposes_pdf_continuation_lineage(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{continued.table_id}"
         f"/blocks/{block_id}/evidence"
-        f"?expected_evidence_fingerprint="
+        f"?expected_run_generation=1&expected_evidence_fingerprint="
         f"{parsed.evidence_index.evidence_fingerprint}"
     )
 
@@ -304,6 +313,7 @@ def test_task_store_rejects_legacy_pdf_continuation_before_fingerprint_validatio
             expected_evidence_fingerprint=(
                 parsed.evidence_index.evidence_fingerprint
             ),
+            expected_run_generation=1,
         )
 
 
@@ -327,7 +337,7 @@ def test_api_source_routes_require_rebuild_for_legacy_pdf_continuation(
         endpoint = (
             f"/api/tasks/{task_id}/tables/{continued.table_id}"
             f"/blocks/{continued.block_ids[0]}/evidence"
-            f"?expected_evidence_fingerprint={fingerprint}"
+            f"?expected_run_generation=1&expected_evidence_fingerprint={fingerprint}"
         )
     else:
         endpoint = _preview_url(
@@ -363,7 +373,7 @@ def test_api_table_evidence_preserves_repeated_header_projection(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{second_block_id}/evidence"
-        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 200
@@ -385,7 +395,7 @@ def test_api_table_evidence_rejects_foreign_block(api_client: TestClient):
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table_id}"
         "/blocks/blk_9999/evidence"
-        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 404
@@ -405,7 +415,7 @@ def test_api_table_evidence_rejects_stale_fingerprint(api_client: TestClient):
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{table.block_ids[0]}/evidence"
-        f"?expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={parsed.evidence_index.evidence_fingerprint}"
     )
 
     assert response.status_code == 409
@@ -422,7 +432,7 @@ def test_api_table_evidence_rejects_reqir_from_another_evidence_version(
     response = api_client.get(
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{table.block_ids[0]}/evidence"
-        f"?expected_evidence_fingerprint={'f' * 64}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={'f' * 64}"
     )
 
     assert response.status_code == 409
@@ -448,7 +458,7 @@ def test_api_table_evidence_cache_invalidates_when_evidence_changes(
     )
 
     first = api_client.get(
-        f"{endpoint}?expected_evidence_fingerprint={old_fingerprint}"
+        f"{endpoint}?expected_run_generation=1&expected_evidence_fingerprint={old_fingerprint}"
     )
     assert first.status_code == 200
 
@@ -461,13 +471,13 @@ def test_api_table_evidence_cache_invalidates_when_evidence_changes(
     write_json(evidence_path, changed.model_dump(mode="json"))
 
     stale_reqir = api_client.get(
-        f"{endpoint}?expected_evidence_fingerprint={old_fingerprint}"
+        f"{endpoint}?expected_run_generation=1&expected_evidence_fingerprint={old_fingerprint}"
     )
     assert stale_reqir.status_code == 409
     assert stale_reqir.json()["detail"]["code"] == "EVIDENCE_VERSION_CHANGED"
 
     refreshed_reqir = api_client.get(
-        f"{endpoint}?expected_evidence_fingerprint={changed.evidence_fingerprint}"
+        f"{endpoint}?expected_run_generation=1&expected_evidence_fingerprint={changed.evidence_fingerprint}"
     )
     assert refreshed_reqir.status_code == 200
     assert refreshed_reqir.json()["evidence_fingerprint"] == (
@@ -485,7 +495,7 @@ def test_api_table_evidence_reuses_validated_index_for_unchanged_file(
     endpoint = (
         f"/api/tasks/{task_id}/tables/{table.table_id}"
         f"/blocks/{table.block_ids[0]}/evidence"
-        "?expected_evidence_fingerprint="
+        "?expected_run_generation=1&expected_evidence_fingerprint="
         f"{parsed.evidence_index.evidence_fingerprint}"
     )
 
@@ -518,7 +528,7 @@ def test_table_evidence_cache_evicts_least_recently_used_task(
         response = client.get(
             f"/api/tasks/{task_id}/tables/{table.table_id}"
             f"/blocks/{table.block_ids[0]}/evidence"
-            "?expected_evidence_fingerprint="
+            "?expected_run_generation=1&expected_evidence_fingerprint="
             f"{parsed.evidence_index.evidence_fingerprint}"
         )
         assert response.status_code == 200
@@ -765,6 +775,50 @@ def test_api_pdf_page_preview_uses_rotated_page_dimensions(
     assert response.status_code == 200
     assert response.headers["x-spectrail-preview-width"] == expected_size[0]
     assert response.headers["x-spectrail-preview-height"] == expected_size[1]
+    assert response.headers["x-spectrail-run-generation"] == "1"
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["reqir", "blocks", "table", "page-preview"],
+)
+def test_api_evidence_reads_reject_stale_task_run_generation(
+    api_client: TestClient,
+    route: str,
+):
+    task_id, parsed = _create_completed_pdf_table_task(api_client)
+    assert parsed.evidence_index is not None
+    table = parsed.evidence_index.tables[0]
+    fingerprint = parsed.evidence_index.evidence_fingerprint
+    if route == "reqir":
+        url = (
+            f"/api/tasks/{task_id}/reqir"
+            "?expected_run_generation=0"
+        )
+    elif route == "blocks":
+        url = (
+            f"/api/tasks/{task_id}/blocks"
+            "?expected_run_generation=0"
+            f"&expected_evidence_fingerprint={fingerprint}"
+        )
+    elif route == "table":
+        url = (
+            f"/api/tasks/{task_id}/tables/{table.table_id}"
+            f"/blocks/{table.block_ids[0]}/evidence"
+            "?expected_run_generation=0"
+            f"&expected_evidence_fingerprint={fingerprint}"
+        )
+    else:
+        url = (
+            f"/api/tasks/{task_id}/pages/1/preview.png"
+            "?expected_run_generation=0"
+            f"&expected_evidence_fingerprint={fingerprint}"
+        )
+
+    response = api_client.get(url)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RUN_GENERATION_CHANGED"
 
 
 def test_api_pdf_page_preview_maps_render_failure_to_structured_error(
@@ -846,7 +900,7 @@ def test_api_page_preview_rejects_non_pdf_task(
 
     response = api_client.get(
         f"/api/tasks/{task_id}/pages/1/preview.png"
-        f"?expected_evidence_fingerprint={_reqir_evidence_fingerprint(api_client, task_id)}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={_reqir_evidence_fingerprint(api_client, task_id)}"
     )
 
     assert response.status_code == 409
@@ -859,7 +913,7 @@ def test_api_page_preview_before_completion_returns_409(api_client: TestClient):
 
     response = api_client.get(
         f"/api/tasks/{task_id}/pages/1/preview.png"
-        f"?expected_evidence_fingerprint={'0' * 64}"
+        f"?expected_run_generation=0&expected_evidence_fingerprint={'0' * 64}"
     )
 
     assert response.status_code == 409
@@ -899,6 +953,7 @@ def _create_completed_pdf_task(
         task_dir / "parsed" / "evidence_index.json",
         parsed.evidence_index.model_dump(mode="json"),
     )
+    api_client.app.state.task_store.begin_run(task_id)
     api_client.app.state.task_store.update_task(task_id, status="completed")
     return task_id
 
@@ -952,6 +1007,7 @@ def _create_completed_docx_table_task(
         task_dir / "parsed" / "evidence_index.json",
         parsed.evidence_index.model_dump(mode="json"),
     )
+    api_client.app.state.task_store.begin_run(task_id)
     api_client.app.state.task_store.update_task(task_id, status="completed")
     return task_id, parsed
 
@@ -986,6 +1042,7 @@ def _create_completed_pdf_table_task(
         task_dir / "parsed" / "evidence_index.json",
         parsed.evidence_index.model_dump(mode="json"),
     )
+    api_client.app.state.task_store.begin_run(task_id)
     api_client.app.state.task_store.update_task(task_id, status="completed")
     return task_id, parsed
 
@@ -1012,7 +1069,9 @@ def _reqir_evidence_fingerprint(
     api_client: TestClient,
     task_id: str,
 ) -> str:
-    response = api_client.get(f"/api/tasks/{task_id}/reqir")
+    response = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     assert response.status_code == 200
     return response.json()["metadata"]["evidence_fingerprint"]
 
@@ -1020,7 +1079,7 @@ def _reqir_evidence_fingerprint(
 def _blocks_url(task_id: str, evidence_fingerprint: str) -> str:
     return (
         f"/api/tasks/{task_id}/blocks"
-        f"?expected_evidence_fingerprint={evidence_fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={evidence_fingerprint}"
     )
 
 
@@ -1047,5 +1106,5 @@ def _preview_url(
     )
     return (
         f"/api/tasks/{task_id}/pages/{page}/preview.png"
-        f"?expected_evidence_fingerprint={fingerprint}"
+        f"?expected_run_generation=1&expected_evidence_fingerprint={fingerprint}"
     )

@@ -84,6 +84,10 @@ class EvidenceVersionChangedError(TaskStoreError):
     pass
 
 
+class RunGenerationChangedError(TaskStoreError):
+    pass
+
+
 class LegacyEvidenceContinuationRebuildRequiredError(TaskStoreError):
     pass
 
@@ -280,15 +284,24 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def read_reqir(self, task_id: str) -> dict[str, Any]:
+    def read_reqir(
+        self,
+        task_id: str,
+        *,
+        expected_run_generation: int,
+    ) -> tuple[int, dict[str, Any]]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "reqir_read"):
-                self.require_readable_task(task_id)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
                 reqir_path = task_dir / "exports" / "reqir.json"
                 if not reqir_path.exists():
                     raise TaskNotReadyError(f"reqir export missing: {task_id}")
-                return read_json(reqir_path)
+                return run_generation, read_json(reqir_path)
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -297,11 +310,16 @@ class LocalTaskStore:
         task_id: str,
         *,
         expected_evidence_fingerprint: str,
-    ) -> tuple[str, list[dict[str, Any]]]:
+        expected_run_generation: int,
+    ) -> tuple[int, str, list[dict[str, Any]]]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "blocks_read"):
-                self.require_readable_task(task_id)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
                 blocks_path = task_dir / "parsed" / "blocks.json"
                 if not blocks_path.exists():
                     raise BlocksNotFoundError(f"blocks not found: {task_id}")
@@ -346,6 +364,7 @@ class LocalTaskStore:
                             f"validated blocks are unavailable: {task_id}"
                         )
                     return (
+                        run_generation,
                         cache_entry.index.evidence_fingerprint,
                         [
                             block.model_dump(mode="json")
@@ -370,11 +389,16 @@ class LocalTaskStore:
         table_id: str,
         block_id: str,
         expected_evidence_fingerprint: str,
-    ) -> TableEvidenceView:
+        expected_run_generation: int,
+    ) -> tuple[int, TableEvidenceView]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "table_evidence_read"):
-                self.require_readable_task(task_id)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
                 try:
                     cache_entry = self._validated_evidence_cache_entry(
                         task_id,
@@ -401,7 +425,7 @@ class LocalTaskStore:
                         )
                         with self._evidence_cache_lock:
                             cache_entry.projections[projection_key] = projection
-                    return projection
+                    return run_generation, projection
                 except TableEvidenceViewNotFoundError as exc:
                     raise TableEvidenceNotFoundError(str(exc)) from exc
         except TaskTransactionError as exc:
@@ -413,16 +437,22 @@ class LocalTaskStore:
         page_number: int,
         *,
         expected_evidence_fingerprint: str,
-    ) -> tuple[bytes, int, int, str]:
+        expected_run_generation: int,
+    ) -> tuple[bytes, int, int, str, int]:
         if page_number < 1:
             raise PagePreviewNotFoundError("page number must be 1-based")
 
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "page_preview_read"):
-                task = read_json(task_dir / "task.json")
-                if task.get("status") not in READABLE_TASK_STATUSES:
-                    raise TaskNotReadyError(f"task is not completed: {task_id}")
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
+                task = _normalize_task_record(
+                    read_json(task_dir / "task.json")
+                )
                 input_document = task.get("input_document")
                 if not isinstance(input_document, str) or not input_document:
                     raise PagePreviewUnavailableError(
@@ -500,6 +530,7 @@ class LocalTaskStore:
                         width,
                         height,
                         cache_entry.index.evidence_fingerprint,
+                        run_generation,
                     )
                 except PdfPagePreviewNotFoundError as exc:
                     raise PagePreviewNotFoundError(str(exc)) from exc
@@ -542,6 +573,23 @@ class LocalTaskStore:
                 return task
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
+
+    @staticmethod
+    def _require_readable_generation(
+        task_id: str,
+        task_dir: Path,
+        expected_run_generation: int,
+    ) -> int:
+        task = _normalize_task_record(read_json(task_dir / "task.json"))
+        actual_run_generation = task["run_generation"]
+        if actual_run_generation != expected_run_generation:
+            raise RunGenerationChangedError(
+                "expected task run generation "
+                f"{expected_run_generation}, found {actual_run_generation}"
+            )
+        if task.get("status") not in READABLE_TASK_STATUSES:
+            raise TaskNotReadyError(f"task is not completed: {task_id}")
+        return actual_run_generation
 
     def get_export_path(self, task_id: str, filename: str) -> Path:
         if filename not in {"reqir.json", "requirements.xlsx"}:

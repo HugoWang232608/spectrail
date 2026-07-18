@@ -17,6 +17,7 @@ type TableEvidenceViewProps = {
   source: SourceSpan
   tableCellStatus: CapabilityValidationResult['status'] | undefined
   expectedEvidenceFingerprint: string | null
+  expectedRunGeneration: number | null
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
   rerunningEvidence: boolean
@@ -29,6 +30,7 @@ function TableEvidenceView({
   source,
   tableCellStatus,
   expectedEvidenceFingerprint,
+  expectedRunGeneration,
   reloadingEvidence,
   onReloadEvidence,
   rerunningEvidence,
@@ -45,7 +47,12 @@ function TableEvidenceView({
   useEffect(() => {
     setData(null)
     setError(null)
-    if (!validated || !locator || !expectedEvidenceFingerprint) {
+    if (
+      !validated
+      || !locator
+      || !expectedEvidenceFingerprint
+      || expectedRunGeneration == null
+    ) {
       setLoading(false)
       return
     }
@@ -57,6 +64,7 @@ function TableEvidenceView({
       locator.table_id,
       source.block_id,
       expectedEvidenceFingerprint,
+      expectedRunGeneration,
       controller.signal
     )
       .then((response) => {
@@ -78,10 +86,15 @@ function TableEvidenceView({
     source.source_evidence_key,
     taskId,
     validated,
-    expectedEvidenceFingerprint
+    expectedEvidenceFingerprint,
+    expectedRunGeneration
   ])
 
-  if (validated && locator && !expectedEvidenceFingerprint) {
+  if (
+    validated
+    && locator
+    && (!expectedEvidenceFingerprint || expectedRunGeneration == null)
+  ) {
     return (
       <section className="table-evidence-box">
         <h3>Table evidence</h3>
@@ -119,7 +132,8 @@ function TableEvidenceView({
       data,
       source,
       taskId,
-      expectedEvidenceFingerprint
+      expectedEvidenceFingerprint,
+      expectedRunGeneration
     )
     : false
   return (
@@ -140,10 +154,12 @@ function TableEvidenceView({
               rerunning={rerunningEvidence}
               onRerun={onRerunEvidence}
             />
-          ) : error.code === 'EVIDENCE_VERSION_CHANGED' ? (
+          ) : isEvidenceContextChanged(error) ? (
             <>
               <p className="muted-text">
-                Evidence version changed. Reload ReqIR before reviewing table evidence.
+                {error.code === 'RUN_GENERATION_CHANGED'
+                  ? 'Task run generation changed. Reload ReqIR before reviewing table evidence.'
+                  : 'Evidence version changed. Reload ReqIR before reviewing table evidence.'}
               </p>
               {onReloadEvidence ? (
                 <ReloadEvidenceButton
@@ -166,11 +182,16 @@ function TableEvidenceView({
       ) : data && !responseMatches ? (
         <div className="preview-unavailable" role="alert">
           <p className="muted-text">
-            {data.evidence_fingerprint !== expectedEvidenceFingerprint
-              ? 'Evidence version changed. Reload ReqIR before reviewing table evidence.'
-              : 'Table evidence response does not match the validated locator. Grid withheld.'}
+            {(
+              data.run_generation !== expectedRunGeneration
+            )
+              ? 'Task run generation changed. Reload ReqIR before reviewing table evidence.'
+              : data.evidence_fingerprint !== expectedEvidenceFingerprint
+                ? 'Evidence version changed. Reload ReqIR before reviewing table evidence.'
+                : 'Table evidence response does not match the validated locator. Grid withheld.'}
           </p>
-          {data.evidence_fingerprint !== expectedEvidenceFingerprint
+          {(data.evidence_fingerprint !== expectedEvidenceFingerprint
+          || data.run_generation !== expectedRunGeneration)
           && onReloadEvidence ? (
               <ReloadEvidenceButton
                 reloading={reloadingEvidence}
@@ -361,7 +382,8 @@ function tableEvidenceMatchesLocator(
   data: TableEvidenceResponse,
   source: SourceSpan,
   taskId: string,
-  expectedEvidenceFingerprint: string | null
+  expectedEvidenceFingerprint: string | null,
+  expectedRunGeneration: number | null
 ): boolean {
   const locator = source.table_locator
   if (
@@ -369,6 +391,7 @@ function tableEvidenceMatchesLocator(
     || !expectedEvidenceFingerprint
     || data.task_id !== taskId
     || data.evidence_fingerprint !== expectedEvidenceFingerprint
+    || data.run_generation !== expectedRunGeneration
     || data.table_id !== locator.table_id
     || data.block_id !== source.block_id
     || locator.row_indices.length !== locator.cell_ids.length
@@ -401,6 +424,13 @@ function tableEvidenceMatchesLocator(
       && cell.column_index === locator.column_indices[index]
     )
   })
+}
+
+function isEvidenceContextChanged(error: ApiError): boolean {
+  return (
+    error.code === 'EVIDENCE_VERSION_CHANGED'
+    || error.code === 'RUN_GENERATION_CHANGED'
+  )
 }
 
 function tableLocatorNotice(

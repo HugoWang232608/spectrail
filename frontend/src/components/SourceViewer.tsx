@@ -25,6 +25,8 @@ type SourceViewerProps = {
   blocksError: ApiError | null
   evidenceFingerprint: string | null
   blocksEvidenceFingerprint: string | null
+  runGeneration: number | null
+  blocksRunGeneration: number | null
   reloadingEvidence?: boolean
   onReloadEvidence?: () => void
   rerunningEvidence?: boolean
@@ -46,6 +48,8 @@ function SourceViewer({
   blocksError,
   evidenceFingerprint,
   blocksEvidenceFingerprint,
+  runGeneration,
+  blocksRunGeneration,
   reloadingEvidence = false,
   onReloadEvidence,
   rerunningEvidence = false,
@@ -82,10 +86,27 @@ function SourceViewer({
     evidenceFingerprint != null
     && blocksEvidenceFingerprint === evidenceFingerprint
   )
-  const evidenceContextTrusted = blocksVersionMatches && blocksError === null
-  const blockContextError = blocksError ?? (
+  const runGenerationMatches = (
+    runGeneration != null
+    && blocksRunGeneration === runGeneration
+  )
+  const evidenceContextTrusted = (
     blocksVersionMatches
-      ? null
+    && runGenerationMatches
+    && blocksError === null
+  )
+  const blockContextError = blocksError ?? (
+    !runGenerationMatches
+      ? {
+        code: runGeneration == null
+          ? 'RUN_GENERATION_UNAVAILABLE'
+          : 'RUN_GENERATION_CHANGED',
+        message: runGeneration == null
+          ? 'ReqIR package has no bound task run generation'
+          : 'blocks do not match the loaded ReqIR run generation'
+      }
+      : blocksVersionMatches
+        ? null
       : {
         code: evidenceFingerprint
           ? 'EVIDENCE_VERSION_CHANGED'
@@ -229,6 +250,7 @@ function SourceViewer({
               source={source}
               pageRegionStatus={pageRegionStatus}
               expectedEvidenceFingerprint={evidenceFingerprint ?? null}
+              expectedRunGeneration={runGeneration}
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
               rerunningEvidence={rerunningEvidence}
@@ -246,6 +268,7 @@ function SourceViewer({
               source={source}
               tableCellStatus={tableCellStatus}
               expectedEvidenceFingerprint={evidenceFingerprint ?? null}
+              expectedRunGeneration={runGeneration}
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
               rerunningEvidence={rerunningEvidence}
@@ -316,6 +339,7 @@ function PageEvidencePreview({
   source,
   pageRegionStatus,
   expectedEvidenceFingerprint,
+  expectedRunGeneration,
   reloadingEvidence,
   onReloadEvidence,
   rerunningEvidence,
@@ -326,6 +350,7 @@ function PageEvidencePreview({
   source: SourceSpan
   pageRegionStatus: CapabilityValidationResult['status'] | undefined
   expectedEvidenceFingerprint: string | null
+  expectedRunGeneration: number | null
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
   rerunningEvidence: boolean
@@ -344,6 +369,7 @@ function PageEvidencePreview({
       !locator
       || !pageLocatorValidated
       || !expectedEvidenceFingerprint
+      || expectedRunGeneration == null
     ) {
       setPreviewUrl(null)
       setPreviewError(null)
@@ -360,6 +386,7 @@ function PageEvidencePreview({
       taskId,
       locator.page,
       expectedEvidenceFingerprint,
+      expectedRunGeneration,
       attempt,
       controller.signal
     ).then((blob) => {
@@ -387,6 +414,7 @@ function PageEvidencePreview({
   }, [
     attempt,
     expectedEvidenceFingerprint,
+    expectedRunGeneration,
     locator,
     pageLocatorValidated,
     taskId
@@ -408,7 +436,7 @@ function PageEvidencePreview({
       </div>
     )
   }
-  if (!expectedEvidenceFingerprint) {
+  if (!expectedEvidenceFingerprint || expectedRunGeneration == null) {
     return (
       <div className="page-evidence-box">
         <div className="page-evidence-heading">
@@ -461,11 +489,13 @@ function PageEvidencePreview({
           ) : (
             <>
               <p className="muted-text">
-                {previewError.code === 'EVIDENCE_VERSION_CHANGED'
-                  ? 'Evidence version changed. Reload task evidence before reviewing this page.'
+                {isEvidenceContextChanged(previewError)
+                  ? previewError.code === 'RUN_GENERATION_CHANGED'
+                    ? 'Task run generation changed. Reload task evidence before reviewing this page.'
+                    : 'Evidence version changed. Reload task evidence before reviewing this page.'
                   : `PDF preview unavailable: ${previewError.code} ${previewError.message}`}
               </p>
-              {previewError.code === 'EVIDENCE_VERSION_CHANGED'
+              {isEvidenceContextChanged(previewError)
                 ? onReloadEvidence ? (
                     <button
                       type="button"
@@ -525,6 +555,13 @@ function pagePreviewError(value: unknown): ApiError {
     code: 'PAGE_PREVIEW_UNAVAILABLE',
     message: value instanceof Error ? value.message : 'Unexpected preview error'
   }
+}
+
+function isEvidenceContextChanged(error: ApiError): boolean {
+  return (
+    error.code === 'EVIDENCE_VERSION_CHANGED'
+    || error.code === 'RUN_GENERATION_CHANGED'
+  )
 }
 
 function SourceItem({ label, value }: { label: string; value: string }) {

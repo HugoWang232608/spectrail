@@ -156,6 +156,7 @@ export function makeMergedDocxVisualFixture(): VisualFixture {
   const tableEvidence = validateVisualTableEvidence({
     schema_version: 'table_evidence_view_v1',
     task_id: VISUAL_TASK_ID,
+    run_generation: 1,
     evidence_fingerprint: VISUAL_EVIDENCE_FINGERPRINT,
     table_id: tableId,
     block_id: blockId,
@@ -269,6 +270,7 @@ export function makeLargeRowGroupVisualFixture(): VisualFixture {
   const tableEvidence = validateVisualTableEvidence({
     schema_version: 'table_evidence_view_v1',
     task_id: VISUAL_TASK_ID,
+    run_generation: 1,
     evidence_fingerprint: VISUAL_EVIDENCE_FINGERPRINT,
     table_id: tableId,
     block_id: blockId,
@@ -360,7 +362,10 @@ export function makePdfTableVisualFixture(): VisualFixture {
     blocks: PDF_TABLE_VISUAL_FIXTURE.blocks,
     evidenceFingerprint: PDF_TABLE_VISUAL_FIXTURE.evidenceFingerprint,
     tableEvidence: validateVisualTableEvidence(
-      PDF_TABLE_VISUAL_FIXTURE.tableEvidence
+      {
+        ...PDF_TABLE_VISUAL_FIXTURE.tableEvidence,
+        run_generation: 1
+      }
     )
   }
 }
@@ -372,7 +377,10 @@ export function makePdfMergedTableVisualFixture(): VisualFixture {
     blocks: PDF_MERGED_TABLE_VISUAL_FIXTURE.blocks,
     evidenceFingerprint: PDF_MERGED_TABLE_VISUAL_FIXTURE.evidenceFingerprint,
     tableEvidence: validateVisualTableEvidence(
-      PDF_MERGED_TABLE_VISUAL_FIXTURE.tableEvidence
+      {
+        ...PDF_MERGED_TABLE_VISUAL_FIXTURE.tableEvidence,
+        run_generation: 1
+      }
     )
   }
 }
@@ -384,7 +392,10 @@ export function makePdfContinuationVisualFixture(): VisualFixture {
     blocks: PDF_CONTINUATION_VISUAL_FIXTURE.blocks,
     evidenceFingerprint: PDF_CONTINUATION_VISUAL_FIXTURE.evidenceFingerprint,
     tableEvidence: validateVisualTableEvidence(
-      PDF_CONTINUATION_VISUAL_FIXTURE.tableEvidence
+      {
+        ...PDF_CONTINUATION_VISUAL_FIXTURE.tableEvidence,
+        run_generation: 1
+      }
     )
   }
 }

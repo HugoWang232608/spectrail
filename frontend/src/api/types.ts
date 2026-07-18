@@ -133,6 +133,7 @@ export type TableEvidenceRow = {
 export type TableEvidenceResponse = {
   schema_version: 'table_evidence_view_v1'
   task_id: string
+  run_generation: number
   evidence_fingerprint: string
   table_id: string
   block_id: string
@@ -240,6 +241,11 @@ export type ReqIRPackage = {
   items: RequirementIR[]
 }
 
+export type ReqIRResponse = {
+  run_generation: number
+  package: ReqIRPackage
+}
+
 export type DocumentBlock = {
   block_id: string
   document_id: string
@@ -253,6 +259,7 @@ export type DocumentBlock = {
 
 export type BlocksResponse = {
   task_id: string
+  run_generation: number
   evidence_fingerprint: string
   items: DocumentBlock[]
 }

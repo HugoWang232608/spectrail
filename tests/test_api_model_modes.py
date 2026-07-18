@@ -20,6 +20,8 @@ def test_api_run_recorded_task_completed(api_client: TestClient):
     assert run.json()["status"] == "completed"
     assert run.json()["manifest"]["counts"]["validated_requirements"] == 2
 
-    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    reqir = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     assert reqir.status_code == 200
     assert len(reqir.json()["items"]) == 2

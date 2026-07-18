@@ -1,12 +1,16 @@
 import os
 import socket
+from copy import deepcopy
 from pathlib import Path
 
 import fitz
+import pytest
 from docx import Document
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import spectrail.api.routes.review as review_routes
+from spectrail.api.schemas import TaskRunResponse, TaskStatusResponse
 from spectrail.core.io import write_json
 from spectrail.parsers.markdown_parser import MarkdownParser
 from spectrail.task_transactions import TaskTransactionError, task_lock
@@ -47,8 +51,11 @@ def test_api_task_flow(api_client: TestClient):
     assert status_payload["task"]["run_generation"] == 1
     assert status_payload["manifest"]["run_generation"] == 1
 
-    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    reqir = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     assert reqir.status_code == 200
+    assert reqir.headers["x-spectrail-run-generation"] == "1"
     assert len(reqir.json()["items"]) >= 14
 
 
@@ -77,6 +84,39 @@ def test_api_rerun_advances_generation_for_identical_evidence(
     assert status["run_generation"] == 2
     assert status["task"]["run_generation"] == 2
     assert status["manifest"]["run_generation"] == 2
+
+
+@pytest.mark.parametrize("nested_record", ["task", "manifest"])
+def test_task_status_schema_rejects_inconsistent_run_generations(
+    api_client: TestClient,
+    completed_api_task: dict,
+    nested_record: str,
+):
+    payload = deepcopy(
+        api_client.get(
+            f"/api/tasks/{completed_api_task['task_id']}"
+        ).json()
+    )
+    payload[nested_record]["run_generation"] += 1
+
+    with pytest.raises(
+        ValidationError,
+        match="run generation",
+    ):
+        TaskStatusResponse.model_validate(payload)
+
+
+def test_task_run_schema_rejects_inconsistent_manifest_generation(
+    completed_api_task: dict,
+):
+    payload = deepcopy(completed_api_task["run"])
+    payload["manifest"]["run_generation"] += 1
+
+    with pytest.raises(
+        ValidationError,
+        match="run generation",
+    ):
+        TaskRunResponse.model_validate(payload)
 
 
 def test_api_forced_chunking_exposes_chunk_and_quarantine_artifacts(api_client: TestClient):
@@ -132,7 +172,9 @@ def test_completed_with_warnings_remains_readable_reviewable_and_exportable(
 ):
     task_id = completed_api_task["task_id"]
     api_client.app.state.task_store.update_task(task_id, status="completed_with_warnings")
-    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    reqir = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     assert reqir.status_code == 200
     requirement_id = reqir.json()["items"][0]["id"]
     reviewed = api_client.post(
@@ -164,7 +206,9 @@ def test_api_reads_and_writes_reject_incomplete_migration(
 
     for response in (
         api_client.get(f"/api/tasks/{task_id}"),
-        api_client.get(f"/api/tasks/{task_id}/reqir"),
+        api_client.get(
+            f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+        ),
         api_client.get(f"/api/tasks/{task_id}/exports/reqir.json"),
         api_client.post(
             f"/api/tasks/{task_id}/review",
@@ -335,7 +379,9 @@ def test_api_run_docx_task_completed(api_client: TestClient, tmp_path: Path):
     assert run.json()["status"] == "completed"
     assert run.json()["manifest"]["counts"]["validated_requirements"] >= 14
 
-    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    reqir = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     assert reqir.status_code == 200
     assert len(reqir.json()["items"]) >= 14
 
@@ -355,11 +401,14 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
     assert run.json()["status"] == "completed"
     assert run.json()["manifest"]["counts"]["validated_requirements"] >= 14
 
-    reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
+    reqir = api_client.get(
+        f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
+    )
     evidence_fingerprint = reqir.json()["metadata"]["evidence_fingerprint"]
     blocks = api_client.get(
         f"/api/tasks/{task_id}/blocks"
-        f"?expected_evidence_fingerprint={evidence_fingerprint}"
+        f"?expected_run_generation=1"
+        f"&expected_evidence_fingerprint={evidence_fingerprint}"
     )
     xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
     assert reqir.status_code == 200
@@ -379,7 +428,8 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
     preview_page = located_sources[0]["page_locator"]["page"]
     preview = api_client.get(
         f"/api/tasks/{task_id}/pages/{preview_page}/preview.png"
-        f"?expected_evidence_fingerprint={evidence_fingerprint}"
+        f"?expected_run_generation=1"
+        f"&expected_evidence_fingerprint={evidence_fingerprint}"
     )
     assert preview.status_code == 200
     assert preview.headers["content-type"] == "image/png"

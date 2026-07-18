@@ -4,6 +4,7 @@ import type {
   DocumentChunk,
   DocumentUploadResponse,
   ReqIRPackage,
+  ReqIRResponse,
   ReviewRequest,
   ReviewResponse,
   TableEvidenceResponse,
@@ -39,18 +40,38 @@ export async function getTask(taskId: string): Promise<TaskStatusResponse> {
   return request<TaskStatusResponse>(`/tasks/${taskId}`)
 }
 
-export async function getReqIR(taskId: string): Promise<ReqIRPackage> {
-  return request<ReqIRPackage>(`/tasks/${taskId}/reqir`)
+export async function getReqIR(
+  taskId: string,
+  expectedRunGeneration: number
+): Promise<ReqIRResponse> {
+  const { payload, runGeneration } = await versionedRequest<ReqIRPackage>(
+    `/tasks/${taskId}/reqir` +
+      `?expected_run_generation=${expectedRunGeneration}`,
+    expectedRunGeneration
+  )
+  return {
+    run_generation: runGeneration,
+    package: payload
+  }
 }
 
 export async function getBlocks(
   taskId: string,
-  expectedEvidenceFingerprint: string
+  expectedEvidenceFingerprint: string,
+  expectedRunGeneration: number
 ): Promise<BlocksResponse> {
-  return request<BlocksResponse>(
+  const { payload, runGeneration } = await versionedRequest<BlocksResponse>(
     `/tasks/${encodeURIComponent(taskId)}/blocks` +
-      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}`
+      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}` +
+      `&expected_run_generation=${expectedRunGeneration}`,
+    expectedRunGeneration
   )
+  if (payload.run_generation !== runGeneration) {
+    throw runGenerationChangedError(
+      'blocks response generation does not match its response header'
+    )
+  }
+  return payload
 }
 
 export async function getTableEvidence(
@@ -58,15 +79,24 @@ export async function getTableEvidence(
   tableId: string,
   blockId: string,
   expectedEvidenceFingerprint: string,
+  expectedRunGeneration: number,
   signal?: AbortSignal
 ): Promise<TableEvidenceResponse> {
-  return request<TableEvidenceResponse>(
+  const { payload, runGeneration } = await versionedRequest<
+    Omit<TableEvidenceResponse, 'run_generation'>
+  >(
     `/tasks/${encodeURIComponent(taskId)}` +
       `/tables/${encodeURIComponent(tableId)}` +
       `/blocks/${encodeURIComponent(blockId)}/evidence` +
-      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}`,
+      `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}` +
+      `&expected_run_generation=${expectedRunGeneration}`,
+    expectedRunGeneration,
     { signal }
   )
+  return {
+    ...payload,
+    run_generation: runGeneration
+  }
 }
 
 export async function getChunks(taskId: string): Promise<DocumentChunk[]> {
@@ -99,12 +129,14 @@ export async function getPagePreview(
   taskId: string,
   page: number,
   expectedEvidenceFingerprint: string,
+  expectedRunGeneration: number,
   attempt: number,
   signal?: AbortSignal
 ): Promise<Blob> {
   const response = await fetch(
     `${getPagePreviewUrl(encodeURIComponent(taskId), page)}` +
       `?expected_evidence_fingerprint=${encodeURIComponent(expectedEvidenceFingerprint)}` +
+      `&expected_run_generation=${expectedRunGeneration}` +
       `&attempt=${attempt}`,
     { signal }
   )
@@ -120,10 +152,35 @@ export async function getPagePreview(
       message: 'PDF preview does not match the loaded ReqIR Evidence version'
     } satisfies ApiError
   }
+  requireResponseRunGeneration(response, expectedRunGeneration)
   return response.blob()
 }
 
+async function versionedRequest<T>(
+  path: string,
+  expectedRunGeneration: number,
+  init: RequestInit = {}
+): Promise<{ payload: T; runGeneration: number }> {
+  const response = await requestResponse(path, init)
+  const runGeneration = requireResponseRunGeneration(
+    response,
+    expectedRunGeneration
+  )
+  return {
+    payload: await response.json() as T,
+    runGeneration
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await requestResponse(path, init)
+  return response.json() as Promise<T>
+}
+
+async function requestResponse(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -138,7 +195,32 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw await readApiError(response)
   }
 
-  return response.json() as Promise<T>
+  return response
+}
+
+function requireResponseRunGeneration(
+  response: Response,
+  expectedRunGeneration: number
+): number {
+  const value = response.headers.get('X-Spectrail-Run-Generation')
+  const runGeneration = value == null ? Number.NaN : Number(value)
+  if (
+    !Number.isSafeInteger(runGeneration)
+    || runGeneration < 0
+    || runGeneration !== expectedRunGeneration
+  ) {
+    throw runGenerationChangedError(
+      'response does not match the expected task run generation'
+    )
+  }
+  return runGeneration
+}
+
+function runGenerationChangedError(message: string): ApiError {
+  return {
+    code: 'RUN_GENERATION_CHANGED',
+    message
+  }
 }
 
 async function readApiError(response: Response): Promise<ApiError> {

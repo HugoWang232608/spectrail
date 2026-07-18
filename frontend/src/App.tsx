@@ -45,7 +45,9 @@ function App() {
   const [taskIdInput, setTaskIdInput] = useState('')
   const [task, setTask] = useState<TaskStatusResponse | null>(null)
   const [reqir, setReqir] = useState<ReqIRPackage | null>(null)
+  const [reqirRunGeneration, setReqirRunGeneration] = useState<number | null>(null)
   const [blocks, setBlocks] = useState<DocumentBlock[]>([])
+  const [blocksRunGeneration, setBlocksRunGeneration] = useState<number | null>(null)
   const [blocksEvidenceFingerprint, setBlocksEvidenceFingerprint] = useState<string | null>(null)
   const [blocksError, setBlocksError] = useState<ApiError | null>(null)
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null)
@@ -83,7 +85,9 @@ function App() {
       setTask(loaded)
       setTaskIdInput(created.task_id)
       setReqir(null)
+      setReqirRunGeneration(null)
       setBlocks([])
+      setBlocksRunGeneration(null)
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
@@ -99,6 +103,7 @@ function App() {
     await perform('load', async () => {
       const loaded = await getTask(nextTaskId)
       setTask(loaded)
+      clearReviewEvidence()
       await loadReqIRIfCompleted(loaded)
     })
   }
@@ -121,7 +126,9 @@ function App() {
       await uploadDocument(task.task_id, file)
       setTask(await getTask(task.task_id))
       setReqir(null)
+      setReqirRunGeneration(null)
       setBlocks([])
+      setBlocksRunGeneration(null)
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
@@ -231,8 +238,17 @@ function App() {
 
     await perform('review', async () => {
       await reviewRequirement(task.task_id, request)
-      const packagePayload = await getReqIR(task.task_id)
-      setReqir(packagePayload)
+      const reqirResponse = await getReqIR(
+        task.task_id,
+        task.run_generation
+      )
+      requireRunGeneration(
+        reqirResponse.run_generation,
+        task.run_generation,
+        'ReqIR'
+      )
+      setReqir(reqirResponse.package)
+      setReqirRunGeneration(reqirResponse.run_generation)
       setSelectedRequirementId(request.requirement_id)
     })
   }
@@ -244,13 +260,16 @@ function App() {
     await perform('load', async () => {
       const loaded = await getTask(task.task_id)
       setTask(loaded)
+      clearReviewEvidence()
       await loadReqIRIfCompleted(loaded)
     })
   }
 
   function clearReviewEvidence() {
     setReqir(null)
+    setReqirRunGeneration(null)
     setBlocks([])
+    setBlocksRunGeneration(null)
     setBlocksEvidenceFingerprint(null)
     setBlocksError(null)
     setSelectedRequirementId(null)
@@ -261,7 +280,9 @@ function App() {
   ): Promise<EvidenceLoadResult> {
     if (!isReadableStatus(loaded.status)) {
       setReqir(null)
+      setReqirRunGeneration(null)
       setBlocks([])
+      setBlocksRunGeneration(null)
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
@@ -271,9 +292,19 @@ function App() {
       }
     }
 
-    const packagePayload = await getReqIR(loaded.task_id)
+    const reqirResponse = await getReqIR(
+      loaded.task_id,
+      loaded.run_generation
+    )
+    requireRunGeneration(
+      reqirResponse.run_generation,
+      loaded.run_generation,
+      'ReqIR'
+    )
+    const packagePayload = reqirResponse.package
     const evidenceFingerprint = reqirEvidenceFingerprint(packagePayload)
     let nextBlocks: DocumentBlock[] = []
+    let nextBlocksRunGeneration: number | null = null
     let nextBlocksEvidenceFingerprint: string | null = null
     let nextBlocksError: ApiError | null = null
     if (!evidenceFingerprint) {
@@ -285,7 +316,13 @@ function App() {
       try {
         const blocksPayload = await getBlocks(
           loaded.task_id,
-          evidenceFingerprint
+          evidenceFingerprint,
+          loaded.run_generation
+        )
+        requireRunGeneration(
+          blocksPayload.run_generation,
+          loaded.run_generation,
+          'blocks'
         )
         if (blocksPayload.evidence_fingerprint !== evidenceFingerprint) {
           throw {
@@ -294,22 +331,27 @@ function App() {
           } satisfies ApiError
         }
         nextBlocks = blocksPayload.items
+        nextBlocksRunGeneration = blocksPayload.run_generation
         nextBlocksEvidenceFingerprint = blocksPayload.evidence_fingerprint
       } catch (caught) {
         nextBlocksError = toApiError(caught)
       }
     }
     setBlocks(nextBlocks)
+    setBlocksRunGeneration(nextBlocksRunGeneration)
     setBlocksEvidenceFingerprint(nextBlocksEvidenceFingerprint)
     setBlocksError(nextBlocksError)
     setReqir(packagePayload)
+    setReqirRunGeneration(reqirResponse.run_generation)
     setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
     return {
       evidenceFingerprint,
       trusted: (
         evidenceFingerprint !== null
+        && reqirResponse.run_generation === loaded.run_generation
         && nextBlocksError === null
         && nextBlocksEvidenceFingerprint === evidenceFingerprint
+        && nextBlocksRunGeneration === loaded.run_generation
       )
     }
   }
@@ -401,6 +443,12 @@ function App() {
                 blocksError={blocksError}
                 evidenceFingerprint={reqirEvidenceFingerprint(reqir)}
                 blocksEvidenceFingerprint={blocksEvidenceFingerprint}
+                runGeneration={
+                  reqirRunGeneration === task?.run_generation
+                    ? reqirRunGeneration
+                    : null
+                }
+                blocksRunGeneration={blocksRunGeneration}
                 reloadingEvidence={busyAction === 'load'}
                 onReloadEvidence={() => void handleReloadEvidence()}
                 rerunningEvidence={busyAction === 'run'}
@@ -523,6 +571,22 @@ function isRunResponseLost(value: unknown): boolean {
     value instanceof TypeError
     || (isApiError(value) && value.code === 'NETWORK_ERROR')
   )
+}
+
+function requireRunGeneration(
+  actual: number,
+  expected: number,
+  artifact: string
+): void {
+  if (actual !== expected) {
+    throw {
+      code: 'RUN_GENERATION_CHANGED',
+      message: (
+        `${artifact} belongs to task run generation ${actual}; `
+        + `expected ${expected}`
+      )
+    } satisfies ApiError
+  }
 }
 
 export default App

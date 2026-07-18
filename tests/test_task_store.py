@@ -83,4 +83,9 @@ def test_task_store_completed_with_warnings_is_readable(tmp_path: Path):
     )
     store.update_task(task["task_id"], status="completed_with_warnings")
 
-    assert store.read_reqir(task["task_id"])["items"] == []
+    run_generation, reqir = store.read_reqir(
+        task["task_id"],
+        expected_run_generation=0,
+    )
+    assert run_generation == 0
+    assert reqir["items"] == []

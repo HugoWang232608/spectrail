@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TaskCreateRequest(BaseModel):
@@ -30,19 +30,80 @@ class DocumentUploadResponse(BaseModel):
     filename: str
 
 
+class TaskRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    task_id: str
+    goal: str
+    model_mode: str
+    status: str
+    run_generation: int = Field(ge=0)
+    created_at: str
+    updated_at: str
+    input_document: str | None
+    original_filename: str | None
+    output_dir: str
+    pipeline_config: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunManifest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    task_id: str
+    # Generation zero represents a readable legacy snapshot produced before
+    # task generations were persisted. New pipeline runs always start at one.
+    run_generation: int = Field(default=0, ge=0)
+    status: str
+    input_document: str
+    output_dir: str
+    model_mode: str
+    started_at: str
+    completed_at: str | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    outputs: dict[str, str] = Field(default_factory=dict)
+    error: str | None = None
+    warning_codes: list[str] = Field(default_factory=list)
+    zero_result_reason: str | None = None
+
+
 class TaskStatusResponse(BaseModel):
     task_id: str
     status: str
     run_generation: int = Field(ge=0)
-    task: dict[str, Any]
-    manifest: dict[str, Any] | None = None
+    task: TaskRecord
+    manifest: RunManifest | None = None
+
+    @model_validator(mode="after")
+    def validate_generation_consistency(self) -> "TaskStatusResponse":
+        if self.task_id != self.task.task_id:
+            raise ValueError("task response task IDs do not match")
+        if self.run_generation != self.task.run_generation:
+            raise ValueError("task response run generations do not match")
+        if self.manifest is not None:
+            if self.task_id != self.manifest.task_id:
+                raise ValueError("task response manifest task ID does not match")
+            if self.run_generation != self.manifest.run_generation:
+                raise ValueError(
+                    "task response manifest run generation does not match"
+                )
+        return self
 
 
 class TaskRunResponse(BaseModel):
     task_id: str
     status: str
     run_generation: int = Field(ge=1)
-    manifest: dict[str, Any]
+    manifest: RunManifest
+
+    @model_validator(mode="after")
+    def validate_generation_consistency(self) -> "TaskRunResponse":
+        if self.task_id != self.manifest.task_id:
+            raise ValueError("run response manifest task ID does not match")
+        if self.run_generation != self.manifest.run_generation:
+            raise ValueError(
+                "run response manifest run generation does not match"
+            )
+        return self
 
 
 class ReviewRequest(BaseModel):

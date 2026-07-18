@@ -30,7 +30,8 @@ for (const rotation of ROTATIONS) {
         status: 200,
         contentType: 'image/svg+xml',
         headers: {
-          'X-Spectrail-Evidence-Fingerprint': VISUAL_EVIDENCE_FINGERPRINT
+          'X-Spectrail-Evidence-Fingerprint': VISUAL_EVIDENCE_FINGERPRINT,
+          'X-Spectrail-Run-Generation': '1'
         },
         body: previewSvg(
           locator.page_width,
@@ -128,7 +129,8 @@ test('PDF table renders validated page region and structured cell grid', async (
       status: 200,
       contentType: 'image/png',
       headers: {
-        'X-Spectrail-Evidence-Fingerprint': VISUAL_EVIDENCE_FINGERPRINT
+        'X-Spectrail-Evidence-Fingerprint': VISUAL_EVIDENCE_FINGERPRINT,
+        'X-Spectrail-Run-Generation': '1'
       },
       path: path.resolve('tests/visual/fixtures/pdf-table-page.png')
     })
@@ -161,7 +163,8 @@ test('PDF merged table renders row-span projection with page evidence', async ({
       status: 200,
       contentType: 'image/png',
       headers: {
-        'X-Spectrail-Evidence-Fingerprint': fixture.evidenceFingerprint ?? ''
+        'X-Spectrail-Evidence-Fingerprint': fixture.evidenceFingerprint ?? '',
+        'X-Spectrail-Run-Generation': '1'
       },
       path: path.resolve('tests/visual/fixtures/pdf-merged-table-page.png')
     })
@@ -196,7 +199,8 @@ test('PDF continued table renders authored lineage and page-local evidence', asy
       status: 200,
       contentType: 'image/png',
       headers: {
-        'X-Spectrail-Evidence-Fingerprint': fixture.evidenceFingerprint ?? ''
+        'X-Spectrail-Evidence-Fingerprint': fixture.evidenceFingerprint ?? '',
+        'X-Spectrail-Run-Generation': '1'
       },
       path: path.resolve(
         'tests/visual/fixtures/pdf-table-continuation-page.png'
@@ -251,6 +255,9 @@ async function routeTableEvidence(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
+      headers: {
+        'X-Spectrail-Run-Generation': '1'
+      },
       body: JSON.stringify(response)
     })
   })

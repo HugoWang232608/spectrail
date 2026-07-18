@@ -676,7 +676,8 @@ describe('SourceViewer', () => {
     expect(image.getAttribute('src')).toBe('blob:preview-1')
     expect(fetch).toHaveBeenCalledWith(
       '/api/tasks/task-1/pages/1/preview.png' +
-      `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=0`,
+      `?expected_evidence_fingerprint=${'a'.repeat(64)}` +
+      '&expected_run_generation=1&attempt=0',
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     fireEvent.error(image)
@@ -686,9 +687,10 @@ describe('SourceViewer', () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-      '/api/tasks/task-1/pages/1/preview.png' +
-        `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=1`,
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
+        '/api/tasks/task-1/pages/1/preview.png' +
+          `?expected_evidence_fingerprint=${'a'.repeat(64)}` +
+          '&expected_run_generation=1&attempt=1',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       )
     })
     expect(await screen.findByRole('img', {
@@ -746,7 +748,8 @@ describe('SourceViewer', () => {
     await screen.findByRole('img', { name: 'PDF page 1' })
     expect(fetch).toHaveBeenLastCalledWith(
       '/api/tasks/task-1/pages/1/preview.png' +
-        `?expected_evidence_fingerprint=${'a'.repeat(64)}&attempt=0`,
+        `?expected_evidence_fingerprint=${'a'.repeat(64)}` +
+        '&expected_run_generation=1&attempt=0',
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
 
@@ -769,7 +772,8 @@ describe('SourceViewer', () => {
     await waitFor(() => {
       expect(fetch).toHaveBeenLastCalledWith(
         '/api/tasks/task-1/pages/1/preview.png' +
-          `?expected_evidence_fingerprint=${'b'.repeat(64)}&attempt=0`,
+          `?expected_evidence_fingerprint=${'b'.repeat(64)}` +
+          '&expected_run_generation=1&attempt=0',
         expect.objectContaining({ signal: expect.any(AbortSignal) })
       )
     })
@@ -875,7 +879,8 @@ describe('SourceViewer', () => {
     expect(grid).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/tasks/task-1/tables/tbl_00000001/blocks/blk_table/evidence' +
-        `?expected_evidence_fingerprint=${'a'.repeat(64)}`,
+        `?expected_evidence_fingerprint=${'a'.repeat(64)}` +
+        '&expected_run_generation=1',
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     expect(screen.getByText('repeated header')).toBeTruthy()
@@ -1339,14 +1344,91 @@ describe('SourceViewer', () => {
     }))
     expect(reload).toHaveBeenCalledTimes(1)
   })
+
+  it('withholds block and table evidence from a different run generation', () => {
+    const block = makeBlock('blk_stale_run', 'REQ-1 | Approved')
+    const source = makeTableSource(block.block_id)
+    const reload = vi.fn()
+
+    render(
+      <SourceViewer
+        taskId="task-1"
+        requirement={makeRequirement('req_stale_run', [source])}
+        blocks={[block]}
+        blocksError={null}
+        runGeneration={1}
+        blocksRunGeneration={2}
+        onReloadEvidence={reload}
+      />
+    )
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('RUN_GENERATION_CHANGED')
+    expect(screen.queryByText('REQ-1', {
+      selector: '.block-box mark'
+    })).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('withholds a preview whose response run generation changed', async () => {
+    const block = makeBlock('blk_stale_preview_run', 'Preview generation')
+    const reload = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(
+        new Blob(['preview'], { type: 'image/png' }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'image/png',
+            'X-Spectrail-Evidence-Fingerprint': 'a'.repeat(64),
+            'X-Spectrail-Run-Generation': '2'
+          }
+        }
+      ))
+    )
+    const source = makeSource({
+      block_id: block.block_id,
+      quote: block.text,
+      page: 1,
+      page_locator: makePageLocator(0),
+      capability_results: [pageRegionResult('PASS')]
+    })
+
+    renderViewer(
+      makeRequirement('req_stale_preview_run', [source]),
+      [block],
+      'a'.repeat(64),
+      'a'.repeat(64),
+      reload
+    )
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Task run generation changed')
+    expect(screen.queryByRole('img')).toBeNull()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    }))
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
 })
 
 type SourceViewerTestProps = Omit<
   ComponentProps<typeof SourceViewerComponent>,
-  'evidenceFingerprint' | 'blocksEvidenceFingerprint'
+  | 'evidenceFingerprint'
+  | 'blocksEvidenceFingerprint'
+  | 'runGeneration'
+  | 'blocksRunGeneration'
 > & Partial<Pick<
   ComponentProps<typeof SourceViewerComponent>,
-  'evidenceFingerprint' | 'blocksEvidenceFingerprint'
+  | 'evidenceFingerprint'
+  | 'blocksEvidenceFingerprint'
+  | 'runGeneration'
+  | 'blocksRunGeneration'
 >>
 
 function SourceViewer(props: SourceViewerTestProps) {
@@ -1354,6 +1436,8 @@ function SourceViewer(props: SourceViewerTestProps) {
     <SourceViewerComponent
       evidenceFingerprint={'a'.repeat(64)}
       blocksEvidenceFingerprint={'a'.repeat(64)}
+      runGeneration={1}
+      blocksRunGeneration={1}
       {...props}
     />
   )
@@ -1482,6 +1566,7 @@ function makeTableEvidenceResponse(blockId: string): TableEvidenceResponse {
     schema_version: 'table_evidence_view_v1',
     task_id: 'task-1',
     evidence_fingerprint: 'a'.repeat(64),
+    run_generation: 1,
     table_id: 'tbl_00000001',
     block_id: blockId,
     row_count: 2,
@@ -1603,7 +1688,10 @@ function tableCellResult(
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' }
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Spectrail-Run-Generation': '1'
+    }
   })
 }
 
@@ -1626,7 +1714,8 @@ function pagePreviewResponse(
     status: 200,
     headers: {
       'Content-Type': 'image/png',
-      'X-Spectrail-Evidence-Fingerprint': evidenceFingerprint
+      'X-Spectrail-Evidence-Fingerprint': evidenceFingerprint,
+      'X-Spectrail-Run-Generation': '1'
     }
   })
 }

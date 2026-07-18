@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 
 from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import (
@@ -23,6 +23,7 @@ from spectrail.parsers import DocumentParseError, UnsupportedDocumentTypeError
 from spectrail.pipeline import PipelineValidationError, PipelineRunner, UnsupportedModelModeError
 from spectrail.tasks import (
     LocalTaskStore,
+    RunGenerationChangedError,
     TaskNotFoundError,
     TaskTransactionInProgressError,
 )
@@ -188,14 +189,24 @@ def get_task(
 @router.get("/tasks/{task_id}/reqir")
 def get_reqir(
     task_id: str,
+    response: Response,
+    expected_run_generation: int = Query(ge=0),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        return store.read_reqir(task_id)
+        run_generation, reqir = store.read_reqir(
+            task_id,
+            expected_run_generation=expected_run_generation,
+        )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+    except RunGenerationChangedError as exc:
+        raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Spectrail-Run-Generation"] = str(run_generation)
+    return reqir
 
 
 @router.get("/tasks/{task_id}/chunks")

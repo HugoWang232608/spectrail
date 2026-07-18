@@ -20,6 +20,7 @@ def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
         allow_headers=["*"],
         expose_headers=[
             "X-Spectrail-Evidence-Fingerprint",
+            "X-Spectrail-Run-Generation",
             "X-Spectrail-Preview-Height",
             "X-Spectrail-Preview-Width",
         ],

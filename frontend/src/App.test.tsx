@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   BlocksResponse,
-  ReqIRPackage,
+  ReqIRResponse,
   TaskRunResponse,
   TaskStatusResponse
 } from './api/types'
@@ -45,10 +45,14 @@ describe('App pipeline run reconciliation', () => {
   it('clears stale review state, reruns the task, and loads rebuilt Evidence', async () => {
     const task = completedTask()
     const pendingRun = deferred<TaskRunResponse>()
-    api.getTask.mockResolvedValue(task)
+    api.getTask
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(completedTask(2))
     api.getReqIR
       .mockResolvedValueOnce(reqirPackage('req_old', 'Old parser evidence'))
-      .mockResolvedValueOnce(reqirPackage('req_new', 'Rebuilt evidence'))
+      .mockResolvedValueOnce(
+        reqirPackage('req_new', 'Rebuilt evidence', undefined, 2)
+      )
     api.getBlocks
       .mockRejectedValueOnce({
         code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
@@ -56,6 +60,7 @@ describe('App pipeline run reconciliation', () => {
       })
       .mockResolvedValueOnce({
         task_id: 'task-1',
+        run_generation: 2,
         evidence_fingerprint: EVIDENCE_FINGERPRINT,
         items: [{
           block_id: 'blk_001',
@@ -245,7 +250,9 @@ describe('App pipeline run reconciliation', () => {
       .mockRejectedValueOnce(new Error('task snapshot unavailable'))
     api.getReqIR
       .mockResolvedValueOnce(reqirPackage('req_old', 'Old parser evidence'))
-      .mockResolvedValueOnce(reqirPackage('req_new', 'Rebuilt evidence'))
+      .mockResolvedValueOnce(
+        reqirPackage('req_new', 'Rebuilt evidence', undefined, 2)
+      )
     api.getBlocks
       .mockRejectedValueOnce({
         code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
@@ -253,6 +260,7 @@ describe('App pipeline run reconciliation', () => {
       })
       .mockResolvedValueOnce({
         task_id: 'task-1',
+        run_generation: 2,
         evidence_fingerprint: EVIDENCE_FINGERPRINT,
         items: [{
           block_id: 'blk_001',
@@ -336,14 +344,14 @@ describe('App pipeline run reconciliation', () => {
         reqirPackage('req_old', 'Evidence generation A')
       )
       .mockResolvedValueOnce(
-        reqirPackage('req_new', 'Evidence generation B')
+        reqirPackage('req_new', 'Evidence generation B', undefined, 2)
       )
     api.getBlocks
       .mockResolvedValueOnce(
         blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation A')
       )
       .mockResolvedValueOnce(
-        blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation B')
+        blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation B', 2)
       )
     api.runTask.mockRejectedValueOnce({
       code: 'NETWORK_ERROR',
@@ -371,8 +379,29 @@ describe('App pipeline run reconciliation', () => {
     expect(screen.queryByText('Evidence generation A')).toBeNull()
     expect(api.getBlocks).toHaveBeenLastCalledWith(
       'task-1',
-      EVIDENCE_FINGERPRINT
+      EVIDENCE_FINGERPRINT,
+      2
     )
+  })
+
+  it('rejects ReqIR from a newer task generation during snapshot loading', async () => {
+    api.getTask.mockResolvedValueOnce(completedTask(1))
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_newer', 'Newer generation evidence', undefined, 2)
+    )
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('RUN_GENERATION_CHANGED')
+    expect(api.getReqIR).toHaveBeenCalledWith('task-1', 1)
+    expect(api.getBlocks).not.toHaveBeenCalled()
+    expect(screen.getByText('No requirements')).toBeTruthy()
+    expect(screen.queryByText('Newer generation evidence')).toBeNull()
   })
 
   it('reports a lost first-run response as a notice after trusted Evidence loads', async () => {
@@ -566,46 +595,52 @@ function taskWithStatus(
 function reqirPackage(
   id: string,
   statement: string,
-  evidenceFingerprint = EVIDENCE_FINGERPRINT
-): ReqIRPackage {
+  evidenceFingerprint = EVIDENCE_FINGERPRINT,
+  runGeneration = 1
+): ReqIRResponse {
   return {
-    metadata: {
-      evidence_fingerprint: evidenceFingerprint
-    },
-    items: [{
-      id,
-      version: 1,
-      title: statement,
-      type: 'functional',
-      ears_pattern: 'ubiquitous',
-      statement,
-      priority: 'must',
-      verification_method: 'inspection',
-      sources: [{
-        document_id: 'doc_001',
-        block_id: 'blk_001',
-        quote: statement,
-        match_status: 'PASS_EXACT',
-        locator_status: 'PASS_DERIVED',
-        capability_results: []
-      }],
-      confidence: 1,
-      review_status: 'pending',
-      possible_duplicate_ids: [],
-      derived_from: [],
-      tags: [],
-      review_log: [],
-      metadata: {}
-    }]
+    run_generation: runGeneration,
+    package: {
+      metadata: {
+        evidence_fingerprint: evidenceFingerprint
+      },
+      items: [{
+        id,
+        version: 1,
+        title: statement,
+        type: 'functional',
+        ears_pattern: 'ubiquitous',
+        statement,
+        priority: 'must',
+        verification_method: 'inspection',
+        sources: [{
+          document_id: 'doc_001',
+          block_id: 'blk_001',
+          quote: statement,
+          match_status: 'PASS_EXACT',
+          locator_status: 'PASS_DERIVED',
+          capability_results: []
+        }],
+        confidence: 1,
+        review_status: 'pending',
+        possible_duplicate_ids: [],
+        derived_from: [],
+        tags: [],
+        review_log: [],
+        metadata: {}
+      }]
+    }
   }
 }
 
 function blocksResponse(
   evidenceFingerprint: string,
-  text: string
+  text: string,
+  runGeneration = 1
 ): BlocksResponse {
   return {
     task_id: 'task-1',
+    run_generation: runGeneration,
     evidence_fingerprint: evidenceFingerprint,
     items: [{
       block_id: 'blk_001',
@@ -619,11 +654,12 @@ function blocksResponse(
   }
 }
 
-function reqirPackageWithSecondRequirement(): ReqIRPackage {
-  const packagePayload = reqirPackage(
+function reqirPackageWithSecondRequirement(): ReqIRResponse {
+  const response = reqirPackage(
     'req_kept',
     'Evidence kept after cancellation'
   )
+  const packagePayload = response.package
   const first = packagePayload.items[0]
   packagePayload.items.push({
     ...first,
@@ -635,7 +671,7 @@ function reqirPackageWithSecondRequirement(): ReqIRPackage {
       quote: 'Selected requirement remains selected'
     }]
   })
-  return packagePayload
+  return response
 }
 
 function completedRun(

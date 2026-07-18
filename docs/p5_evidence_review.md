@@ -23,6 +23,10 @@ ReqIR metadata.evidence_fingerprint
   -> task-scoped canonical blocks endpoint
   -> fingerprint-bound block snapshot
   -> TextLocator highlight or explicit evidence reload
+
+TaskStatusResponse.run_generation
+  -> conditional ReqIR, blocks, table, and page reads
+  -> one task-run snapshot across independent HTTP requests
 ```
 
 The page preview uses the same
@@ -35,6 +39,7 @@ the browser converts the bbox to percentages of `page_width` and `page_height`.
 ```text
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 ```
 
 Successful responses include:
@@ -45,6 +50,7 @@ Cache-Control: private, max-age=300
 X-Spectrail-Preview-Width: <rendered pixels>
 X-Spectrail-Preview-Height: <rendered pixels>
 X-Spectrail-Evidence-Fingerprint: <validated Evidence fingerprint>
+X-Spectrail-Run-Generation: <validated task run generation>
 ```
 
 The endpoint:
@@ -71,6 +77,7 @@ TASK_NOT_COMPLETED
 PAGE_PREVIEW_NOT_FOUND
 PAGE_PREVIEW_UNAVAILABLE
 EVIDENCE_VERSION_CHANGED
+RUN_GENERATION_CHANGED
 TASK_TRANSACTION_LOCKED
 TASK_MIGRATION_INCOMPLETE
 ```
@@ -85,6 +92,7 @@ The table evidence endpoint is:
 ```text
 GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 ```
 
 It returns a versioned `table_evidence_view_v1` projection rather than exposing
@@ -109,6 +117,7 @@ structured:
 TABLE_EVIDENCE_NOT_FOUND
 TABLE_EVIDENCE_UNAVAILABLE
 EVIDENCE_VERSION_CHANGED
+RUN_GENERATION_CHANGED
 ```
 
 The former covers unknown or foreign table/block references. The latter covers
@@ -121,14 +130,31 @@ Canonical block context uses the same conditional-read contract:
 ```text
 GET /api/tasks/{task_id}/blocks
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 ```
 
-The response contains `task_id`, the validated `evidence_fingerprint`, and
-`items`. Before returning it, the service validates both the Evidence fingerprint
-and the complete blocks artifact against the current `EvidenceIndex`. A changed
-generation returns `EVIDENCE_VERSION_CHANGED`; an internally inconsistent
-blocks artifact returns `BLOCKS_UNAVAILABLE`. Successful responses use
-`Cache-Control: private, no-store`.
+The response contains `task_id`, the validated `run_generation`,
+`evidence_fingerprint`, and `items`. Before returning it, the service validates
+the expected run generation, the Evidence fingerprint, and the complete blocks
+artifact against the current `EvidenceIndex`. A changed task run returns
+`RUN_GENERATION_CHANGED`; changed Evidence content returns
+`EVIDENCE_VERSION_CHANGED`; an internally inconsistent blocks artifact returns
+`BLOCKS_UNAVAILABLE`. Successful responses use
+`Cache-Control: private, no-store` and return the generation again in
+`X-Spectrail-Run-Generation`.
+
+ReqIR uses the same task-run condition:
+
+```text
+GET /api/tasks/{task_id}/reqir
+  ?expected_run_generation=<GET task run_generation>
+```
+
+The body remains the versioned ReqIR package for artifact compatibility, while
+`X-Spectrail-Run-Generation` binds that package to the requested task run.
+All four Evidence reads compare the expected generation while holding the same
+task transaction lock used to read the artifact. A concurrent rerun therefore
+fails closed before returning ReqIR, blocks, a table projection, or a page PNG.
 
 Every pipeline ReqIR artifact now carries:
 
@@ -138,15 +164,23 @@ metadata.evidence_fingerprint
 
 Review snapshots preserve it, validation outputs copy it when Evidence is
 available, and migration rewrites it to the migrated Evidence fingerprint.
-The frontend sends that exact value with both blocks and table requests and
-independently checks each response fingerprint. A task rerun between the ReqIR
-and either evidence request therefore produces an explicit reload message even
-if stable block, table, and cell IDs happen to remain unchanged. Until reload
-succeeds, the UI withholds canonical block text as well as the table grid. A
+The frontend sends the task generation with ReqIR, blocks, table, and page
+requests and independently checks each response generation. It also sends the
+exact Evidence fingerprint with blocks, table, and page requests and checks
+each response fingerprint. A task rerun between any snapshot request therefore
+produces an explicit reload message even if the Evidence content and stable
+block, table, and cell IDs remain unchanged. Until reload succeeds, the UI
+withholds canonical block text, table grid, and page preview. A
 `BLOCKS_UNAVAILABLE` response also suppresses the table endpoint request
 entirely; only the single block-context reload action is shown.
 Legacy packages without the metadata cannot request trusted evidence and must
 be migrated or reloaded.
+
+`TaskStatusResponse` and `TaskRunResponse` use formal `TaskRecord` and
+`RunManifest` Pydantic models. Response validation requires task IDs and
+`run_generation` values to agree across the top-level response, nested task
+record, and manifest, preventing a malformed mixed-generation status snapshot
+from being serialized as a valid API response.
 
 `LocalTaskStore` caches the fully validated `EvidenceIndex`, validated blocks,
 and block-scoped table projections by task ID plus artifact device, inode, size,
@@ -187,10 +221,10 @@ For each source, the Review UI shows:
 - validation status for `text_range`, `page_region`, and `table_cell`;
 - highlighted canonical block text as the fallback evidence view.
 
-`SourceViewer` requires both `evidenceFingerprint` and
-`blocksEvidenceFingerprint` props. Callers handling legacy data must pass
-`null` explicitly; omitting the version context is not a trusted compatibility
-mode and fails TypeScript compilation.
+`SourceViewer` requires Evidence fingerprints and task run generations for both
+ReqIR and blocks. Callers handling legacy data must pass `null` explicitly;
+omitting either version context is not a trusted compatibility mode and fails
+TypeScript compilation.
 
 Canonical block highlighting uses the final `TextLocator` before considering the
 legacy exact-quote fallback. Offsets are applied to `Array.from(text)` so the
@@ -198,12 +232,13 @@ legacy exact-quote fallback. Offsets are applied to `Array.from(text)` so the
 characters. A normalized match with a valid locator is highlighted even when
 the displayed canonical range is not byte-for-byte equal to `source.quote`.
 
-Preview loading occurs only after ReqIR and block reads complete, avoiding
-read-lock races. The browser requests the page with the ReqIR Evidence
-fingerprint, checks the response header, and uses a short-lived blob URL only
-after both checks pass. A failed image can be retried explicitly without losing
-the text evidence view. Preview state is keyed by the selected source, so a
-failed same-page source cannot poison the next source.
+Preview loading occurs only after same-generation ReqIR and block reads
+complete, avoiding read-lock races. The browser requests the page with the
+ReqIR Evidence fingerprint and task run generation, checks both response
+headers, and uses a short-lived blob URL only after both checks pass. A failed
+image can be retried explicitly without losing the text evidence view. Preview
+state is keyed by the selected source, so a failed same-page source cannot
+poison the next source.
 
 If a blocks or table request reports a changed Evidence version, the Review UI
 does not offer the ordinary single-request retry. It shows **Reload task

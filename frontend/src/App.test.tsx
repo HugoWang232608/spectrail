@@ -277,6 +277,103 @@ describe('App legacy Evidence recovery', () => {
     expect(metricValue('Validated Requirements')).toBe('2')
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('reconciles an ordinary pipeline rerun failure without retaining stale Evidence', async () => {
+    const completed = completedTask()
+    const failed = taskWithStatus('task-1', 'failed')
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(failed)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_old', 'Previously exported evidence')
+    )
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'Previously exported evidence')
+    )
+    api.runTask.mockRejectedValueOnce({
+      code: 'PIPELINE_FAILED',
+      message: 'ordinary rerun failed'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+
+    expect(
+      (await screen.findAllByText('Previously exported evidence')).length
+    ).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Running the pipeline again deletes')
+    )
+    const error = await screen.findByRole('alert')
+    expect(error.textContent).toContain('PIPELINE_FAILED')
+    expect(error.textContent).toContain('ordinary rerun failed')
+    expect(screen.getAllByText('failed').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Previously exported evidence')).toBeNull()
+    expect(screen.getByText('No requirements')).toBeTruthy()
+    expect(screen.getByText('No source')).toBeTruthy()
+    expect(screen.getByRole('button', {
+      name: 'Download reqir.json'
+    }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('reports a lost run response as a notice after loading changed trusted Evidence', async () => {
+    const completed = completedTask()
+    const rebuiltFingerprint = 'b'.repeat(64)
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(completed)
+    api.getReqIR
+      .mockResolvedValueOnce(
+        reqirPackage('req_old', 'Evidence generation A')
+      )
+      .mockResolvedValueOnce(
+        reqirPackage(
+          'req_new',
+          'Evidence generation B',
+          rebuiltFingerprint
+        )
+      )
+    api.getBlocks
+      .mockResolvedValueOnce(
+        blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation A')
+      )
+      .mockResolvedValueOnce(
+        blocksResponse(rebuiltFingerprint, 'Evidence generation B')
+      )
+    api.runTask.mockRejectedValueOnce({
+      code: 'NETWORK_ERROR',
+      message: 'run response was interrupted'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    expect(
+      (await screen.findAllByText('Evidence generation A')).length
+    ).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(await screen.findByText('RUN_RESPONSE_LOST')).toBeTruthy()
+    expect(screen.getByText(
+      /Run response was lost, but the task completed successfully/
+    )).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText('NETWORK_ERROR')).toBeNull()
+    expect(screen.getAllByText('Evidence generation B').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Evidence generation A')).toBeNull()
+    expect(api.getBlocks).toHaveBeenLastCalledWith(
+      'task-1',
+      rebuiltFingerprint
+    )
+  })
 })
 
 function completedTask(): TaskStatusResponse {
@@ -319,10 +416,14 @@ function taskWithStatus(
   }
 }
 
-function reqirPackage(id: string, statement: string): ReqIRPackage {
+function reqirPackage(
+  id: string,
+  statement: string,
+  evidenceFingerprint = EVIDENCE_FINGERPRINT
+): ReqIRPackage {
   return {
     metadata: {
-      evidence_fingerprint: EVIDENCE_FINGERPRINT
+      evidence_fingerprint: evidenceFingerprint
     },
     items: [{
       id,
@@ -347,6 +448,25 @@ function reqirPackage(id: string, statement: string): ReqIRPackage {
       derived_from: [],
       tags: [],
       review_log: [],
+      metadata: {}
+    }]
+  }
+}
+
+function blocksResponse(
+  evidenceFingerprint: string,
+  text: string
+): BlocksResponse {
+  return {
+    task_id: 'task-1',
+    evidence_fingerprint: evidenceFingerprint,
+    items: [{
+      block_id: 'blk_001',
+      document_id: 'doc_001',
+      type: 'paragraph',
+      text,
+      section_path: [],
+      order: 1,
       metadata: {}
     }]
   }

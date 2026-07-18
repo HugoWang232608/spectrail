@@ -389,6 +389,23 @@ dd {
   margin: 3px 0 0;
 }
 
+.notice-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  border: 1px solid #9bc8a8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #14532d;
+  background: #edfdf2;
+}
+
+.notice-banner p {
+  margin: 3px 0 0;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -20,6 +20,7 @@ import type {
 } from './api/types'
 import ErrorBanner from './components/ErrorBanner'
 import ExportPanel from './components/ExportPanel'
+import NoticeBanner from './components/NoticeBanner'
 import ReqIRDetail from './components/ReqIRDetail'
 import ReqIRTable, { type ReviewStatusFilter } from './components/ReqIRTable'
 import ReviewActions from './components/ReviewActions'
@@ -29,9 +30,16 @@ import SourceViewer from './components/SourceViewer'
 import StatusPanel from './components/StatusPanel'
 import TaskPanel from './components/TaskPanel'
 import UploadPanel from './components/UploadPanel'
-import { EVIDENCE_RERUN_CONFIRMATION } from './evidence/evidenceRecovery'
+import {
+  EVIDENCE_RERUN_CONFIRMATION,
+  PIPELINE_RERUN_CONFIRMATION
+} from './evidence/evidenceRecovery'
 
 type BusyAction = 'create' | 'load' | 'upload' | 'run' | 'review' | null
+type EvidenceLoadResult = {
+  evidenceFingerprint: string | null
+  trusted: boolean
+}
 
 function App() {
   const [taskIdInput, setTaskIdInput] = useState('')
@@ -44,6 +52,7 @@ function App() {
   const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatusFilter>('all')
   const [requirementSearch, setRequirementSearch] = useState('')
   const [error, setError] = useState<ApiError | null>(null)
+  const [notice, setNotice] = useState<ApiError | null>(null)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const busyActionRef = useRef<BusyAction>(null)
 
@@ -124,24 +133,33 @@ function App() {
       return
     }
 
-    await perform('run', async () => {
-      await runTask(task.task_id)
-      const loaded = await getTask(task.task_id)
-      setTask(loaded)
-      await loadReqIRIfCompleted(loaded)
+    await runAndReconcileTask({
+      confirmation: isReadableStatus(task.status)
+        ? PIPELINE_RERUN_CONFIRMATION
+        : null
     })
   }
 
   async function handleRerunEvidence() {
-    if (
-      !task
-      || busyActionRef.current !== null
-      || !window.confirm(EVIDENCE_RERUN_CONFIRMATION)
-    ) {
+    await runAndReconcileTask({
+      confirmation: EVIDENCE_RERUN_CONFIRMATION
+    })
+  }
+
+  async function runAndReconcileTask({
+    confirmation
+  }: {
+    confirmation: string | null
+  }) {
+    if (!task || busyActionRef.current !== null) {
+      return
+    }
+    if (confirmation && !window.confirm(confirmation)) {
       return
     }
 
     const taskId = task.task_id
+    const previousEvidenceFingerprint = reqirEvidenceFingerprint(reqir)
     await perform('run', async () => {
       clearReviewEvidence()
       let runResult: TaskRunResponse | null = null
@@ -168,10 +186,14 @@ function App() {
         }
       }
 
+      let evidenceLoad: EvidenceLoadResult = {
+        evidenceFingerprint: null,
+        trusted: false
+      }
       if (refreshed) {
         setTask(refreshed)
         try {
-          await loadReqIRIfCompleted(refreshed)
+          evidenceLoad = await loadReqIRIfCompleted(refreshed)
         } catch (caught) {
           if (!runFailed) {
             throw caught
@@ -180,6 +202,25 @@ function App() {
       }
 
       if (runFailed) {
+        if (
+          isRunResponseLost(runFailure)
+          &&
+          refreshed
+          && isReadableStatus(refreshed.status)
+          && evidenceLoad.trusted
+          && previousEvidenceFingerprint !== null
+          && evidenceLoad.evidenceFingerprint !== null
+          && evidenceLoad.evidenceFingerprint !== previousEvidenceFingerprint
+        ) {
+          setNotice({
+            code: 'RUN_RESPONSE_LOST',
+            message: (
+              'Run response was lost, but the task completed successfully '
+              + 'and rebuilt Evidence was loaded.'
+            )
+          })
+          return
+        }
         throw runFailure
       }
     })
@@ -217,14 +258,19 @@ function App() {
     setSelectedRequirementId(null)
   }
 
-  async function loadReqIRIfCompleted(loaded: TaskStatusResponse) {
+  async function loadReqIRIfCompleted(
+    loaded: TaskStatusResponse
+  ): Promise<EvidenceLoadResult> {
     if (!isReadableStatus(loaded.status)) {
       setReqir(null)
       setBlocks([])
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
-      return
+      return {
+        evidenceFingerprint: null,
+        trusted: false
+      }
     }
 
     const packagePayload = await getReqIR(loaded.task_id)
@@ -260,6 +306,14 @@ function App() {
     setBlocksError(nextBlocksError)
     setReqir(packagePayload)
     setSelectedRequirementId(packagePayload.items[0]?.id ?? null)
+    return {
+      evidenceFingerprint,
+      trusted: (
+        evidenceFingerprint !== null
+        && nextBlocksError === null
+        && nextBlocksEvidenceFingerprint === evidenceFingerprint
+      )
+    }
   }
 
   async function perform(action: Exclude<BusyAction, null>, taskAction: () => Promise<void>) {
@@ -269,6 +323,7 @@ function App() {
     busyActionRef.current = action
     setBusyAction(action)
     setError(null)
+    setNotice(null)
     try {
       await taskAction()
     } catch (caught) {
@@ -290,6 +345,7 @@ function App() {
       </header>
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
 
       <section className="workspace-grid" aria-label="Task workflow">
         <div className="sidebar-stack">
@@ -452,6 +508,13 @@ function isApiError(value: unknown): value is ApiError {
     'message' in value &&
     typeof value.code === 'string' &&
     typeof value.message === 'string'
+  )
+}
+
+function isRunResponseLost(value: unknown): boolean {
+  return (
+    value instanceof TypeError
+    || (isApiError(value) && value.code === 'NETWORK_ERROR')
   )
 }
 

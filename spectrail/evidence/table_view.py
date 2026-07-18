@@ -62,6 +62,11 @@ class TableEvidenceView(EvidenceModel):
     continuation_group_id: str | None = None
     continuation_sequence: int | None = None
     continuation_of_table_id: str | None = None
+    continuation_label: str | None = None
+    continuation_basis: Literal[
+        "legacy_header_geometry_heuristic",
+        "explicit_marker_page_edge_header_match",
+    ] | None = None
     continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     rows: list[TableEvidenceRowView] = Field(default_factory=list)
@@ -188,6 +193,8 @@ def build_table_evidence_view(
         continuation_group_id=table.continuation_group_id,
         continuation_sequence=table.continuation_sequence,
         continuation_of_table_id=table.continuation_of_table_id,
+        continuation_label=table.continuation_label,
+        continuation_basis=table.continuation_basis,
         continued_header_cell_ids=dict(table.continued_header_cell_ids),
         warnings=list(table.warnings),
         rows=rows,

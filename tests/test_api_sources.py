@@ -268,6 +268,10 @@ def test_api_table_evidence_exposes_pdf_continuation_lineage(
     assert payload["continuation_group_id"] == "tblcont_00000001"
     assert payload["continuation_sequence"] == 2
     assert payload["continuation_of_table_id"] == root.table_id
+    assert payload["continuation_label"] == "table 1"
+    assert payload["continuation_basis"] == (
+        "explicit_marker_page_edge_header_match"
+    )
     assert payload["continued_header_cell_ids"] == (
         continued.continued_header_cell_ids
     )

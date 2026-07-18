@@ -1,0 +1,371 @@
+{
+  "name": "PDF table continuation evidence",
+  "evidenceFingerprint": "dd80b110b972295757855b7568c5d8a3ff809ff254e8a4490ce8902b89ab2ea8",
+  "requirement": {
+    "id": "req_pdf_table_continuation",
+    "version": 1,
+    "title": "PDF table continuation evidence",
+    "type": "unknown",
+    "ears_pattern": "unknown",
+    "statement": "The system shall preserve the continued table row.",
+    "subject": null,
+    "condition": null,
+    "response": null,
+    "priority": "unknown",
+    "verification_method": "unknown",
+    "sources": [
+      {
+        "document_id": "doc_001",
+        "document_name": "pdf_table_continuation.pdf",
+        "page": 2,
+        "section": null,
+        "section_path": [],
+        "block_id": "blk_0004",
+        "quote": "REQ-CONT-003 | Open",
+        "match_status": "PASS_EXACT",
+        "match_score": 1.0,
+        "bbox": null,
+        "table_cell": null,
+        "image_region": null,
+        "text_locator": {
+          "block_id": "blk_0004",
+          "start": 21,
+          "end": 40,
+          "offset_encoding": "unicode_code_point",
+          "match_basis": "exact"
+        },
+        "page_locator": {
+          "page": 2,
+          "bbox": {
+            "x0": 40.0,
+            "y0": 110.0,
+            "x1": 360.0,
+            "y1": 196.0,
+            "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+          },
+          "page_width": 400.0,
+          "page_height": 300.0,
+          "source_rotation": 0,
+          "coordinate_space": "pdf_preview_rotated_points_top_left_v1",
+          "derivation": "table_cell_union"
+        },
+        "table_locator": {
+          "table_id": "tbl_00000002",
+          "cell_ids": [
+            "cell_00000002_r0002_c0001",
+            "cell_00000002_r0002_c0002"
+          ],
+          "row_indices": [
+            2,
+            2
+          ],
+          "selected_row_index": 2,
+          "column_indices": [
+            1,
+            2
+          ],
+          "bbox": {
+            "x0": 40.0,
+            "y0": 110.0,
+            "x1": 360.0,
+            "y1": 196.0,
+            "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+          }
+        },
+        "source_cell_ids_raw": [
+          "cell_00000002_r0002_c0001",
+          "cell_00000002_r0002_c0002"
+        ],
+        "canonical_source_cell_ids": [
+          "cell_00000002_r0002_c0001",
+          "cell_00000002_r0002_c0002"
+        ],
+        "source_table_row_index": 2,
+        "source_evidence_key": "src_0808883bfdb34d16ae57a8e2",
+        "provisional_text_locator": null,
+        "locator_status": "PASS_STRUCTURED",
+        "capability_results": [
+          {
+            "capability": "text_range",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          },
+          {
+            "capability": "page_region",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          },
+          {
+            "capability": "table_cell",
+            "status": "PASS",
+            "issue_code": null,
+            "message": null
+          }
+        ],
+        "locator_score": 1.0
+      }
+    ],
+    "confidence": 0.0,
+    "grounding_score": null,
+    "review_status": "pending",
+    "duplicate_group_id": null,
+    "possible_duplicate_ids": [],
+    "derived_from": [],
+    "tags": [
+      "visual-acceptance",
+      "pdf-table",
+      "continuation"
+    ],
+    "review_log": [],
+    "metadata": {
+      "source_block_id": "blk_0004",
+      "model_mode": "mock",
+      "extractor_version": "reqir_extractor_v4_table_row_evidence",
+      "raw_item_index": 0
+    }
+  },
+  "blocks": [
+    {
+      "block_id": "blk_0004",
+      "document_id": "doc_001",
+      "type": "table",
+      "text": "Requirement | Status\nREQ-CONT-003 | Open\nREQ-CONT-004 | Closed",
+      "page": 2,
+      "section_path": [],
+      "order": 4,
+      "metadata": {
+        "source_format": "pdf",
+        "parser": "pdf_parser_v2",
+        "page": 2,
+        "source_index": 2,
+        "source_table_number": 1,
+        "layout_column_index": 1,
+        "layout_column_count": 1,
+        "page_region_available": true,
+        "structured_table_evidence": true,
+        "table_id": "tbl_00000002",
+        "table_index": 2,
+        "table_row_start": 1,
+        "table_row_end": 3,
+        "repeated_header_rows": [],
+        "continuation_role": "continuation",
+        "continuation_group_id": "tblcont_00000001",
+        "continuation_sequence": 2,
+        "continuation_of_table_id": "tbl_00000001",
+        "continuation_label": "table 1",
+        "continuation_basis": "explicit_marker_page_edge_header_match"
+      }
+    }
+  ],
+  "tableEvidence": {
+    "schema_version": "table_evidence_view_v1",
+    "task_id": "visual-task",
+    "evidence_fingerprint": "dd80b110b972295757855b7568c5d8a3ff809ff254e8a4490ce8902b89ab2ea8",
+    "table_id": "tbl_00000002",
+    "block_id": "blk_0004",
+    "row_count": 3,
+    "column_count": 2,
+    "topology_status": "complete",
+    "page": 2,
+    "bbox": {
+      "x0": 40.0,
+      "y0": 24.0,
+      "x1": 360.0,
+      "y1": 282.0,
+      "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+    },
+    "primary_row_start": 1,
+    "primary_row_end": 3,
+    "continuation_role": "continuation",
+    "continuation_group_id": "tblcont_00000001",
+    "continuation_sequence": 2,
+    "continuation_of_table_id": "tbl_00000001",
+    "continuation_label": "table 1",
+    "continuation_basis": "explicit_marker_page_edge_header_match",
+    "continued_header_cell_ids": {
+      "cell_00000002_r0001_c0001": "cell_00000001_r0001_c0001",
+      "cell_00000002_r0001_c0002": "cell_00000001_r0001_c0002"
+    },
+    "warnings": [
+      "PDF_TABLE_CONTINUATION_HEADER_PROJECTED"
+    ],
+    "rows": [
+      {
+        "physical_row_index": 1,
+        "rendered_start": 0,
+        "rendered_end": 20,
+        "repeated_header": false,
+        "cells": [
+          {
+            "cell_id": "cell_00000002_r0001_c0001",
+            "row_index": 1,
+            "column_index": 1,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "Requirement",
+            "is_header": true,
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 24.0,
+              "x1": 250.0,
+              "y1": 110.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000007",
+                "occurrence_role": "original",
+                "canonical_start": 0,
+                "canonical_end": 11
+              }
+            ]
+          },
+          {
+            "cell_id": "cell_00000002_r0001_c0002",
+            "row_index": 1,
+            "column_index": 2,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "Status",
+            "is_header": true,
+            "page": 2,
+            "bbox": {
+              "x0": 250.0,
+              "y0": 24.0,
+              "x1": 360.0,
+              "y1": 110.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000008",
+                "occurrence_role": "original",
+                "canonical_start": 14,
+                "canonical_end": 20
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "physical_row_index": 2,
+        "rendered_start": 21,
+        "rendered_end": 40,
+        "repeated_header": false,
+        "cells": [
+          {
+            "cell_id": "cell_00000002_r0002_c0001",
+            "row_index": 2,
+            "column_index": 1,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "REQ-CONT-003",
+            "is_header": false,
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 110.0,
+              "x1": 250.0,
+              "y1": 196.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000009",
+                "occurrence_role": "original",
+                "canonical_start": 21,
+                "canonical_end": 33
+              }
+            ]
+          },
+          {
+            "cell_id": "cell_00000002_r0002_c0002",
+            "row_index": 2,
+            "column_index": 2,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "Open",
+            "is_header": false,
+            "page": 2,
+            "bbox": {
+              "x0": 250.0,
+              "y0": 110.0,
+              "x1": 360.0,
+              "y1": 196.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000010",
+                "occurrence_role": "original",
+                "canonical_start": 36,
+                "canonical_end": 40
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "physical_row_index": 3,
+        "rendered_start": 41,
+        "rendered_end": 62,
+        "repeated_header": false,
+        "cells": [
+          {
+            "cell_id": "cell_00000002_r0003_c0001",
+            "row_index": 3,
+            "column_index": 1,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "REQ-CONT-004",
+            "is_header": false,
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 196.0,
+              "x1": 250.0,
+              "y1": 282.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000011",
+                "occurrence_role": "original",
+                "canonical_start": 41,
+                "canonical_end": 53
+              }
+            ]
+          },
+          {
+            "cell_id": "cell_00000002_r0003_c0002",
+            "row_index": 3,
+            "column_index": 2,
+            "row_span": 1,
+            "column_span": 1,
+            "text": "Closed",
+            "is_header": false,
+            "page": 2,
+            "bbox": {
+              "x0": 250.0,
+              "y0": 196.0,
+              "x1": 360.0,
+              "y1": 282.0,
+              "coordinate_space": "pdf_preview_rotated_points_top_left_v1"
+            },
+            "occurrences": [
+              {
+                "occurrence_id": "occ_00000012",
+                "occurrence_role": "original",
+                "canonical_start": 56,
+                "canonical_end": 62
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

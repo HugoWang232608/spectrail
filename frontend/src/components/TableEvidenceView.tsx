@@ -176,9 +176,13 @@ function TableEvidenceView({
             </span>
             {data.continuation_role && data.continuation_role !== 'single' ? (
               <span>
-                {data.continuation_role === 'start'
-                  ? 'continued table start'
-                  : `continued from ${data.continuation_of_table_id}`}
+                {data.continuation_basis === 'explicit_marker_page_edge_header_match'
+                  ? data.continuation_role === 'start'
+                    ? `${data.continuation_label} · continuation start`
+                    : `${data.continuation_label} · continued from ${data.continuation_of_table_id}`
+                  : data.continuation_role === 'start'
+                    ? 'possible continuation start'
+                    : `possible continuation from ${data.continuation_of_table_id}`}
                 {' · sequence '}
                 {data.continuation_sequence}
               </span>

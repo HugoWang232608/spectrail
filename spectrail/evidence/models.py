@@ -370,8 +370,27 @@ class TableRecord(EvidenceModel):
     continuation_group_id: str | None = None
     continuation_sequence: int | None = None
     continuation_of_table_id: str | None = None
+    continuation_label: str | None = None
+    continuation_basis: Literal[
+        "legacy_header_geometry_heuristic",
+        "explicit_marker_page_edge_header_match",
+    ] | None = None
     continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def identify_legacy_continuation_basis(cls, value: Any) -> Any:
+        if (
+            isinstance(value, dict)
+            and value.get("continuation_role") in {"start", "continuation"}
+            and "continuation_basis" not in value
+        ):
+            return {
+                **value,
+                "continuation_basis": "legacy_header_geometry_heuristic",
+            }
+        return value
 
     @model_validator(mode="after")
     def validate_table(self) -> "TableRecord":
@@ -389,6 +408,8 @@ class TableRecord(EvidenceModel):
             self.continuation_group_id,
             self.continuation_sequence,
             self.continuation_of_table_id,
+            self.continuation_label,
+            self.continuation_basis,
         )
         if self.continuation_role == "single":
             if any(value is not None for value in continuation_fields):
@@ -402,6 +423,16 @@ class TableRecord(EvidenceModel):
         else:
             if self.parser_method != "pymupdf_find_tables":
                 raise ValueError("table continuation is supported only for PDF tables")
+            if self.continuation_basis is None:
+                raise ValueError("continued tables require an evidence basis")
+            if (
+                self.continuation_basis
+                == "explicit_marker_page_edge_header_match"
+                and not self.continuation_label
+            ):
+                raise ValueError(
+                    "explicit table continuation requires a stable table label"
+                )
             if self.continuation_group_id is None:
                 raise ValueError("continued tables require a continuation group ID")
             continuation_match = TABLE_CONTINUATION_ID_RE.fullmatch(
@@ -715,6 +746,14 @@ def _validate_table_continuations(
         if root.continuation_group_id != table.continuation_group_id:
             raise ValueError(
                 f"continued table and root use different groups: {table.table_id}"
+            )
+        if (
+            root.continuation_basis != table.continuation_basis
+            or root.continuation_label != table.continuation_label
+        ):
+            raise ValueError(
+                "continued table and root use different evidence basis or label: "
+                f"{table.table_id}"
             )
         if (
             root.page is None

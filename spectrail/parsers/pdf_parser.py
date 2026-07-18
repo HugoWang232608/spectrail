@@ -85,6 +85,16 @@ PDF_TABLE_DETECTION_SNAP_TOLERANCE = 0.5
 PDF_TABLE_OVERLAP_AREA_EPSILON = 0.25
 PDF_TABLE_CONTINUATION_EDGE_RATIO = 0.08
 PDF_TABLE_CONTINUATION_BOUNDARY_TOLERANCE_RATIO = 0.005
+PDF_TABLE_CONTINUATION_LABEL_GAP_POINTS = 36.0
+PDF_TABLE_ROOT_LABEL_RE = re.compile(
+    r"^(?P<label>table\s+[a-z0-9][a-z0-9._-]*)$",
+    re.IGNORECASE,
+)
+PDF_TABLE_CONTINUATION_MARKER_RE = re.compile(
+    r"^(?P<label>table\s+[a-z0-9][a-z0-9._-]*)\s*"
+    r"(?:\(\s*continued\s*\)|[-:]\s*continued)$",
+    re.IGNORECASE,
+)
 
 
 class _PdfTableEvidenceUnavailable(ValueError):
@@ -408,6 +418,7 @@ class _ProjectedPdfTable:
     continuation_role: Literal["single", "start", "continuation"] = "single"
     continuation_sequence: int | None = None
     continuation_root_key: tuple[int, int] | None = None
+    continuation_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1398,6 +1409,12 @@ def _build_pdf_table_evidence(
                 ),
                 "continuation_sequence": table.continuation_sequence,
                 "continuation_of_table_id": continuation_root_table_id,
+                "continuation_label": table.continuation_label,
+                "continuation_basis": (
+                    "explicit_marker_page_edge_header_match"
+                    if table.continuation_role != "single"
+                    else None
+                ),
             },
         )
         blocks.append(block)
@@ -1462,6 +1479,12 @@ def _build_pdf_table_evidence(
         ),
         continuation_sequence=table.continuation_sequence,
         continuation_of_table_id=continuation_root_table_id,
+        continuation_label=table.continuation_label,
+        continuation_basis=(
+            "explicit_marker_page_edge_header_match"
+            if table.continuation_role != "single"
+            else None
+        ),
         continued_header_cell_ids=(
             {
                 cell_identifiers[(cell.row_index, cell.column_index)]:
@@ -1953,11 +1976,11 @@ def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
 
 
 def _mark_pdf_table_continuations(page_layouts: list[_PageLayout]) -> None:
-    """Link only uniquely provable table continuations on adjacent pages.
+    """Link explicitly authored table continuations on adjacent pages.
 
     Each page keeps its own table and cell identities. The link records lineage
-    only after page-edge position, complete header topology, text, and
-    normalized horizontal geometry all agree.
+    only after a stable table label and continued marker, page-edge position,
+    complete header topology, text, and normalized horizontal geometry agree.
     """
 
     continuation_group_index = 0
@@ -1979,6 +2002,24 @@ def _mark_pdf_table_continuations(page_layouts: list[_PageLayout]) -> None:
             continue
         previous = previous_candidates[0]
         current = current_candidates[0]
+        current_label = _pdf_table_continuation_label(
+            current_layout,
+            current,
+            continued=True,
+        )
+        if current_label is None:
+            continue
+        previous_label = (
+            previous.continuation_label
+            if previous.continuation_group_index is not None
+            else _pdf_table_continuation_label(
+                previous_layout,
+                previous,
+                continued=False,
+            )
+        )
+        if previous_label is None or previous_label != current_label:
+            continue
         if not _pdf_table_continuation_headers_match(
             previous,
             previous_layout,
@@ -2000,6 +2041,7 @@ def _mark_pdf_table_continuations(page_layouts: list[_PageLayout]) -> None:
                 continuation_group_index=group_index,
                 continuation_role="start",
                 continuation_sequence=1,
+                continuation_label=current_label,
             )
             _replace_layout_table(previous_layout, previous)
             previous_layout.warnings.append(
@@ -2017,6 +2059,7 @@ def _mark_pdf_table_continuations(page_layouts: list[_PageLayout]) -> None:
             continuation_role="continuation",
             continuation_sequence=(previous.continuation_sequence or 1) + 1,
             continuation_root_key=root_key,
+            continuation_label=current_label,
         )
         _replace_layout_table(current_layout, current)
         current_layout.warnings.append(
@@ -2096,6 +2139,37 @@ def _pdf_table_continuation_headers_match(
         ):
             return False
     return True
+
+
+def _pdf_table_continuation_label(
+    layout: _PageLayout,
+    table: _ProjectedPdfTable,
+    *,
+    continued: bool,
+) -> str | None:
+    pattern = (
+        PDF_TABLE_CONTINUATION_MARKER_RE
+        if continued
+        else PDF_TABLE_ROOT_LABEL_RE
+    )
+    matches: list[str] = []
+    for block in layout.blocks:
+        if block.table is not None or block.bbox is None:
+            continue
+        vertical_gap = table.bbox.y0 - block.bbox.y1
+        if (
+            vertical_gap < -PDF_TABLE_GEOMETRY_TOLERANCE
+            or vertical_gap > PDF_TABLE_CONTINUATION_LABEL_GAP_POINTS
+        ):
+            continue
+        block_center_x = (block.bbox.x0 + block.bbox.x1) / 2
+        if not table.bbox.x0 <= block_center_x <= table.bbox.x1:
+            continue
+        normalized = " ".join(block.text.split())
+        match = pattern.fullmatch(normalized)
+        if match is not None:
+            matches.append(" ".join(match.group("label").split()).casefold())
+    return matches[0] if len(matches) == 1 else None
 
 
 def _pdf_table_header_cells(
@@ -2468,7 +2542,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.17",
+        parser_version="2.18",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -2508,13 +2582,17 @@ def _parser_identity() -> ParserIdentity:
                 "block_80pct_overlap_or_fragment_center_v2"
             ),
             "multi_page_table_continuation": (
-                "adjacent_page_edges_unique_header_boundary_lineage_v1"
+                "explicit_label_marker_adjacent_page_edges_unique_header_"
+                "boundary_lineage_v2"
             ),
             "multi_page_table_continuation_edge_ratio": (
                 PDF_TABLE_CONTINUATION_EDGE_RATIO
             ),
             "multi_page_table_continuation_boundary_tolerance_ratio": (
                 PDF_TABLE_CONTINUATION_BOUNDARY_TOLERANCE_RATIO
+            ),
+            "multi_page_table_continuation_label_gap_points": (
+                PDF_TABLE_CONTINUATION_LABEL_GAP_POINTS
             ),
         },
         runtime_dependencies={

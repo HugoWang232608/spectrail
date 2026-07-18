@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   makeLargeRowGroupVisualFixture,
+  makePdfContinuationVisualFixture,
   makePdfMergedTableVisualFixture,
   makePdfTableVisualFixture,
   VISUAL_EVIDENCE_FINGERPRINT,
@@ -67,6 +68,22 @@ describe('visual table evidence fixtures', () => {
     expect(projected?.row_span).toBe(2)
     expect(projected?.occurrences[0].occurrence_role).toBe(
       'row_span_projection'
+    )
+  })
+
+  it('loads the checked authored PDF continuation projection', () => {
+    const fixture = makePdfContinuationVisualFixture()
+    const source = fixture.requirement.sources[0]
+    const evidence = fixture.tableEvidence
+
+    expect(fixture.evidenceFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    expect(source.locator_status).toBe('PASS_STRUCTURED')
+    expect(source.page_locator?.page).toBe(2)
+    expect(source.table_locator?.table_id).toBe('tbl_00000002')
+    expect(evidence?.continuation_role).toBe('continuation')
+    expect(evidence?.continuation_label).toBe('table 1')
+    expect(evidence?.continuation_basis).toBe(
+      'explicit_marker_page_edge_header_match'
     )
   })
 })

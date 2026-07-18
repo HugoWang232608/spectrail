@@ -1,6 +1,6 @@
 {
   "name": "PDF table structured evidence",
-  "evidenceFingerprint": "1f98a3bddcce0da9542060502c22648f055699a4cbc83a8ad6214315824177a7",
+  "evidenceFingerprint": "4362ff3bc2b26002a2222c30ee99726e8eabd24428a5df243a75a69c26268833",
   "requirement": {
     "id": "req_pdf_table",
     "version": 1,
@@ -83,7 +83,7 @@
           "cell_00000001_r0002_c0002"
         ],
         "source_table_row_index": 2,
-        "source_evidence_key": "src_4cc06a8bf8b7482673f8ff67",
+        "source_evidence_key": "src_f47eafe69dbafade2af6d034",
         "provisional_text_locator": null,
         "locator_status": "PASS_STRUCTURED",
         "capability_results": [
@@ -156,14 +156,16 @@
         "continuation_role": "single",
         "continuation_group_id": null,
         "continuation_sequence": null,
-        "continuation_of_table_id": null
+        "continuation_of_table_id": null,
+        "continuation_label": null,
+        "continuation_basis": null
       }
     }
   ],
   "tableEvidence": {
     "schema_version": "table_evidence_view_v1",
     "task_id": "visual-task",
-    "evidence_fingerprint": "1f98a3bddcce0da9542060502c22648f055699a4cbc83a8ad6214315824177a7",
+    "evidence_fingerprint": "4362ff3bc2b26002a2222c30ee99726e8eabd24428a5df243a75a69c26268833",
     "table_id": "tbl_00000001",
     "block_id": "blk_0003",
     "row_count": 3,
@@ -183,6 +185,8 @@
     "continuation_group_id": null,
     "continuation_sequence": null,
     "continuation_of_table_id": null,
+    "continuation_label": null,
+    "continuation_basis": null,
     "continued_header_cell_ids": {},
     "warnings": [],
     "rows": [

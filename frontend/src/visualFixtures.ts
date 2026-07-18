@@ -11,6 +11,9 @@ import generatedPdfTableFixture from './fixtures/pdf-table-evidence.json' with {
 import generatedPdfMergedTableFixture from './fixtures/pdf-merged-table-evidence.json' with {
   type: 'json'
 }
+import generatedPdfContinuationFixture from './fixtures/pdf-table-continuation-evidence.json' with {
+  type: 'json'
+}
 
 export const VISUAL_TASK_ID = 'visual-task'
 
@@ -32,6 +35,9 @@ const PDF_TABLE_VISUAL_FIXTURE = (
 )
 const PDF_MERGED_TABLE_VISUAL_FIXTURE = (
   generatedPdfMergedTableFixture as unknown as GeneratedVisualFixture
+)
+const PDF_CONTINUATION_VISUAL_FIXTURE = (
+  generatedPdfContinuationFixture as unknown as GeneratedVisualFixture
 )
 
 export const VISUAL_EVIDENCE_FINGERPRINT = (
@@ -371,6 +377,18 @@ export function makePdfMergedTableVisualFixture(): VisualFixture {
   }
 }
 
+export function makePdfContinuationVisualFixture(): VisualFixture {
+  return {
+    name: PDF_CONTINUATION_VISUAL_FIXTURE.name,
+    requirement: PDF_CONTINUATION_VISUAL_FIXTURE.requirement,
+    blocks: PDF_CONTINUATION_VISUAL_FIXTURE.blocks,
+    evidenceFingerprint: PDF_CONTINUATION_VISUAL_FIXTURE.evidenceFingerprint,
+    tableEvidence: validateVisualTableEvidence(
+      PDF_CONTINUATION_VISUAL_FIXTURE.tableEvidence
+    )
+  }
+}
+
 export function visualFixture(name: string): VisualFixture {
   switch (name) {
     case 'pdf-0':
@@ -385,6 +403,8 @@ export function visualFixture(name: string): VisualFixture {
       return makePdfTableVisualFixture()
     case 'pdf-merged-table':
       return makePdfMergedTableVisualFixture()
+    case 'pdf-table-continuation':
+      return makePdfContinuationVisualFixture()
     case 'docx-merged':
       return makeMergedDocxVisualFixture()
     case 'docx-row-group':

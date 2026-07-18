@@ -441,12 +441,16 @@ SPECTRAIL_SOFFICE=/path/to/soffice \
 ```
 
 The generator prints the active python-docx, LibreOffice, and pypdf identities
-and compares them with the checked manifest before writing anything. A mismatch
-fails with `FIXTURE_TOOLCHAIN_MISMATCH`. An intentional producer/toolchain
-migration must use `SPECTRAIL_ACCEPT_FIXTURE_TOOLCHAIN_CHANGE=1`, then review
-the regenerated PDF, manifest, rendered pages, and acceptance results together.
-The manifest cases are the test driver's source of truth for table dimensions,
-logical cells, source selection, span assertion, and occurrence role.
+and compares them with the checked manifest before publishing checked files. A
+mismatch fails with `FIXTURE_TOOLCHAIN_MISMATCH`. It stages and validates the
+PDF and manifest together, then publishes them with two sequential
+`os.replace()` calls. This is fail-closed on the next acceptance run, but is not
+a strictly pair-atomic filesystem transaction. An intentional
+producer/toolchain migration must use
+`SPECTRAIL_ACCEPT_FIXTURE_TOOLCHAIN_CHANGE=1`, then review the regenerated PDF,
+manifest, rendered pages, and acceptance results together. The manifest cases
+are the test driver's source of truth for table dimensions, logical cells,
+source selection, span assertion, and occurrence role.
 
 Backend acceptance projects a real detected table at 0°, 90°, 180°, and 270°,
 derives `TableLocator` and `PageLocator(table_cell_union)`, renders the same
@@ -462,27 +466,40 @@ browser response.
 PDF table continuation keeps the page-local trust boundary intact. Every page
 still owns a separate `TableRecord`, canonical cell ID namespace, bbox, and
 `TableLocator`; no source or locator spans pages. The parser links adjacent
-page-local records only when all of the following are uniquely provable:
+page-local records only when all of the following evidence agrees:
 
 - exactly one complete table reaches the previous page's bottom edge and
   exactly one complete table begins at the next page's top edge;
+- the root table has one nearby stable label such as `Table 1`, and every
+  following page has exactly one matching explicit marker such as
+  `Table 1 (continued)`;
 - both tables have the same column count;
 - their complete first-row header cells preserve canonical text, anchor
   columns, row/column spans, and normalized horizontal boundaries; and
 - the pages are adjacent and every group sequence is contiguous.
 
 Accepted records expose `continuation_group_id`, `continuation_role`,
-`continuation_sequence`, and the root `continuation_of_table_id`.
+`continuation_sequence`, the root `continuation_of_table_id`, the normalized
+`continuation_label`, and
+`continuation_basis=explicit_marker_page_edge_header_match`.
 `continued_header_cell_ids` maps each page-local repeated header cell to the
 root table's canonical header cell. Evidence validation independently checks
 the group ordering, adjacent pages, root identity, one-to-one header coverage,
 text, and topology. A mismatch or ambiguous page edge leaves both tables as
-independent `single` records; it is never guessed.
+independent `single` records. In particular, adjacent complete tables with the
+same header and column geometry remain independent when the authored
+continuation marker is absent. Artifacts produced by the short-lived earlier
+geometry-only implementation are loaded with
+`continuation_basis=legacy_header_geometry_heuristic`; Review labels that
+lineage as only a possible continuation.
 
 The checked `pdf_table_continuation.pdf` fixture contains a three-page chain.
 Acceptance proves page-local table identities, root header lineage, prompt
 source canonicalization, quote matching, `structured_required`, page/cell
-locators, `table_evidence_view_v1`, and the Review UI continuation label.
+locators, `table_evidence_view_v1`, and the Review UI continuation label. A
+Linux Chromium baseline fixes page 2's real PDF overlay, selected local cells,
+root-lineage label, continued header mapping, capability diagnostics, and
+canonical block fallback in one browser screenshot.
 
 ## Next acceptance steps
 

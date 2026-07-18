@@ -909,6 +909,8 @@ describe('SourceViewer', () => {
       continuation_group_id: 'tblcont_00000001',
       continuation_sequence: 2,
       continuation_of_table_id: 'tbl_00000000',
+      continuation_label: 'table 1',
+      continuation_basis: 'explicit_marker_page_edge_header_match' as const,
       continued_header_cell_ids: {
         cell_00000001_r0001_c0001: 'cell_00000000_r0001_c0001'
       }
@@ -921,7 +923,36 @@ describe('SourceViewer', () => {
       name: 'Table evidence tbl_00000001'
     })
     expect(
-      screen.getByText('continued from tbl_00000000 · sequence 2')
+      screen.getByText('table 1 · continued from tbl_00000000 · sequence 2')
+    ).toBeTruthy()
+  })
+
+  it('labels legacy geometry-only continuation lineage as possible', async () => {
+    const block = {
+      ...makeBlock('blk_legacy_continuation', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    const response = {
+      ...makeTableEvidenceResponse(block.block_id),
+      continuation_role: 'continuation' as const,
+      continuation_group_id: 'tblcont_00000001',
+      continuation_sequence: 2,
+      continuation_of_table_id: 'tbl_00000000',
+      continuation_basis: 'legacy_header_geometry_heuristic' as const,
+      continued_header_cell_ids: {
+        cell_00000001_r0001_c0001: 'cell_00000000_r0001_c0001'
+      }
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(response)))
+
+    renderViewer(makeRequirement('req_legacy_continuation', [source]), [block])
+
+    await screen.findByRole('grid', {
+      name: 'Table evidence tbl_00000001'
+    })
+    expect(
+      screen.getByText('possible continuation from tbl_00000000 · sequence 2')
     ).toBeTruthy()
   })
 

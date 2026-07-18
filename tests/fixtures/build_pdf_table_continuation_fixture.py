@@ -16,7 +16,7 @@ OUTPUT = Path(__file__).with_name("pdf_table_continuation.pdf")
 PAGE_WIDTH = 400
 PAGE_HEIGHT = 300
 TABLE_X = (40, 250, 360)
-ROW_HEIGHT = 92
+ROW_HEIGHT = 86
 HEADER = ("Requirement", "Status")
 PAGE_ROWS = (
     (
@@ -32,7 +32,7 @@ PAGE_ROWS = (
         ("REQ-CONT-006", "Closed"),
     ),
 )
-PAGE_TABLE_TOPS = (16, 8, 8)
+PAGE_TABLE_TOPS = (24, 24, 24)
 
 
 def _pdf_y(top_left_y: float) -> float:
@@ -73,6 +73,12 @@ def main() -> None:
     output.setTitle("SpecTrail multi-page PDF table continuation")
     output.setAuthor("SpecTrail")
     for page_index, rows in enumerate(PAGE_ROWS):
+        output.setFont("Helvetica-Bold", 9)
+        output.drawString(
+            TABLE_X[0],
+            _pdf_y(12),
+            "Table 1" if page_index == 0 else "Table 1 (continued)",
+        )
         _draw_table(
             output,
             top=PAGE_TABLE_TOPS[page_index],

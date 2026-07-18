@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.17"
+    assert parsed.parser_identity.parser_version == "2.18"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -516,6 +516,10 @@ def test_pdf_v2_links_checked_multi_page_table_continuation_and_validates_source
     assert table_block.metadata["continuation_group_id"] == "tblcont_00000001"
     assert table_block.metadata["continuation_sequence"] == 2
     assert table_block.metadata["continuation_of_table_id"] == root.table_id
+    assert table_block.metadata["continuation_label"] == "table 1"
+    assert table_block.metadata["continuation_basis"] == (
+        "explicit_marker_page_edge_header_match"
+    )
 
     source_cell_ids = [
         "cell_00000002_r0002_c0001",
@@ -603,10 +607,37 @@ def test_pdf_v2_links_checked_multi_page_table_continuation_and_validates_source
     assert projection.continuation_group_id == "tblcont_00000001"
     assert projection.continuation_sequence == 2
     assert projection.continuation_of_table_id == root.table_id
+    assert projection.continuation_label == "table 1"
+    assert projection.continuation_basis == (
+        "explicit_marker_page_edge_header_match"
+    )
     assert projection.continued_header_cell_ids == (
         second.continued_header_cell_ids
     )
     assert [row.physical_row_index for row in projection.rows] == [1, 2, 3]
+    visual_fixture = read_json(
+        "frontend/src/fixtures/pdf-table-continuation-evidence.json"
+    )
+    assert visual_fixture["evidenceFingerprint"] == index.evidence_fingerprint
+    assert visual_fixture["blocks"] == [
+        table_block.model_dump(mode="json")
+    ]
+    expected_visual_projection = build_table_evidence_view(
+        index,
+        task_id="visual-task",
+        table_id=second.table_id,
+        block_id=table_block.block_id,
+    )
+    assert visual_fixture["tableEvidence"] == (
+        expected_visual_projection.model_dump(mode="json")
+    )
+    current_preview, _, _ = render_pdf_page(path, 2)
+    checked_preview = Path(
+        "frontend/tests/visual/fixtures/pdf-table-continuation-page.png"
+    ).read_bytes()
+    assert hashlib.sha256(checked_preview).digest() == (
+        hashlib.sha256(current_preview).digest()
+    )
 
     invalid_payload = index.model_dump(mode="json")
     invalid_payload["tables"][1]["continued_header_cell_ids"][
@@ -618,15 +649,26 @@ def test_pdf_v2_links_checked_multi_page_table_continuation_and_validates_source
     ):
         type(index).model_validate(invalid_payload)
 
+    legacy_payload = index.model_dump(mode="json")
+    for table_payload in legacy_payload["tables"]:
+        table_payload.pop("continuation_basis")
+        table_payload.pop("continuation_label")
+    legacy_index = type(index).model_validate(legacy_payload)
+    assert [
+        table.continuation_basis for table in legacy_index.tables
+    ] == [
+        "legacy_header_geometry_heuristic",
+        "legacy_header_geometry_heuristic",
+        "legacy_header_geometry_heuristic",
+    ]
 
-def test_pdf_v2_does_not_guess_continuation_when_headers_differ(
+
+def test_pdf_v2_does_not_link_identical_independent_edge_tables_without_marker(
     tmp_path: Path,
 ):
     path = tmp_path / "independent-edge-tables.pdf"
     document = fitz.open()
-    for page_index, header in enumerate(
-        (("Requirement", "Status"), ("Requirement", "Decision"))
-    ):
+    for page_index in range(2):
         page = document.new_page(width=400, height=300)
         top = 16 if page_index == 0 else 8
         row_height = 92
@@ -636,7 +678,7 @@ def test_pdf_v2_does_not_guess_continuation_when_headers_differ(
             y = top + row_index * row_height
             page.draw_line((40, y), (360, y))
         values = (
-            header,
+            ("Requirement", "Status"),
             (f"REQ-{page_index + 1}A", "Open"),
             (f"REQ-{page_index + 1}B", "Closed"),
         )

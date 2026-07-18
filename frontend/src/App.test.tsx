@@ -189,6 +189,94 @@ describe('App legacy Evidence recovery', () => {
     expect(screen.getByText('No requirements')).toBeTruthy()
     expect(screen.getByText('No source')).toBeTruthy()
   })
+
+  it('restores readable Evidence when the run request fails before reaching the backend', async () => {
+    const completed = completedTask()
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(completed)
+    api.getReqIR
+      .mockResolvedValueOnce(reqirPackage('req_old', 'Existing evidence'))
+      .mockResolvedValueOnce(reqirPackage('req_old', 'Existing evidence'))
+    api.getBlocks
+      .mockRejectedValueOnce({
+        code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+        message: 'legacy Evidence must be rebuilt'
+      })
+      .mockRejectedValueOnce({
+        code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+        message: 'legacy Evidence must be rebuilt'
+      })
+    api.runTask.mockRejectedValueOnce({
+      code: 'NETWORK_ERROR',
+      message: 'request did not reach the backend'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Rerun task'
+    }))
+
+    expect(await screen.findByText('NETWORK_ERROR')).toBeTruthy()
+    expect(screen.getByText('request did not reach the backend')).toBeTruthy()
+    await waitFor(() => expect(api.getReqIR).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByText('Existing evidence').length).toBeGreaterThan(0)
+    expect(screen.queryByText('No requirements')).toBeNull()
+    expect(screen.getByRole('link', {
+      name: 'Download reqir.json'
+    })).toBeTruthy()
+  })
+
+  it('uses the successful run response when the follow-up task snapshot fails', async () => {
+    const completed = completedTask()
+    const runResult = completedRun({
+      validated_requirements: 2
+    })
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockRejectedValueOnce(new Error('task snapshot unavailable'))
+    api.getReqIR
+      .mockResolvedValueOnce(reqirPackage('req_old', 'Old parser evidence'))
+      .mockResolvedValueOnce(reqirPackage('req_new', 'Rebuilt evidence'))
+    api.getBlocks
+      .mockRejectedValueOnce({
+        code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+        message: 'legacy Evidence must be rebuilt'
+      })
+      .mockResolvedValueOnce({
+        task_id: 'task-1',
+        evidence_fingerprint: EVIDENCE_FINGERPRINT,
+        items: [{
+          block_id: 'blk_001',
+          document_id: 'doc_001',
+          type: 'paragraph',
+          text: 'Rebuilt evidence',
+          section_path: [],
+          order: 1,
+          metadata: {}
+        }]
+      } satisfies BlocksResponse)
+    api.runTask.mockResolvedValueOnce(runResult)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Rerun task'
+    }))
+
+    await waitFor(() => expect(api.getReqIR).toHaveBeenCalledTimes(2))
+    expect(screen.getAllByText('Rebuilt evidence').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Old parser evidence')).toBeNull()
+    expect(metricValue('Validated Requirements')).toBe('2')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })
 
 function completedTask(): TaskStatusResponse {
@@ -262,6 +350,27 @@ function reqirPackage(id: string, statement: string): ReqIRPackage {
       metadata: {}
     }]
   }
+}
+
+function completedRun(
+  counts: Record<string, number> = {}
+): TaskRunResponse {
+  const task = completedTask()
+  return {
+    task_id: task.task_id,
+    status: 'completed',
+    manifest: {
+      ...task.manifest!,
+      started_at: '2026-07-18T00:01:00Z',
+      completed_at: '2026-07-18T00:01:01Z',
+      counts
+    }
+  }
+}
+
+function metricValue(label: string): string | null | undefined {
+  const metricLabel = screen.getByText(label, { selector: '.metric span' })
+  return metricLabel.parentElement?.querySelector('strong')?.textContent
 }
 
 function deferred<T>() {

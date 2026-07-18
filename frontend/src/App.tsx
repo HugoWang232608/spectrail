@@ -10,7 +10,14 @@ import {
   uploadDocument,
   reviewRequirement
 } from './api/client'
-import type { ApiError, DocumentBlock, ReqIRPackage, ReviewRequest, TaskStatusResponse } from './api/types'
+import type {
+  ApiError,
+  DocumentBlock,
+  ReqIRPackage,
+  ReviewRequest,
+  TaskRunResponse,
+  TaskStatusResponse
+} from './api/types'
 import ErrorBanner from './components/ErrorBanner'
 import ExportPanel from './components/ExportPanel'
 import ReqIRDetail from './components/ReqIRDetail'
@@ -137,19 +144,44 @@ function App() {
     const taskId = task.task_id
     await perform('run', async () => {
       clearReviewEvidence()
+      let runResult: TaskRunResponse | null = null
+      let runFailed = false
+      let runFailure: unknown
       try {
-        await runTask(taskId)
+        runResult = await runTask(taskId)
       } catch (caught) {
-        try {
-          setTask(await getTask(taskId))
-        } catch {
-          // Preserve the original pipeline error when snapshot refresh fails.
-        }
-        throw caught
+        runFailed = true
+        runFailure = caught
       }
-      const loaded = await getTask(taskId)
-      setTask(loaded)
-      await loadReqIRIfCompleted(loaded)
+
+      let refreshed: TaskStatusResponse | null = null
+      try {
+        refreshed = await getTask(taskId)
+      } catch (caught) {
+        if (runResult) {
+          refreshed = taskSnapshotFromRun(task, runResult)
+        } else {
+          setTask(unavailableTaskSnapshot(task))
+          if (!runFailed) {
+            throw caught
+          }
+        }
+      }
+
+      if (refreshed) {
+        setTask(refreshed)
+        try {
+          await loadReqIRIfCompleted(refreshed)
+        } catch (caught) {
+          if (!runFailed) {
+            throw caught
+          }
+        }
+      }
+
+      if (runFailed) {
+        throw runFailure
+      }
     })
   }
 
@@ -331,6 +363,38 @@ function App() {
 
 function isSupportedDocument(filename: string) {
   return ['.md', '.markdown', '.docx', '.pdf'].some((suffix) => filename.endsWith(suffix))
+}
+
+function taskSnapshotFromRun(
+  previous: TaskStatusResponse,
+  run: TaskRunResponse
+): TaskStatusResponse {
+  return {
+    task_id: run.task_id,
+    status: run.status,
+    task: {
+      ...previous.task,
+      task_id: run.task_id,
+      status: run.status,
+      updated_at: run.manifest.completed_at ?? previous.task.updated_at
+    },
+    manifest: run.manifest
+  }
+}
+
+function unavailableTaskSnapshot(
+  previous: TaskStatusResponse
+): TaskStatusResponse {
+  const status = 'status_unavailable'
+  return {
+    ...previous,
+    status,
+    task: {
+      ...previous.task,
+      status
+    },
+    manifest: null
+  }
 }
 
 function isReadableStatus(status: string | undefined): boolean {

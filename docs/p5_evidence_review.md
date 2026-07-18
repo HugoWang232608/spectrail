@@ -499,7 +499,11 @@ action is disabled while any other task operation is active and requires
 confirmation because rerunning deletes existing review decisions, edits,
 review history, and exports. If the rerun fails, Review refreshes the task
 snapshot so failed status and export availability match the backend while the
-original pipeline error remains visible.
+original pipeline error remains visible. Reconciliation runs even when the
+`POST /run` response is lost: a readable refreshed snapshot reloads ReqIR and
+blocks before the original request error is reported. If the run succeeds but
+the follow-up task read fails, the run response's status and manifest provide
+the fallback snapshot used to load the rebuilt Evidence.
 
 The authored-marker v1 grammar is intentionally strict and fail-closed. It
 accepts an ASCII `Table <token>` root label plus `Table <token> (continued)`,

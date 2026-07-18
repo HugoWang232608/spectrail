@@ -14,7 +14,7 @@ import type {
   ApiError,
   DocumentBlock,
   ReqIRPackage,
-  ReviewRequest,
+  ReviewActionRequest,
   TaskRunResponse,
   TaskStatusResponse
 } from './api/types'
@@ -231,13 +231,21 @@ function App() {
     })
   }
 
-  async function handleReview(request: ReviewRequest) {
+  async function handleReview(request: ReviewActionRequest) {
     if (!task) {
       return
     }
 
     await perform('review', async () => {
-      await reviewRequirement(task.task_id, request)
+      const reviewResponse = await reviewRequirement(task.task_id, {
+        ...request,
+        expected_run_generation: task.run_generation
+      })
+      requireRunGeneration(
+        reviewResponse.run_generation,
+        task.run_generation,
+        'review result'
+      )
       const reqirResponse = await getReqIR(
         task.task_id,
         task.run_generation
@@ -411,6 +419,7 @@ function App() {
           />
           <ExportPanel
             taskId={task?.task_id ?? null}
+            runGeneration={task?.run_generation ?? null}
             available={isReadableStatus(task?.status)}
           />
         </div>

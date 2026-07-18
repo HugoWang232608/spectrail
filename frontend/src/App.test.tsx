@@ -23,8 +23,9 @@ const api = vi.hoisted(() => ({
 
 vi.mock('./api/client', () => ({
   API_BASE_URL: '/api',
-  getExportUrl: (taskId: string, filename: string) => (
-    `/api/tasks/${taskId}/exports/${filename}`
+  getExportUrl: (taskId: string, filename: string, runGeneration: number) => (
+    `/api/tasks/${taskId}/exports/${filename}` +
+    `?expected_run_generation=${runGeneration}`
   ),
   ...api
 }))
@@ -42,6 +43,51 @@ afterEach(() => {
 })
 
 describe('App pipeline run reconciliation', () => {
+  it('binds review writes and export links to the loaded run generation', async () => {
+    const task = completedTask(1)
+    api.getTask.mockResolvedValueOnce(task)
+    api.getReqIR
+      .mockResolvedValueOnce(reqirPackage('req_review', 'Review evidence'))
+      .mockResolvedValueOnce(reqirPackage('req_review', 'Review evidence'))
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'Review evidence')
+    )
+    api.reviewRequirement.mockResolvedValueOnce({
+      task_id: 'task-1',
+      run_generation: 1,
+      requirement_id: 'req_review',
+      action: 'approve',
+      review_status: 'approved'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await screen.findByText('Review evidence', { selector: 'mark' })
+
+    const reqirDownload = screen.getByRole('link', {
+      name: 'Download reqir.json'
+    })
+    expect(reqirDownload.getAttribute('href')).toContain(
+      'expected_run_generation=1'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+    await waitFor(() => {
+      expect(api.reviewRequirement).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({
+          requirement_id: 'req_review',
+          expected_run_generation: 1,
+          action: 'approve'
+        })
+      )
+    })
+    expect(api.getReqIR).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
   it('clears stale review state, reruns the task, and loads rebuilt Evidence', async () => {
     const task = completedTask()
     const pendingRun = deferred<TaskRunResponse>()

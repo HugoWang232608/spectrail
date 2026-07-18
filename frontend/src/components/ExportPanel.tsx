@@ -2,11 +2,16 @@ import { getExportUrl } from '../api/client'
 
 type ExportPanelProps = {
   taskId: string | null
+  runGeneration: number | null
   available: boolean
 }
 
-function ExportPanel({ taskId, available }: ExportPanelProps) {
-  const disabled = !taskId || !available
+function ExportPanel({
+  taskId,
+  runGeneration,
+  available
+}: ExportPanelProps) {
+  const disabled = !taskId || runGeneration == null || !available
 
   return (
     <section className="panel compact-panel export-panel" aria-labelledby="export-heading">
@@ -26,10 +31,22 @@ function ExportPanel({ taskId, available }: ExportPanelProps) {
           </>
         ) : (
           <>
-            <a className="download-button" href={getExportUrl(taskId, 'reqir.json')} download>
+            <a
+              className="download-button"
+              href={getExportUrl(taskId, 'reqir.json', runGeneration)}
+              download
+            >
               Download reqir.json
             </a>
-            <a className="download-button" href={getExportUrl(taskId, 'requirements.xlsx')} download>
+            <a
+              className="download-button"
+              href={getExportUrl(
+                taskId,
+                'requirements.xlsx',
+                runGeneration
+              )}
+              download
+            >
               Download requirements.xlsx
             </a>
           </>

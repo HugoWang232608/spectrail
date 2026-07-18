@@ -539,27 +539,45 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def read_chunks(self, task_id: str) -> list[dict[str, Any]]:
+    def read_chunks(
+        self,
+        task_id: str,
+        *,
+        expected_run_generation: int,
+    ) -> tuple[int, list[dict[str, Any]]]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "chunks_read"):
-                self.require_readable_task(task_id)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
                 chunks_path = task_dir / "parsed" / "chunks.json"
                 if not chunks_path.exists():
                     raise BlocksNotFoundError(f"chunks not found: {task_id}")
-                return read_json(chunks_path)
+                return run_generation, read_json(chunks_path)
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def read_quarantined(self, task_id: str) -> dict[str, Any]:
+    def read_quarantined(
+        self,
+        task_id: str,
+        *,
+        expected_run_generation: int,
+    ) -> tuple[int, dict[str, Any]]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "quarantine_read"):
-                self.require_readable_task(task_id)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
                 path = task_dir / "extracted" / "reqir.quarantined.json"
                 if not path.exists():
                     raise TaskNotReadyError(f"quarantined ReqIR artifact missing: {task_id}")
-                return read_json(path)
+                return run_generation, read_json(path)
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -571,6 +589,23 @@ class LocalTaskStore:
                 if task.get("status") not in READABLE_TASK_STATUSES:
                     raise TaskNotReadyError(f"task is not completed: {task_id}")
                 return task
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
+    def require_readable_generation(
+        self,
+        task_id: str,
+        *,
+        expected_run_generation: int,
+    ) -> int:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "task_generation_check"):
+                return self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -601,15 +636,27 @@ class LocalTaskStore:
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
-    def read_export(self, task_id: str, filename: str) -> bytes:
+    def read_export(
+        self,
+        task_id: str,
+        filename: str,
+        *,
+        expected_run_generation: int,
+    ) -> tuple[int, bytes]:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "export_read"):
-                self.require_readable_task(task_id)
-                path = self.get_export_path(task_id, filename)
+                run_generation = self._require_readable_generation(
+                    task_id,
+                    task_dir,
+                    expected_run_generation,
+                )
+                if filename not in {"reqir.json", "requirements.xlsx"}:
+                    raise FileNotFoundError(filename)
+                path = task_dir / "exports" / filename
                 if not path.exists():
                     raise FileNotFoundError(filename)
-                return path.read_bytes()
+                return run_generation, path.read_bytes()
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 

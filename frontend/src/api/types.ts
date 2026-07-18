@@ -276,7 +276,7 @@ export type DocumentChunk = {
 
 export type QuarantinedReqIRPackage = ReqIRPackage
 
-export type ReviewRequest = {
+export type ReviewActionRequest = {
   requirement_id: string
   action: 'approve' | 'reject' | 'edit' | 'restore' | 'request_recheck'
   patch?: Record<string, unknown>
@@ -284,8 +284,13 @@ export type ReviewRequest = {
   reason?: string | null
 }
 
+export type ReviewRequest = ReviewActionRequest & {
+  expected_run_generation: number
+}
+
 export type ReviewResponse = {
   task_id: string
+  run_generation: number
   requirement_id: string
   action: string
   review_status: ReviewStatus

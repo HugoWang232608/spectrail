@@ -145,12 +145,37 @@ def test_api_forced_chunking_exposes_chunk_and_quarantine_artifacts(api_client: 
     assert run.status_code == 200
     assert run.json()["manifest"]["counts"]["chunks"] >= 3
 
-    chunks = api_client.get(f"/api/tasks/{task_id}/chunks")
-    quarantined = api_client.get(f"/api/tasks/{task_id}/quarantined")
+    chunks = api_client.get(
+        f"/api/tasks/{task_id}/chunks?expected_run_generation=1"
+    )
+    quarantined = api_client.get(
+        f"/api/tasks/{task_id}/quarantined?expected_run_generation=1"
+    )
     assert chunks.status_code == 200
+    assert chunks.headers["x-spectrail-run-generation"] == "1"
     assert len(chunks.json()) >= 3
     assert quarantined.status_code == 200
+    assert quarantined.headers["x-spectrail-run-generation"] == "1"
     assert quarantined.json()["items"] == []
+
+
+@pytest.mark.parametrize("artifact", ["chunks", "quarantined"])
+def test_api_auxiliary_artifacts_reject_stale_run_generation(
+    api_client: TestClient,
+    completed_api_task: dict,
+    artifact: str,
+):
+    task_id = completed_api_task["task_id"]
+    store = api_client.app.state.task_store
+    store.begin_run(task_id)
+    store.update_task(task_id, status="completed")
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/{artifact}?expected_run_generation=1"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RUN_GENERATION_CHANGED"
 
 
 def test_api_rejects_invalid_chunking_configuration(api_client: TestClient):
@@ -179,9 +204,16 @@ def test_completed_with_warnings_remains_readable_reviewable_and_exportable(
     requirement_id = reqir.json()["items"][0]["id"]
     reviewed = api_client.post(
         f"/api/tasks/{task_id}/review",
-        json={"requirement_id": requirement_id, "action": "approve"},
+        json={
+            "requirement_id": requirement_id,
+            "expected_run_generation": 1,
+            "action": "approve",
+        },
     )
-    exported = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    exported = api_client.get(
+        f"/api/tasks/{task_id}/exports/requirements.xlsx"
+        "?expected_run_generation=1"
+    )
     assert reviewed.status_code == 200
     assert exported.status_code == 200
 
@@ -209,10 +241,17 @@ def test_api_reads_and_writes_reject_incomplete_migration(
         api_client.get(
             f"/api/tasks/{task_id}/reqir?expected_run_generation=1"
         ),
-        api_client.get(f"/api/tasks/{task_id}/exports/reqir.json"),
+        api_client.get(
+            f"/api/tasks/{task_id}/exports/reqir.json"
+            "?expected_run_generation=1"
+        ),
         api_client.post(
             f"/api/tasks/{task_id}/review",
-            json={"requirement_id": "REQ-0001", "action": "approve"},
+            json={
+                "requirement_id": "REQ-0001",
+                "expected_run_generation": 1,
+                "action": "approve",
+            },
         ),
         api_client.post(f"/api/tasks/{task_id}/run"),
     ):
@@ -233,7 +272,11 @@ def test_api_distinguishes_active_task_lock_from_incomplete_migration(
             api_client.post(f"/api/tasks/{task_id}/run"),
             api_client.post(
                 f"/api/tasks/{task_id}/review",
-                json={"requirement_id": "REQ-0001", "action": "approve"},
+                json={
+                    "requirement_id": "REQ-0001",
+                    "expected_run_generation": 1,
+                    "action": "approve",
+                },
             ),
         ]
 
@@ -317,7 +360,11 @@ def test_review_race_preserves_transaction_error_code(
     )
     response = api_client.post(
         f"/api/tasks/{task_id}/review",
-        json={"requirement_id": "REQ-0001", "action": "approve"},
+        json={
+            "requirement_id": "REQ-0001",
+            "expected_run_generation": 1,
+            "action": "approve",
+        },
     )
 
     assert response.status_code == 409
@@ -385,7 +432,10 @@ def test_api_run_docx_task_completed(api_client: TestClient, tmp_path: Path):
     assert reqir.status_code == 200
     assert len(reqir.json()["items"]) >= 14
 
-    xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    xlsx = api_client.get(
+        f"/api/tasks/{task_id}/exports/requirements.xlsx"
+        "?expected_run_generation=1"
+    )
     assert xlsx.status_code == 200
     assert xlsx.content
 
@@ -410,7 +460,10 @@ def test_api_run_text_pdf_task_completed_with_source_pages(api_client: TestClien
         f"?expected_run_generation=1"
         f"&expected_evidence_fingerprint={evidence_fingerprint}"
     )
-    xlsx = api_client.get(f"/api/tasks/{task_id}/exports/requirements.xlsx")
+    xlsx = api_client.get(
+        f"/api/tasks/{task_id}/exports/requirements.xlsx"
+        "?expected_run_generation=1"
+    )
     assert reqir.status_code == 200
     assert blocks.status_code == 200
     assert xlsx.status_code == 200

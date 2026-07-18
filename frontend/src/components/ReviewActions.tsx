@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 
-import type { RequirementIR, ReviewRequest } from '../api/types'
+import type {
+  RequirementIR,
+  ReviewActionRequest
+} from '../api/types'
 
 type ReviewActionsProps = {
   requirement: RequirementIR | null
   busy: boolean
-  onReview: (request: ReviewRequest) => void
+  onReview: (request: ReviewActionRequest) => void
 }
 
 const PRIORITIES = ['high', 'medium', 'low', 'unknown']
@@ -153,7 +156,10 @@ function ReviewActions({ requirement, busy, onReview }: ReviewActionsProps) {
   )
 }
 
-function baseRequest(requirementId: string, action: ReviewRequest['action']): ReviewRequest {
+function baseRequest(
+  requirementId: string,
+  action: ReviewActionRequest['action']
+): ReviewActionRequest {
   return {
     requirement_id: requirementId,
     action,

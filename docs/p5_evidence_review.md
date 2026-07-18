@@ -182,6 +182,40 @@ be migrated or reloaded.
 record, and manifest, preventing a malformed mixed-generation status snapshot
 from being serialized as a valid API response.
 
+Review writes are conditional on the same snapshot:
+
+```text
+POST /api/tasks/{task_id}/review
+{
+  "expected_run_generation": <loaded task generation>,
+  "requirement_id": "...",
+  "action": "approve | reject | edit | restore | request_recheck",
+  ...
+}
+```
+
+One outer task transaction covers the generation and readable-status checks,
+ReqIR mutation, reviewer log update, and XLSX regeneration. A concurrent rerun
+therefore returns `RUN_GENERATION_CHANGED` before any review artifact is
+written, even when the new run happens to reuse the same requirement ID.
+Successful `ReviewResponse` bodies return the actual `run_generation`.
+
+Downloads and auxiliary review artifacts are conditional reads as well:
+
+```text
+GET /api/tasks/{task_id}/exports/{filename}
+  ?expected_run_generation=<loaded task generation>
+GET /api/tasks/{task_id}/chunks
+  ?expected_run_generation=<loaded task generation>
+GET /api/tasks/{task_id}/quarantined
+  ?expected_run_generation=<loaded task generation>
+```
+
+Successful responses use `Cache-Control: private, no-store` and return
+`X-Spectrail-Run-Generation`. The Review UI includes the generation in both
+download links, preventing a page showing generation N from silently
+downloading generation N+1 exports.
+
 `LocalTaskStore` caches the fully validated `EvidenceIndex`, validated blocks,
 and block-scoped table projections by task ID plus artifact device, inode, size,
 modification time and change time. Repeated source navigation therefore avoids

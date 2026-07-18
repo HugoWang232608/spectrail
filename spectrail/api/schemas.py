@@ -108,6 +108,7 @@ class TaskRunResponse(BaseModel):
 
 class ReviewRequest(BaseModel):
     requirement_id: str
+    expected_run_generation: int = Field(ge=0)
     action: Literal["approve", "reject", "edit", "restore", "request_recheck"]
     patch: dict[str, Any] = Field(default_factory=dict)
     reviewer: str | None = None
@@ -116,6 +117,7 @@ class ReviewRequest(BaseModel):
 
 class ReviewResponse(BaseModel):
     task_id: str
+    run_generation: int = Field(ge=0)
     requirement_id: str
     action: str
     review_status: str

@@ -99,12 +99,30 @@ export async function getTableEvidence(
   }
 }
 
-export async function getChunks(taskId: string): Promise<DocumentChunk[]> {
-  return request<DocumentChunk[]>(`/tasks/${taskId}/chunks`)
+export async function getChunks(
+  taskId: string,
+  expectedRunGeneration: number
+): Promise<DocumentChunk[]> {
+  return (
+    await versionedRequest<DocumentChunk[]>(
+      `/tasks/${taskId}/chunks` +
+        `?expected_run_generation=${expectedRunGeneration}`,
+      expectedRunGeneration
+    )
+  ).payload
 }
 
-export async function getQuarantined(taskId: string): Promise<ReqIRPackage> {
-  return request<ReqIRPackage>(`/tasks/${taskId}/quarantined`)
+export async function getQuarantined(
+  taskId: string,
+  expectedRunGeneration: number
+): Promise<ReqIRPackage> {
+  return (
+    await versionedRequest<ReqIRPackage>(
+      `/tasks/${taskId}/quarantined` +
+        `?expected_run_generation=${expectedRunGeneration}`,
+      expectedRunGeneration
+    )
+  ).payload
 }
 
 export async function reviewRequirement(
@@ -117,8 +135,15 @@ export async function reviewRequirement(
   })
 }
 
-export function getExportUrl(taskId: string, filename: 'reqir.json' | 'requirements.xlsx'): string {
-  return `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/exports/${filename}`
+export function getExportUrl(
+  taskId: string,
+  filename: 'reqir.json' | 'requirements.xlsx',
+  expectedRunGeneration: number
+): string {
+  return (
+    `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/exports/${filename}` +
+    `?expected_run_generation=${expectedRunGeneration}`
+  )
 }
 
 export function getPagePreviewUrl(taskId: string, page: number): string {

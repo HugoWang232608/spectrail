@@ -6,8 +6,12 @@ from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import ReviewRequest, ReviewResponse
 from spectrail.api.transaction_errors import task_transaction_http_error
 from spectrail.review.service import apply_review_to_package
-from spectrail.task_transactions import TaskTransactionError
-from spectrail.tasks import LocalTaskStore, TaskNotFoundError
+from spectrail.task_transactions import TaskTransactionError, task_operation
+from spectrail.tasks import (
+    LocalTaskStore,
+    RunGenerationChangedError,
+    TaskNotFoundError,
+)
 from spectrail.tasks.store import TaskNotReadyError
 
 
@@ -21,22 +25,28 @@ def review_requirement(
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        store.require_readable_task(task_id)
         task_dir = store.get_task_dir(task_id)
-        updated = apply_review_to_package(
-            reqir_path=task_dir / "exports" / "reqir.json",
-            review_log_path=task_dir / "review" / "review_log.json",
-            xlsx_path=task_dir / "exports" / "requirements.xlsx",
-            requirement_id=request.requirement_id,
-            action=request.action,
-            patch=request.patch,
-            reviewer=request.reviewer,
-            reason=request.reason,
-        )
+        with task_operation(task_dir, "api_review_apply"):
+            run_generation = store.require_readable_generation(
+                task_id,
+                expected_run_generation=request.expected_run_generation,
+            )
+            updated = apply_review_to_package(
+                reqir_path=task_dir / "exports" / "reqir.json",
+                review_log_path=task_dir / "review" / "review_log.json",
+                xlsx_path=task_dir / "exports" / "requirements.xlsx",
+                requirement_id=request.requirement_id,
+                action=request.action,
+                patch=request.patch,
+                reviewer=request.reviewer,
+                reason=request.reason,
+            )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+    except RunGenerationChangedError as exc:
+        raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
     except FileNotFoundError as exc:
         raise _error(404, "EXPORT_NOT_FOUND", str(exc)) from exc
     except TaskTransactionError as exc:
@@ -49,6 +59,7 @@ def review_requirement(
 
     return {
         "task_id": task_id,
+        "run_generation": run_generation,
         "requirement_id": updated.id,
         "action": request.action,
         "review_status": updated.review_status,

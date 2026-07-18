@@ -212,27 +212,47 @@ def get_reqir(
 @router.get("/tasks/{task_id}/chunks")
 def get_chunks(
     task_id: str,
+    response: Response,
+    expected_run_generation: int = Query(ge=0),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> list[dict]:
     try:
-        return store.read_chunks(task_id)
+        run_generation, chunks = store.read_chunks(
+            task_id,
+            expected_run_generation=expected_run_generation,
+        )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+    except RunGenerationChangedError as exc:
+        raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Spectrail-Run-Generation"] = str(run_generation)
+    return chunks
 
 
 @router.get("/tasks/{task_id}/quarantined")
 def get_quarantined(
     task_id: str,
+    response: Response,
+    expected_run_generation: int = Query(ge=0),
     store: LocalTaskStore = Depends(get_task_store),
 ) -> dict:
     try:
-        return store.read_quarantined(task_id)
+        run_generation, quarantined = store.read_quarantined(
+            task_id,
+            expected_run_generation=expected_run_generation,
+        )
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "TASK_NOT_COMPLETED", str(exc)) from exc
+    except RunGenerationChangedError as exc:
+        raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Spectrail-Run-Generation"] = str(run_generation)
+    return quarantined
 
 
 def _task_response(task: dict) -> dict:

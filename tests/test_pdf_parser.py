@@ -913,6 +913,190 @@ def test_pdf_v2_rejects_conflicting_text_from_bboxless_merged_slot(
     ]
 
 
+def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
+    path = Path("tests/fixtures/pdf_table_merged_libreoffice.pdf")
+    manifest = read_json(
+        "tests/fixtures/pdf_table_merged_libreoffice.manifest.json"
+    )
+    assert manifest["schema_version"] == "pdf_fixture_manifest_v1"
+    assert manifest["fixture"] == path.name
+    assert manifest["content_producer"]["name"] == "LibreOffice"
+    assert manifest["content_producer"]["identity"].startswith(
+        "LibreOfficeDev 26.8.0.0.alpha0"
+    )
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
+        manifest["pdf_sha256"]
+    )
+
+    producer_document = fitz.open(path)
+    assert len(producer_document) == manifest["page_count"] == 2
+    assert producer_document.metadata["creator"] == (
+        manifest["content_producer"]["identity"]
+    )
+    producer_document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert parsed.warnings == []
+    assert [
+        (table.page, table.row_count, table.column_count)
+        for table in index.tables
+    ] == [
+        (1, 2, 2),
+        (2, 2, 2),
+    ]
+    assert [
+        (
+            cell.page,
+            cell.row_index,
+            cell.column_index,
+            cell.row_span,
+            cell.column_span,
+            cell.text,
+        )
+        for cell in index.cells
+    ] == [
+        (1, 1, 1, 1, 2, "LO merged requirement header"),
+        (1, 2, 1, 1, 1, "REQ-LO-H"),
+        (1, 2, 2, 1, 1, "Accepted"),
+        (2, 1, 1, 2, 1, "LO shared control"),
+        (2, 1, 2, 1, 1, "LO first state"),
+        (2, 2, 2, 1, 1, "LO second state"),
+    ]
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+    cases = [
+        {
+            "page": 1,
+            "quote": "LO merged requirement header",
+            "cell_ids": ["cell_00000001_r0001_c0001"],
+            "selected_row": 1,
+            "span_field": "column_span",
+            "span_value": 2,
+            "role": "original",
+        },
+        {
+            "page": 2,
+            "quote": "LO shared control | LO second state",
+            "cell_ids": [
+                "cell_00000002_r0001_c0001",
+                "cell_00000002_r0002_c0002",
+            ],
+            "selected_row": 2,
+            "span_field": "row_span",
+            "span_value": 2,
+            "role": "row_span_projection",
+        },
+    ]
+    for case in cases:
+        table = next(
+            table for table in index.tables if table.page == case["page"]
+        )
+        block = next(
+            block for block in parsed.blocks if block.page == case["page"]
+        )
+        requirement = ReqIRExtractor().extract(
+            {
+                "items": [
+                    {
+                        "statement": case["quote"],
+                        "source_block_id": block.block_id,
+                        "source_quote": case["quote"],
+                        "source_cell_ids": case["cell_ids"],
+                        "source_table_row_index": case["selected_row"],
+                    }
+                ]
+            },
+            parsed.blocks,
+            document_name=parsed.document_name,
+        )[0]
+        canonicalize_source_cell_ids([requirement], index)
+        registry = build_quote_match_registry(
+            [requirement],
+            parsed.blocks,
+            evidence_fingerprint=index.evidence_fingerprint,
+            evidence_index=index,
+        )
+        SourceEvidenceEnricher().enrich(
+            [requirement],
+            index,
+            registry,
+            parsed.blocks,
+        )
+        quote_validated, quote_report = SourceQuoteValidator().validate(
+            [requirement],
+            parsed.blocks,
+            registry,
+        )
+        locator_validated, locator_report, failures = (
+            SourceLocatorValidator().validate(
+                quote_validated,
+                index,
+                registry,
+                policy="structured_required",
+                document_blocks=parsed.blocks,
+            )
+        )
+        source = requirement.sources[0]
+        assert quote_report.valid is True
+        assert locator_report.valid is True
+        assert failures == []
+        assert locator_validated == [requirement]
+        assert source.locator_status == "PASS_STRUCTURED"
+        assert source.table_locator is not None
+        assert source.table_locator.cell_ids == case["cell_ids"]
+        assert source.table_locator.selected_row_index == case["selected_row"]
+        assert source.page_locator is not None
+        assert source.page_locator.page == case["page"]
+        assert source.page_locator.derivation == "table_cell_union"
+        assert source.page_locator.bbox == source.table_locator.bbox
+
+        projection = build_table_evidence_view(
+            index,
+            task_id="libreoffice-corpus-task",
+            table_id=table.table_id,
+            block_id=block.block_id,
+        )
+        selected_row = next(
+            row
+            for row in projection.rows
+            if row.physical_row_index == case["selected_row"]
+        )
+        projected_owner = next(
+            cell
+            for cell in selected_row.cells
+            if cell.cell_id == case["cell_ids"][0]
+        )
+        assert getattr(projected_owner, case["span_field"]) == (
+            case["span_value"]
+        )
+        assert projected_owner.occurrences[0].occurrence_role == case["role"]
+
+        preview_png, preview_width, preview_height = render_pdf_page(
+            path,
+            case["page"],
+        )
+        pixmap = fitz.Pixmap(preview_png)
+        page_locator = source.page_locator
+        scale_x = preview_width / page_locator.page_width
+        scale_y = preview_height / page_locator.page_height
+        assert scale_x == pytest.approx(scale_y)
+        bbox = page_locator.bbox
+        tolerance = 2
+        x0 = max(0, int(bbox.x0 * scale_x) - tolerance)
+        y0 = max(0, int(bbox.y0 * scale_y) - tolerance)
+        x1 = min(pixmap.width, int(bbox.x1 * scale_x) + tolerance + 1)
+        y1 = min(pixmap.height, int(bbox.y1 * scale_y) + tolerance + 1)
+        darkest = min(
+            pixmap.samples[y * pixmap.stride + x * pixmap.n + channel]
+            for y in range(y0, y1)
+            for x in range(x0, x1)
+            for channel in range(min(3, pixmap.n))
+        )
+        assert darkest < 128
+
+
 def test_pdf_v2_table_source_passes_structured_locator_validation():
     path = Path("tests/fixtures/pdf_table_requirements.pdf")
     parsed = PdfParserV2().parse(path)

@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "expected_column_span": 2,
+      "page": 1,
+      "topology": "horizontal_merge"
+    },
+    {
+      "expected_projection_role": "row_span_projection",
+      "expected_row_span": 2,
+      "page": 2,
+      "topology": "vertical_merge"
+    }
+  ],
+  "content_producer": {
+    "identity": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5",
+    "name": "LibreOffice"
+  },
+  "fixture": "pdf_table_merged_libreoffice.pdf",
+  "metadata_normalizer": {
+    "name": "pypdf",
+    "version": "6.10.0"
+  },
+  "page_count": 2,
+  "pdf_sha256": "1f1979f0625ed797ed346a513ac45f0c0e8c3b4295ac6a81404039b8df6c3e9d",
+  "schema_version": "pdf_fixture_manifest_v1",
+  "source_builder": {
+    "name": "python-docx",
+    "version": "1.2.0"
+  }
+}

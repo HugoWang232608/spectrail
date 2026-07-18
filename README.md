@@ -375,10 +375,12 @@ remain unchanged. M5.1 also accepts horizontal and vertical merged cells when a
 boundary-lattice proof yields a unique anchor, contiguous spans, and exact
 single-owner coverage of every physical coordinate. Vertical merges use the
 same logical cell ID with `row_span_projection` occurrences on subsequent
-physical rows. Incomplete, ambiguous, or geometrically invalid detections keep
-readable PDF text but do not claim available `table_cell`; fallback blocks
-retain it as an expected capability so optional policy reports
-`WARNING_UNAVAILABLE` and strict structured policy rejects the source.
+physical rows. Checked ReportLab and LibreOffice corpus fixtures exercise the
+same topology using independent PDF producers. Incomplete, ambiguous, or
+geometrically invalid detections keep readable PDF text but do not claim
+available `table_cell`; fallback blocks retain it as an expected capability so
+optional policy reports `WARNING_UNAVAILABLE` and strict structured policy
+rejects the source.
 
 The evidence endpoints are task-scoped and read-only:
 

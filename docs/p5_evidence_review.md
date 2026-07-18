@@ -418,6 +418,19 @@ browser fixture is generated from that checked backend projection, reuses
 `table_evidence_view_v1`, and fixes the real PDF page overlay, selected grid
 cells, and second-row `row_span_projection` in the Playwright screenshot gate.
 
+The multi-producer corpus also includes
+`pdf_table_merged_libreoffice.pdf`. LibreOffice, rather than ReportLab,
+produces its page content: page 1 contains a horizontal merged header and page
+2 contains a vertical merged cell. A checked `pdf_fixture_manifest_v1` records
+the LibreOffice build identity, pypdf metadata-normalizer version, page count,
+topology cases, and final PDF SHA-256. Acceptance verifies that manifest
+against the checked bytes and PDF metadata, then runs both pages through
+parsing, Evidence cross-validation, source canonicalization, quote matching,
+`structured_required`, table projection, public page rendering, and
+locator-to-pixel alignment. The generator intentionally keeps LibreOffice out
+of the runtime dependency set; it is needed only when the checked corpus
+artifact is deliberately regenerated.
+
 Backend acceptance projects a real detected table at 0°, 90°, 180°, and 270°,
 derives `TableLocator` and `PageLocator(table_cell_union)`, renders the same
 preview PNG used by the API, and verifies that the selected bbox contains
@@ -431,8 +444,8 @@ browser response.
 
 - add multi-page PDF table/header continuation fixtures without weakening
   per-page table identity;
-- expand the merged-cell corpus with independently authored PDFs from multiple
-  producers while preserving the same proof-or-downgrade contract;
+- expand the corpus further with externally authored files from additional PDF
+  producers as real customer samples become available;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
   section inference.

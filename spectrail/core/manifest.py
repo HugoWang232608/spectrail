@@ -10,9 +10,13 @@ def init_manifest(
     input_document: str,
     output_dir: str,
     model_mode: str,
+    run_generation: int = 1,
 ) -> dict[str, Any]:
+    if run_generation < 1:
+        raise ValueError("run_generation must be positive")
     return {
         "task_id": task_id,
+        "run_generation": run_generation,
         "status": "running",
         "input_document": input_document,
         "output_dir": output_dir,

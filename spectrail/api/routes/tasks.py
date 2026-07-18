@@ -11,6 +11,7 @@ from spectrail.api.schemas import (
     TaskStatusResponse,
 )
 from spectrail.api.transaction_errors import task_transaction_http_error
+from spectrail.core.manifest import fail_manifest, init_manifest
 from spectrail.llm.errors import (
     ModelConfigurationError,
     ModelError,
@@ -91,11 +92,13 @@ def run_task(
 
 
 def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
+    run_generation: int | None = None
     try:
         task = store.get_task(task_id)
         document = store.get_input_document(task_id)
         task_dir = store.get_task_dir(task_id)
-        store.update_task(task_id, status="running")
+        task = store.begin_run(task_id)
+        run_generation = task["run_generation"]
         store.reset_output_from_pipeline(task_id)
         config = task.get("pipeline_config", {})
         result = PipelineRunner().extract(
@@ -110,6 +113,7 @@ def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
                 "evidence_policy", "structured_if_available"
             ),
             fail_fast=config.get("fail_fast", False),
+            run_generation=run_generation,
         )
         manifest = store.read_manifest(task_id) or {}
         store.update_task(task_id, status=manifest.get("status", "completed"))
@@ -118,44 +122,49 @@ def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
     except TaskNotReadyError as exc:
         raise _error(409, "DOCUMENT_NOT_UPLOADED", str(exc)) from exc
     except UnsupportedModelModeError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(400, "INVALID_MODEL_MODE", str(exc)) from exc
     except ModelConfigurationError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(400, "INVALID_MODEL_CONFIGURATION", str(exc)) from exc
     except ModelResponseParseError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(422, "MODEL_RESPONSE_PARSE_FAILED", str(exc)) from exc
     except ModelPayloadContractError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(422, "MODEL_PAYLOAD_CONTRACT_FAILED", str(exc)) from exc
     except ModelProviderError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(502, "MODEL_PROVIDER_FAILED", str(exc)) from exc
     except ModelError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(500, "MODEL_FAILED", str(exc)) from exc
     except UnsupportedDocumentTypeError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(400, "INVALID_DOCUMENT", str(exc)) from exc
     except DocumentParseError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(422, "DOCUMENT_PARSE_FAILED", str(exc)) from exc
     except PipelineValidationError as exc:
-        _mark_task_failed(store, task_id)
+        _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(422, "PIPELINE_VALIDATION_FAILED", str(exc)) from exc
     except TaskTransactionInProgressError as exc:
         raise task_transaction_http_error(exc) from exc
     except Exception as exc:
         try:
-            store.update_task(task_id, status="failed")
+            _mark_task_failed(store, task_id, run_generation, exc)
             manifest = store.read_manifest(task_id) or {"status": "failed", "error": str(exc)}
         except Exception:
             manifest = {"status": "failed", "error": str(exc)}
         raise _error(500, "PIPELINE_FAILED", str(exc)) from exc
 
     del result
-    return {"task_id": task_id, "status": manifest["status"], "manifest": manifest}
+    return {
+        "task_id": task_id,
+        "status": manifest["status"],
+        "run_generation": run_generation,
+        "manifest": manifest,
+    }
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
@@ -167,7 +176,13 @@ def get_task(
         task, manifest = store.read_status_snapshot(task_id)
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
-    return {"task_id": task_id, "status": task["status"], "task": task, "manifest": manifest}
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "run_generation": task["run_generation"],
+        "task": task,
+        "manifest": manifest,
+    }
 
 
 @router.get("/tasks/{task_id}/reqir")
@@ -217,11 +232,36 @@ def _task_response(task: dict) -> dict:
     }
 
 
-def _mark_task_failed(store: LocalTaskStore, task_id: str) -> None:
+def _mark_task_failed(
+    store: LocalTaskStore,
+    task_id: str,
+    run_generation: int | None,
+    error: Exception,
+) -> None:
     try:
         manifest = store.read_manifest(task_id)
-        status = manifest.get("status", "failed") if manifest else "failed"
-        store.update_task(task_id, status=status)
+        if run_generation is not None and (
+            manifest is None
+            or manifest.get("run_generation") != run_generation
+        ):
+            task = store.get_task(task_id)
+            manifest = fail_manifest(
+                init_manifest(
+                    task_id=task_id,
+                    input_document=str(task.get("input_document") or ""),
+                    output_dir=str(task["output_dir"]),
+                    model_mode=str(task["model_mode"]),
+                    run_generation=run_generation,
+                ),
+                str(error),
+            )
+            manifest["error_code"] = type(error).__name__
+            store.write_manifest(task_id, manifest)
+        elif manifest is not None and manifest.get("status") != "failed":
+            manifest = fail_manifest(manifest, str(error))
+            manifest["error_code"] = type(error).__name__
+            store.write_manifest(task_id, manifest)
+        store.update_task(task_id, status="failed")
     except Exception:
         return
 

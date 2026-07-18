@@ -134,9 +134,9 @@ function App() {
     }
 
     await runAndReconcileTask({
-      confirmation: isReadableStatus(task.status)
-        ? PIPELINE_RERUN_CONFIRMATION
-        : null
+      confirmation: isFirstRunTask(task)
+        ? null
+        : PIPELINE_RERUN_CONFIRMATION
     })
   }
 
@@ -159,7 +159,7 @@ function App() {
     }
 
     const taskId = task.task_id
-    const previousEvidenceFingerprint = reqirEvidenceFingerprint(reqir)
+    const previousRunGeneration = task.run_generation
     await perform('run', async () => {
       clearReviewEvidence()
       let runResult: TaskRunResponse | null = null
@@ -204,13 +204,11 @@ function App() {
       if (runFailed) {
         if (
           isRunResponseLost(runFailure)
-          &&
-          refreshed
+          && refreshed
           && isReadableStatus(refreshed.status)
           && evidenceLoad.trusted
-          && previousEvidenceFingerprint !== null
-          && evidenceLoad.evidenceFingerprint !== null
-          && evidenceLoad.evidenceFingerprint !== previousEvidenceFingerprint
+          && refreshed.run_generation > previousRunGeneration
+          && refreshed.manifest?.run_generation === refreshed.run_generation
         ) {
           setNotice({
             code: 'RUN_RESPONSE_LOST',
@@ -428,10 +426,12 @@ function taskSnapshotFromRun(
   return {
     task_id: run.task_id,
     status: run.status,
+    run_generation: run.run_generation,
     task: {
       ...previous.task,
       task_id: run.task_id,
       status: run.status,
+      run_generation: run.run_generation,
       updated_at: run.manifest.completed_at ?? previous.task.updated_at
     },
     manifest: run.manifest
@@ -455,6 +455,13 @@ function unavailableTaskSnapshot(
 
 function isReadableStatus(status: string | undefined): boolean {
   return status === 'completed' || status === 'completed_with_warnings'
+}
+
+function isFirstRunTask(task: TaskStatusResponse): boolean {
+  return (
+    task.run_generation === 0
+    && (task.status === 'created' || task.status === 'uploaded')
+  )
 }
 
 function reqirEvidenceFingerprint(reqir: ReqIRPackage | null): string | null {

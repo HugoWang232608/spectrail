@@ -504,13 +504,26 @@ action uses the same clear-run-refresh-reload coordinator; rerunning a readable
 task has a separate destructive confirmation and cannot retain stale completed
 status, ReqIR, blocks, or export availability after a backend failure.
 Reconciliation runs even when the `POST /run` response is lost: a readable
-refreshed snapshot reloads ReqIR and blocks. If those artifacts form a trusted
-Evidence context and carry a different fingerprint from the pre-run package,
-the response loss is reported as a non-blocking `RUN_RESPONSE_LOST` notice
-instead of a failed run. An unchanged or untrusted Evidence generation keeps
-the original network error visible. If the run succeeds but the follow-up task
-read fails, the run response's status and manifest provide the fallback
-snapshot used to load the rebuilt Evidence.
+refreshed snapshot reloads ReqIR and blocks. Task creation persists
+`run_generation=0`; every backend run transaction increments it before
+removing prior pipeline artifacts, and the same positive generation is written
+to `task.json`, the run response, and `run_manifest.json`. If the refreshed
+generation advanced and its readable manifest plus canonical blocks form a
+trusted Evidence context, the response loss is reported as a non-blocking
+`RUN_RESPONSE_LOST` notice instead of a failed run. Evidence fingerprint
+continues to identify deterministic Evidence content and is deliberately not
+used as proof that a run executed: first runs and deterministic reruns may
+produce unchanged content. An unchanged generation or untrusted Evidence
+context keeps the original network error visible. If the run succeeds but the
+follow-up task read fails, the run response's status, generation, and manifest
+provide the fallback snapshot used to load the rebuilt Evidence.
+
+Only a task whose status is explicitly `created` or `uploaded` and whose
+generation is still zero is treated as a first run without destructive
+confirmation. Completed, failed, `status_unavailable`, previously run uploads,
+and unknown states all require confirmation because review artifacts may still
+exist. Cancelling confirmation leaves the current ReqIR, blocks, source
+selection, notices, and errors untouched.
 
 The authored-marker v1 grammar is intentionally strict and fail-closed. It
 accepts an ASCII `Table <token>` root label plus `Table <token> (continued)`,

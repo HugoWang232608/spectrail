@@ -35,15 +35,48 @@ def test_api_task_flow(api_client: TestClient):
     assert run.status_code == 200
     payload = run.json()
     assert payload["status"] == "completed"
+    assert payload["run_generation"] == 1
+    assert payload["manifest"]["run_generation"] == 1
     assert payload["manifest"]["counts"]["validated_requirements"] >= 14
 
     status = api_client.get(f"/api/tasks/{task_id}")
     assert status.status_code == 200
-    assert status.json()["manifest"]["status"] == "completed"
+    status_payload = status.json()
+    assert status_payload["manifest"]["status"] == "completed"
+    assert status_payload["run_generation"] == 1
+    assert status_payload["task"]["run_generation"] == 1
+    assert status_payload["manifest"]["run_generation"] == 1
 
     reqir = api_client.get(f"/api/tasks/{task_id}/reqir")
     assert reqir.status_code == 200
     assert len(reqir.json()["items"]) >= 14
+
+
+def test_api_rerun_advances_generation_for_identical_evidence(
+    api_client: TestClient,
+    completed_api_task: dict,
+):
+    task_id = completed_api_task["task_id"]
+    first_run = completed_api_task["run"]
+    first_fingerprint = first_run["manifest"]["evidence"][
+        "evidence_fingerprint"
+    ]
+
+    rerun = api_client.post(f"/api/tasks/{task_id}/run")
+
+    assert rerun.status_code == 200
+    rerun_payload = rerun.json()
+    assert first_run["run_generation"] == 1
+    assert rerun_payload["run_generation"] == 2
+    assert rerun_payload["manifest"]["run_generation"] == 2
+    assert (
+        rerun_payload["manifest"]["evidence"]["evidence_fingerprint"]
+        == first_fingerprint
+    )
+    status = api_client.get(f"/api/tasks/{task_id}").json()
+    assert status["run_generation"] == 2
+    assert status["task"]["run_generation"] == 2
+    assert status["manifest"]["run_generation"] == 2
 
 
 def test_api_forced_chunking_exposes_chunk_and_quarantine_artifacts(api_client: TestClient):
@@ -384,7 +417,11 @@ def test_api_run_marks_task_failed_when_model_mode_is_rejected(api_client: TestC
 
     status = api_client.get(f"/api/tasks/{task_id}")
     assert status.status_code == 200
-    assert status.json()["status"] == "failed"
+    status_payload = status.json()
+    assert status_payload["status"] == "failed"
+    assert status_payload["run_generation"] == 1
+    assert status_payload["manifest"]["run_generation"] == 1
+    assert status_payload["manifest"]["status"] == "failed"
 
 
 def _create_and_upload(api_client: TestClient, document_path: Path, media_type: str) -> str:

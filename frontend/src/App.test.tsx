@@ -41,7 +41,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('App legacy Evidence recovery', () => {
+describe('App pipeline run reconciliation', () => {
   it('clears stale review state, reruns the task, and loads rebuilt Evidence', async () => {
     const task = completedTask()
     const pendingRun = deferred<TaskRunResponse>()
@@ -94,7 +94,11 @@ describe('App legacy Evidence recovery', () => {
       pendingRun.resolve({
         task_id: 'task-1',
         status: 'completed',
-        manifest: task.manifest!
+        run_generation: 2,
+        manifest: {
+          ...task.manifest!,
+          run_generation: 2
+        }
       })
     })
 
@@ -321,29 +325,25 @@ describe('App legacy Evidence recovery', () => {
     }).hasAttribute('disabled')).toBe(true)
   })
 
-  it('reports a lost run response as a notice after loading changed trusted Evidence', async () => {
-    const completed = completedTask()
-    const rebuiltFingerprint = 'b'.repeat(64)
+  it('reports a lost run response as a notice when the generation advances with identical Evidence', async () => {
+    const completed = completedTask(1)
+    const rerunCompleted = completedTask(2)
     api.getTask
       .mockResolvedValueOnce(completed)
-      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(rerunCompleted)
     api.getReqIR
       .mockResolvedValueOnce(
         reqirPackage('req_old', 'Evidence generation A')
       )
       .mockResolvedValueOnce(
-        reqirPackage(
-          'req_new',
-          'Evidence generation B',
-          rebuiltFingerprint
-        )
+        reqirPackage('req_new', 'Evidence generation B')
       )
     api.getBlocks
       .mockResolvedValueOnce(
         blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation A')
       )
       .mockResolvedValueOnce(
-        blocksResponse(rebuiltFingerprint, 'Evidence generation B')
+        blocksResponse(EVIDENCE_FINGERPRINT, 'Evidence generation B')
       )
     api.runTask.mockRejectedValueOnce({
       code: 'NETWORK_ERROR',
@@ -371,27 +371,173 @@ describe('App legacy Evidence recovery', () => {
     expect(screen.queryByText('Evidence generation A')).toBeNull()
     expect(api.getBlocks).toHaveBeenLastCalledWith(
       'task-1',
-      rebuiltFingerprint
+      EVIDENCE_FINGERPRINT
     )
+  })
+
+  it('reports a lost first-run response as a notice after trusted Evidence loads', async () => {
+    const uploaded = taskWithStatus('task-1', 'uploaded', 0)
+    const completed = completedTask(1)
+    api.getTask
+      .mockResolvedValueOnce(uploaded)
+      .mockResolvedValueOnce(completed)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_first', 'First-run evidence')
+    )
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'First-run evidence')
+    )
+    api.runTask.mockRejectedValueOnce({
+      code: 'NETWORK_ERROR',
+      message: 'first run response was interrupted'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await waitFor(() => expect(api.getTask).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(await screen.findByText('RUN_RESPONSE_LOST')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getAllByText('First-run evidence').length).toBeGreaterThan(0)
+  })
+
+  it('keeps the network error when the run generation does not advance', async () => {
+    const completed = completedTask(1)
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(completed)
+    api.getReqIR
+      .mockResolvedValueOnce(reqirPackage('req_old', 'Unchanged evidence'))
+      .mockResolvedValueOnce(reqirPackage('req_old', 'Unchanged evidence'))
+    api.getBlocks
+      .mockResolvedValueOnce(
+        blocksResponse(EVIDENCE_FINGERPRINT, 'Unchanged evidence')
+      )
+      .mockResolvedValueOnce(
+        blocksResponse(EVIDENCE_FINGERPRINT, 'Unchanged evidence')
+      )
+    api.runTask.mockRejectedValueOnce({
+      code: 'NETWORK_ERROR',
+      message: 'request did not reach the backend'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    expect(
+      (await screen.findAllByText('Unchanged evidence')).length
+    ).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(await screen.findByText('NETWORK_ERROR')).toBeTruthy()
+    expect(screen.queryByText('RUN_RESPONSE_LOST')).toBeNull()
+    expect(screen.getAllByText('Unchanged evidence').length).toBeGreaterThan(0)
+  })
+
+  it('requires confirmation for a status-unavailable task', async () => {
+    api.getTask.mockResolvedValueOnce(
+      taskWithStatus('task-1', 'status_unavailable', 1)
+    )
+    vi.mocked(confirm).mockReturnValueOnce(false)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await waitFor(() => expect(api.getTask).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('deletes existing review decisions')
+    )
+    expect(api.runTask).not.toHaveBeenCalled()
+  })
+
+  it('leaves review state unchanged when a destructive rerun is cancelled', async () => {
+    const completed = completedTask(1)
+    api.getTask.mockResolvedValueOnce(completed)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackageWithSecondRequirement()
+    )
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(
+        EVIDENCE_FINGERPRINT,
+        'Evidence kept after cancellation'
+      )
+    )
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    expect(
+      (await screen.findAllByText('Evidence kept after cancellation')).length
+    ).toBeGreaterThan(0)
+    const selectedRow = screen.getByText('req_selected').closest('tr')
+    expect(selectedRow).not.toBeNull()
+    fireEvent.click(selectedRow!)
+    expect(selectedRow?.classList.contains('selected-row')).toBe(true)
+    const uploadInput = document.querySelector<HTMLInputElement>(
+      'input[type="file"]'
+    )
+    expect(uploadInput).not.toBeNull()
+    fireEvent.change(uploadInput!, {
+      target: {
+        files: [new File(['unsafe'], 'unsupported.txt')]
+      }
+    })
+    expect(await screen.findByText('INVALID_DOCUMENT')).toBeTruthy()
+    vi.mocked(confirm).mockReturnValueOnce(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run Pipeline' }))
+
+    expect(api.runTask).not.toHaveBeenCalled()
+    expect(api.getReqIR).toHaveBeenCalledTimes(1)
+    expect(api.getBlocks).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getAllByText('Evidence kept after cancellation').length
+    ).toBeGreaterThan(0)
+    expect(selectedRow?.classList.contains('selected-row')).toBe(true)
+    expect(screen.getByText('INVALID_DOCUMENT')).toBeTruthy()
+    expect(screen.queryByText('No requirements')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain(
+      'only .md, .markdown, .docx, and text-based .pdf files are supported'
+    )
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })
 
-function completedTask(): TaskStatusResponse {
-  return taskWithStatus('task-1', 'completed')
+function completedTask(runGeneration = 1): TaskStatusResponse {
+  return taskWithStatus('task-1', 'completed', runGeneration)
 }
 
 function taskWithStatus(
   taskId: string,
-  status: string
+  status: string,
+  runGeneration = 1
 ): TaskStatusResponse {
   return {
     task_id: taskId,
     status,
+    run_generation: runGeneration,
     task: {
       task_id: taskId,
       goal: 'Review requirements',
       model_mode: 'mock',
       status,
+      run_generation: runGeneration,
       created_at: '2026-07-18T00:00:00Z',
       updated_at: '2026-07-18T00:00:01Z',
       input_document: 'input/original.pdf',
@@ -402,6 +548,7 @@ function taskWithStatus(
     manifest: {
       task_id: taskId,
       status,
+      run_generation: runGeneration,
       input_document: 'input/original.pdf',
       output_dir: `outputs/tasks/${taskId}`,
       model_mode: 'mock',
@@ -472,13 +619,34 @@ function blocksResponse(
   }
 }
 
+function reqirPackageWithSecondRequirement(): ReqIRPackage {
+  const packagePayload = reqirPackage(
+    'req_kept',
+    'Evidence kept after cancellation'
+  )
+  const first = packagePayload.items[0]
+  packagePayload.items.push({
+    ...first,
+    id: 'req_selected',
+    title: 'Selected requirement remains selected',
+    statement: 'Selected requirement remains selected',
+    sources: [{
+      ...first.sources[0],
+      quote: 'Selected requirement remains selected'
+    }]
+  })
+  return packagePayload
+}
+
 function completedRun(
-  counts: Record<string, number> = {}
+  counts: Record<string, number> = {},
+  runGeneration = 2
 ): TaskRunResponse {
-  const task = completedTask()
+  const task = completedTask(runGeneration)
   return {
     task_id: task.task_id,
     status: 'completed',
+    run_generation: runGeneration,
     manifest: {
       ...task.manifest!,
       started_at: '2026-07-18T00:01:00Z',

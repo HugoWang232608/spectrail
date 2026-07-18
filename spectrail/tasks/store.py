@@ -146,6 +146,7 @@ class LocalTaskStore:
             "model_mode": model_mode,
             "pipeline_config": pipeline_config or {},
             "status": "created",
+            "run_generation": 0,
             "created_at": now,
             "updated_at": now,
             "input_document": None,
@@ -165,7 +166,7 @@ class LocalTaskStore:
         task_dir = self.get_task_dir(task_id)
         try:
             with task_operation(task_dir, "task_read"):
-                return read_json(task_dir / "task.json")
+                return _normalize_task_record(read_json(task_dir / "task.json"))
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -177,6 +178,7 @@ class LocalTaskStore:
         try:
             with task_operation(task_dir, "task_status_snapshot"):
                 task = read_json(task_dir / "task.json")
+                task = _normalize_task_record(task)
                 manifest_path = task_dir / "run_manifest.json"
                 manifest = read_json(manifest_path) if manifest_path.exists() else None
                 return task, manifest
@@ -232,10 +234,38 @@ class LocalTaskStore:
         try:
             with task_operation(task_dir, "task_update"):
                 task = read_json(task_dir / "task.json")
+                task = _normalize_task_record(task)
                 task.update(patch)
                 task["updated_at"] = _now_iso()
                 write_json(task_dir / "task.json", task)
                 return task
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
+    def begin_run(self, task_id: str) -> dict[str, Any]:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "task_run_begin"):
+                task = _normalize_task_record(
+                    read_json(task_dir / "task.json")
+                )
+                task["run_generation"] += 1
+                task["status"] = "running"
+                task["updated_at"] = _now_iso()
+                write_json(task_dir / "task.json", task)
+                return task
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
+    def write_manifest(
+        self,
+        task_id: str,
+        manifest: dict[str, Any],
+    ) -> None:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "manifest_write"):
+                write_json(task_dir / "run_manifest.json", manifest)
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -544,6 +574,9 @@ class LocalTaskStore:
                     target = task_dir / name
                     if target.exists():
                         shutil.rmtree(target)
+                manifest_path = task_dir / "run_manifest.json"
+                if manifest_path.exists():
+                    manifest_path.unlink()
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 
@@ -673,6 +706,17 @@ def _requires_legacy_continuation_rebuild(payload: Any) -> bool:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_task_record(task: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(task)
+    run_generation = normalized.get("run_generation", 0)
+    if not isinstance(run_generation, int) or isinstance(run_generation, bool):
+        raise ValueError("task run_generation must be an integer")
+    if run_generation < 0:
+        raise ValueError("task run_generation must not be negative")
+    normalized["run_generation"] = run_generation
+    return normalized
 
 
 def _file_signature(path: Path) -> tuple[int, int, int, int, int]:

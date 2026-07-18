@@ -33,6 +33,7 @@ class DocumentUploadResponse(BaseModel):
 class TaskStatusResponse(BaseModel):
     task_id: str
     status: str
+    run_generation: int = Field(ge=0)
     task: dict[str, Any]
     manifest: dict[str, Any] | None = None
 
@@ -40,6 +41,7 @@ class TaskStatusResponse(BaseModel):
 class TaskRunResponse(BaseModel):
     task_id: str
     status: str
+    run_generation: int = Field(ge=1)
     manifest: dict[str, Any]
 
 

@@ -11,6 +11,7 @@ export type TaskRecord = {
   goal: string
   model_mode: string
   status: string
+  run_generation: number
   created_at: string
   updated_at: string
   input_document: string | null
@@ -27,6 +28,7 @@ export type TaskRecord = {
 
 export type TaskManifest = {
   task_id: string
+  run_generation: number
   status: string
   input_document: string
   output_dir: string
@@ -49,6 +51,7 @@ export type DocumentUploadResponse = {
 export type TaskStatusResponse = {
   task_id: string
   status: string
+  run_generation: number
   task: TaskRecord
   manifest: TaskManifest | null
 }
@@ -56,6 +59,7 @@ export type TaskStatusResponse = {
 export type TaskRunResponse = {
   task_id: string
   status: string
+  run_generation: number
   manifest: TaskManifest
 }
 

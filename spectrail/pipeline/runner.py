@@ -95,6 +95,7 @@ class PipelineRunner:
         validation_policy: str = "strict",
         evidence_policy: str = "structured_if_available",
         fail_fast: bool = False,
+        run_generation: int = 1,
         config: PipelineConfig | None = None,
         parsed_document: ParsedDocument | None = None,
     ) -> PipelineResult:
@@ -113,6 +114,7 @@ class PipelineRunner:
                 validation_policy=validation_policy,
                 evidence_policy=evidence_policy,
                 fail_fast=fail_fast,
+                run_generation=run_generation,
                 config=config,
                 parsed_document=parsed_document,
             )
@@ -133,6 +135,7 @@ class PipelineRunner:
         validation_policy: str = "strict",
         evidence_policy: str = "structured_if_available",
         fail_fast: bool = False,
+        run_generation: int = 1,
         config: PipelineConfig | None = None,
         parsed_document: ParsedDocument | None = None,
     ) -> PipelineResult:
@@ -178,6 +181,7 @@ class PipelineRunner:
             input_document=document.as_posix(),
             output_dir=output.as_posix(),
             model_mode=model_mode,
+            run_generation=run_generation,
         )
         write_json(manifest_path, manifest)
 

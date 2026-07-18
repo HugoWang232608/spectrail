@@ -13,6 +13,7 @@ def test_task_store_creates_task_and_saves_document(tmp_path: Path):
     assert task["task_id"].startswith("task_")
     assert Path(task["output_dir"]).exists()
     assert store.get_task(task["task_id"])["status"] == "created"
+    assert store.get_task(task["task_id"])["run_generation"] == 0
 
     document = store.save_document(task["task_id"], "sample.markdown", b"# SRS\n")
     assert document.name == "original.markdown"
@@ -24,6 +25,18 @@ def test_task_store_creates_task_and_saves_document(tmp_path: Path):
     assert updated["original_filename"] == "sample.markdown"
     assert updated["input_format"] == "markdown"
     assert store.get_input_document(task["task_id"]) == document
+
+
+def test_task_store_persists_monotonic_run_generation(tmp_path: Path):
+    store = LocalTaskStore(tmp_path / "tasks")
+    task = store.create_task()
+
+    first = store.begin_run(task["task_id"])
+    second = store.begin_run(task["task_id"])
+
+    assert first["run_generation"] == 1
+    assert second["run_generation"] == 2
+    assert store.get_task(task["task_id"])["run_generation"] == 2
 
 
 def test_task_store_saves_supported_document_suffixes(tmp_path: Path):

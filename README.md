@@ -149,18 +149,30 @@ Run the pipeline:
 curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/run
 ```
 
+Read the task status and use its `run_generation` for every subsequent
+ReqIR, Evidence, review, and export request:
+
+```bash
+curl http://127.0.0.1:8000/api/tasks/{task_id}
+
+curl "http://127.0.0.1:8000/api/tasks/{task_id}/reqir?expected_run_generation=1"
+```
+
 Review a requirement:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/tasks/{task_id}/review \
   -H "Content-Type: application/json" \
-  -d '{"requirement_id":"REQ-0001","action":"approve","reviewer":"local"}'
+  -d '{"requirement_id":"REQ-0001","expected_run_generation":1,"expected_review_revision":0,"action":"approve","reviewer":"local"}'
 ```
+
+`expected_review_revision` comes from the selected ReqIR item. A successful
+review response returns the incremented revision.
 
 Download Excel:
 
 ```bash
-curl -L http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx \
+curl -L "http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx?expected_run_generation=1" \
   -o requirements.xlsx
 ```
 
@@ -255,13 +267,19 @@ https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf
 
 It is used only for parser smoke testing with a real text-based SRS PDF; the mock end-to-end pipeline demos use the project-authored `docs/sample_srs.*` files so source block IDs stay aligned with `fixtures/mock_reqir_response.json`.
 
-P2 boundaries:
+Historical P2 boundaries:
 
 ```text
 Supported: Markdown, DOCX, text-based PDF
 Not supported: scanned PDF, OCR, complex two-column layout recovery, image/chart understanding
-PDF page numbers are best-effort source context; bbox highlighting is not implemented
+At the P2 milestone, PDF page numbers were best-effort source context and bbox
+highlighting/table-cell grounding were not implemented.
 ```
+
+P5 supersedes the historical PDF review limitation with typed text, page-region,
+and table-cell Evidence for supported text PDFs and DOCX tables. OCR, scanned
+PDFs, image/chart understanding, and arbitrary complex-layout restoration
+remain out of scope.
 
 See [docs/p2_docx_pdf_best_effort.md](docs/p2_docx_pdf_best_effort.md) for details.
 
@@ -388,12 +406,17 @@ LibreOffice regeneration command and toolchain migration guard.
 The evidence endpoints are task-scoped and read-only:
 
 ```text
+GET /api/tasks/{task_id}/reqir
+  ?expected_run_generation=<GET task run_generation>
 GET /api/tasks/{task_id}/pages/{page_number}/preview.png
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 GET /api/tasks/{task_id}/blocks
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 GET /api/tasks/{task_id}/tables/{table_id}/blocks/{block_id}/evidence
   ?expected_evidence_fingerprint=<ReqIR metadata.evidence_fingerprint>
+  &expected_run_generation=<GET task run_generation>
 ```
 
 Rendering is allowed only for completed PDF tasks, runs under the task
@@ -408,11 +431,15 @@ response repeats the validated fingerprint, while the table endpoint returns a s
 occurrence roles. The UI draws a page overlay or table-cell highlight only when
 the corresponding capability is `PASS`; locator status, score, structured cell
 identity, and per-capability validation results remain visible alongside the
-source. ReqIR, canonical blocks, and table projections are bound to the same
-Evidence fingerprint; a task rerun between requests returns
-`EVIDENCE_VERSION_CHANGED` instead of mixing generations. A blocks integrity
-failure also suppresses the table request, so the UI withholds both the table
-grid and canonical block text until the task evidence is reloaded.
+source. ReqIR, canonical blocks, page previews, and table projections are bound
+to the same run generation; the Evidence-backed endpoints additionally require
+the same Evidence fingerprint. A task rerun between requests returns
+`RUN_GENERATION_CHANGED` or `EVIDENCE_VERSION_CHANGED` instead of mixing
+generations. Successful conditional reads repeat the generation in
+`X-Spectrail-Run-Generation`; page previews also return
+`X-Spectrail-Evidence-Fingerprint`. A blocks integrity failure suppresses the
+table request, so the UI withholds both the table grid and canonical block text
+until the task evidence is reloaded.
 Validated Evidence indexes, blocks, and table projections are cached by artifact
 file identity in a bounded 16-task LRU for responsive source navigation without
 unbounded process memory growth. PDF source hashes are also cached against the

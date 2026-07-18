@@ -2,6 +2,11 @@
 
 SpecTrail P2 extends the input layer from Markdown to DOCX and text-based PDF while keeping the existing ReqIR extraction, source quote validation, review, and export pipeline.
 
+> Historical scope note: this document records the P2 adapter boundary. P5 now
+> adds typed `TextLocator`, PDF `PageLocator`, DOCX/PDF table-cell grounding,
+> generation-bound Evidence APIs, and reviewer-visible highlights. See
+> [p5_evidence_review.md](p5_evidence_review.md) for the current contract.
+
 ## Supported Inputs
 
 ```text
@@ -27,19 +32,23 @@ DocumentBlock[]
   -> reqir.json / requirements.xlsx
 ```
 
-## Non-Goals
+## P2 Non-Goals
 
 ```text
 No OCR
 No scanned PDF support
 No complex PDF layout restoration
 No image or chart understanding
-No bbox highlighting
-No table-cell grounding
+No bbox highlighting at the P2 milestone
+No table-cell grounding at the P2 milestone
 No multi-document task support
 ```
 
-PDF page numbers are carried as best-effort source context through `DocumentBlock.page` and `SourceSpan.page`. They are useful for review, but they are not visual grounding.
+At the P2 milestone, PDF page numbers were carried as best-effort source
+context through `DocumentBlock.page` and `SourceSpan.page`; they were not
+visual grounding. P5 supersedes this limitation for supported text PDFs while
+OCR, scanned PDFs, image/chart understanding, and arbitrary complex-layout
+restoration remain out of scope.
 
 ## Mock Fixture Constraint
 

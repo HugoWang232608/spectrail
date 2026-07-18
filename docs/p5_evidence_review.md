@@ -431,6 +431,23 @@ locator-to-pixel alignment. The generator intentionally keeps LibreOffice out
 of the runtime dependency set; it is needed only when the checked corpus
 artifact is deliberately regenerated.
 
+Install the locked fixture toolchain and regenerate the LibreOffice corpus with:
+
+```bash
+python3 -m pip install \
+  -c constraints-pdf-fixtures.txt -e ".[fixtures]"
+SPECTRAIL_SOFFICE=/path/to/soffice \
+  python3 tests/fixtures/build_pdf_merged_table_libreoffice_fixture.py
+```
+
+The generator prints the active python-docx, LibreOffice, and pypdf identities
+and compares them with the checked manifest before writing anything. A mismatch
+fails with `FIXTURE_TOOLCHAIN_MISMATCH`. An intentional producer/toolchain
+migration must use `SPECTRAIL_ACCEPT_FIXTURE_TOOLCHAIN_CHANGE=1`, then review
+the regenerated PDF, manifest, rendered pages, and acceptance results together.
+The manifest cases are the test driver's source of truth for table dimensions,
+logical cells, source selection, span assertion, and occurrence role.
+
 Backend acceptance projects a real detected table at 0°, 90°, 180°, and 270°,
 derives `TableLocator` and `PageLocator(table_cell_union)`, renders the same
 preview PNG used by the API, and verifies that the selected bbox contains

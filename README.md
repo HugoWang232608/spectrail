@@ -380,7 +380,10 @@ same topology using independent PDF producers. Incomplete, ambiguous, or
 geometrically invalid detections keep readable PDF text but do not claim
 available `table_cell`; fallback blocks retain it as an expected capability so
 optional policy reports `WARNING_UNAVAILABLE` and strict structured policy
-rejects the source.
+rejects the source. Fixture generators use the locked `fixtures` optional
+dependency set and `constraints-pdf-fixtures.txt`; see
+[docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the reproducible
+LibreOffice regeneration command and toolchain migration guard.
 
 The evidence endpoints are task-scoped and read-only:
 

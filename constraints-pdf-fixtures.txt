@@ -1,4 +1,11 @@
 # PDF release fixtures and Evidence fingerprints are generated with this exact
-# PyMuPDF build. Update this pin only when regenerating those fixtures and their
-# expected Evidence fingerprints.
+# toolchain. Install the fixture extra through this constraints file:
+#
+#   python -m pip install -c constraints-pdf-fixtures.txt -e ".[fixtures]"
+#
+# Update these pins only when deliberately regenerating the checked fixtures,
+# their manifests, and any affected Evidence fingerprints.
 PyMuPDF==1.28.0
+python-docx==1.2.0
+pypdf==6.10.0
+reportlab==4.4.9

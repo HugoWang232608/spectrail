@@ -1,14 +1,92 @@
 {
   "cases": [
     {
-      "expected_column_span": 2,
+      "expected_cells": [
+        {
+          "column_index": 1,
+          "column_span": 2,
+          "row_index": 1,
+          "row_span": 1,
+          "text": "LO merged requirement header"
+        },
+        {
+          "column_index": 1,
+          "column_span": 1,
+          "row_index": 2,
+          "row_span": 1,
+          "text": "REQ-LO-H"
+        },
+        {
+          "column_index": 2,
+          "column_span": 1,
+          "row_index": 2,
+          "row_span": 1,
+          "text": "Accepted"
+        }
+      ],
+      "expected_table": {
+        "column_count": 2,
+        "row_count": 2
+      },
       "page": 1,
+      "projection": {
+        "occurrence_role": "original",
+        "owner_cell_id": "cell_00000001_r0001_c0001",
+        "span_field": "column_span",
+        "span_value": 2
+      },
+      "source": {
+        "cell_ids": [
+          "cell_00000001_r0001_c0001"
+        ],
+        "quote": "LO merged requirement header",
+        "selected_row_index": 1
+      },
       "topology": "horizontal_merge"
     },
     {
-      "expected_projection_role": "row_span_projection",
-      "expected_row_span": 2,
+      "expected_cells": [
+        {
+          "column_index": 1,
+          "column_span": 1,
+          "row_index": 1,
+          "row_span": 2,
+          "text": "LO shared control"
+        },
+        {
+          "column_index": 2,
+          "column_span": 1,
+          "row_index": 1,
+          "row_span": 1,
+          "text": "LO first state"
+        },
+        {
+          "column_index": 2,
+          "column_span": 1,
+          "row_index": 2,
+          "row_span": 1,
+          "text": "LO second state"
+        }
+      ],
+      "expected_table": {
+        "column_count": 2,
+        "row_count": 2
+      },
       "page": 2,
+      "projection": {
+        "occurrence_role": "row_span_projection",
+        "owner_cell_id": "cell_00000002_r0001_c0001",
+        "span_field": "row_span",
+        "span_value": 2
+      },
+      "source": {
+        "cell_ids": [
+          "cell_00000002_r0001_c0001",
+          "cell_00000002_r0002_c0002"
+        ],
+        "quote": "LO shared control | LO second state",
+        "selected_row_index": 2
+      },
       "topology": "vertical_merge"
     }
   ],
@@ -23,7 +101,7 @@
   },
   "page_count": 2,
   "pdf_sha256": "1f1979f0625ed797ed346a513ac45f0c0e8c3b4295ac6a81404039b8df6c3e9d",
-  "schema_version": "pdf_fixture_manifest_v1",
+  "schema_version": "pdf_fixture_manifest_v2",
   "source_builder": {
     "name": "python-docx",
     "version": "1.2.0"

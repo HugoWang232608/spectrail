@@ -918,20 +918,49 @@ def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
     manifest = read_json(
         "tests/fixtures/pdf_table_merged_libreoffice.manifest.json"
     )
-    assert manifest["schema_version"] == "pdf_fixture_manifest_v1"
+    assert manifest["schema_version"] == "pdf_fixture_manifest_v2"
     assert manifest["fixture"] == path.name
     assert manifest["content_producer"]["name"] == "LibreOffice"
-    assert manifest["content_producer"]["identity"].startswith(
-        "LibreOfficeDev 26.8.0.0.alpha0"
+    assert manifest["content_producer"]["identity"].strip()
+    assert manifest["source_builder"]["name"] == "python-docx"
+    assert manifest["metadata_normalizer"]["name"] == "pypdf"
+    constraints = Path("constraints-pdf-fixtures.txt").read_text(
+        encoding="utf-8"
     )
+    project_config = Path("pyproject.toml").read_text(encoding="utf-8")
+    for package, version in (
+        (
+            manifest["source_builder"]["name"],
+            manifest["source_builder"]["version"],
+        ),
+        (
+            manifest["metadata_normalizer"]["name"],
+            manifest["metadata_normalizer"]["version"],
+        ),
+    ):
+        assert f"{package}=={version}" in constraints
+    assert (
+        f'"pypdf=={manifest["metadata_normalizer"]["version"]}"'
+        in project_config
+    )
+    assert '"reportlab==4.4.9"' in project_config
     assert hashlib.sha256(path.read_bytes()).hexdigest() == (
         manifest["pdf_sha256"]
     )
+    assert [case["topology"] for case in manifest["cases"]] == [
+        "horizontal_merge",
+        "vertical_merge",
+    ]
 
     producer_document = fitz.open(path)
-    assert len(producer_document) == manifest["page_count"] == 2
+    assert len(producer_document) == manifest["page_count"]
+    assert manifest["page_count"] == len(manifest["cases"])
     assert producer_document.metadata["creator"] == (
         manifest["content_producer"]["identity"]
+    )
+    assert producer_document.metadata["producer"] == (
+        f'{manifest["content_producer"]["identity"]}; '
+        "metadata normalized by pypdf"
     )
     producer_document.close()
 
@@ -940,56 +969,36 @@ def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
     assert index is not None
     assert parsed.warnings == []
     assert [
-        (table.page, table.row_count, table.column_count)
+        {
+            "page": table.page,
+            "row_count": table.row_count,
+            "column_count": table.column_count,
+        }
         for table in index.tables
     ] == [
-        (1, 2, 2),
-        (2, 2, 2),
+        {
+            "page": case["page"],
+            **case["expected_table"],
+        }
+        for case in manifest["cases"]
     ]
-    assert [
-        (
-            cell.page,
-            cell.row_index,
-            cell.column_index,
-            cell.row_span,
-            cell.column_span,
-            cell.text,
-        )
-        for cell in index.cells
-    ] == [
-        (1, 1, 1, 1, 2, "LO merged requirement header"),
-        (1, 2, 1, 1, 1, "REQ-LO-H"),
-        (1, 2, 2, 1, 1, "Accepted"),
-        (2, 1, 1, 2, 1, "LO shared control"),
-        (2, 1, 2, 1, 1, "LO first state"),
-        (2, 2, 2, 1, 1, "LO second state"),
-    ]
+    for case in manifest["cases"]:
+        assert [
+            {
+                "row_index": cell.row_index,
+                "column_index": cell.column_index,
+                "row_span": cell.row_span,
+                "column_span": cell.column_span,
+                "text": cell.text,
+            }
+            for cell in index.cells
+            if cell.page == case["page"]
+        ] == case["expected_cells"]
     validate_evidence_index_against_parsed_document(index, parsed)
 
-    cases = [
-        {
-            "page": 1,
-            "quote": "LO merged requirement header",
-            "cell_ids": ["cell_00000001_r0001_c0001"],
-            "selected_row": 1,
-            "span_field": "column_span",
-            "span_value": 2,
-            "role": "original",
-        },
-        {
-            "page": 2,
-            "quote": "LO shared control | LO second state",
-            "cell_ids": [
-                "cell_00000002_r0001_c0001",
-                "cell_00000002_r0002_c0002",
-            ],
-            "selected_row": 2,
-            "span_field": "row_span",
-            "span_value": 2,
-            "role": "row_span_projection",
-        },
-    ]
-    for case in cases:
+    for case in manifest["cases"]:
+        source_case = case["source"]
+        projection_case = case["projection"]
         table = next(
             table for table in index.tables if table.page == case["page"]
         )
@@ -1000,11 +1009,13 @@ def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
             {
                 "items": [
                     {
-                        "statement": case["quote"],
+                        "statement": source_case["quote"],
                         "source_block_id": block.block_id,
-                        "source_quote": case["quote"],
-                        "source_cell_ids": case["cell_ids"],
-                        "source_table_row_index": case["selected_row"],
+                        "source_quote": source_case["quote"],
+                        "source_cell_ids": source_case["cell_ids"],
+                        "source_table_row_index": (
+                            source_case["selected_row_index"]
+                        ),
                     }
                 ]
             },
@@ -1045,8 +1056,10 @@ def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
         assert locator_validated == [requirement]
         assert source.locator_status == "PASS_STRUCTURED"
         assert source.table_locator is not None
-        assert source.table_locator.cell_ids == case["cell_ids"]
-        assert source.table_locator.selected_row_index == case["selected_row"]
+        assert source.table_locator.cell_ids == source_case["cell_ids"]
+        assert source.table_locator.selected_row_index == (
+            source_case["selected_row_index"]
+        )
         assert source.page_locator is not None
         assert source.page_locator.page == case["page"]
         assert source.page_locator.derivation == "table_cell_union"
@@ -1061,17 +1074,20 @@ def test_pdf_v2_libreoffice_merged_table_corpus_passes_full_evidence_chain():
         selected_row = next(
             row
             for row in projection.rows
-            if row.physical_row_index == case["selected_row"]
+            if row.physical_row_index
+            == source_case["selected_row_index"]
         )
         projected_owner = next(
             cell
             for cell in selected_row.cells
-            if cell.cell_id == case["cell_ids"][0]
+            if cell.cell_id == projection_case["owner_cell_id"]
         )
-        assert getattr(projected_owner, case["span_field"]) == (
-            case["span_value"]
+        assert getattr(projected_owner, projection_case["span_field"]) == (
+            projection_case["span_value"]
         )
-        assert projected_owner.occurrences[0].occurrence_role == case["role"]
+        assert projected_owner.occurrences[0].occurrence_role == (
+            projection_case["occurrence_role"]
+        )
 
         preview_png, preview_width, preview_height = render_pdf_page(
             path,

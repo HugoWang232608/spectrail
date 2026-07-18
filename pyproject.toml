@@ -26,6 +26,10 @@ dev = [
   "httpx>=0.27",
   "pytest>=8.0",
 ]
+fixtures = [
+  "pypdf==6.10.0",
+  "reportlab==4.4.9",
+]
 
 [project.urls]
 Repository = "https://github.com/HugoWang232608/spectrail"

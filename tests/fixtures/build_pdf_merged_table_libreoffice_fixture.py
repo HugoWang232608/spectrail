@@ -2,11 +2,17 @@
 
 This generator intentionally uses a producer independent from ReportLab:
 
+    python3 -m pip install \
+      -c constraints-pdf-fixtures.txt -e ".[fixtures]"
     SPECTRAIL_SOFFICE=/path/to/soffice \
       python3 tests/fixtures/build_pdf_merged_table_libreoffice_fixture.py
 
 LibreOffice creates the page content. pypdf only rewrites document metadata so
 repeated generation with the same LibreOffice build produces stable bytes.
+The checked manifest locks the complete fixture toolchain. An intentional
+toolchain upgrade additionally requires:
+
+    SPECTRAIL_ACCEPT_FIXTURE_TOOLCHAIN_CHANGE=1
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from pypdf import PdfReader, PdfWriter, __version__ as PYPDF_VERSION
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "pdf_table_merged_libreoffice.pdf"
 MANIFEST = ROOT / "pdf_table_merged_libreoffice.manifest.json"
+TOOLCHAIN_CHANGE_ENV = "SPECTRAIL_ACCEPT_FIXTURE_TOOLCHAIN_CHANGE"
 
 
 def _set_document_layout(document: Document) -> None:
@@ -122,6 +129,54 @@ def _soffice_identity(executable: str) -> str:
     return identity
 
 
+def _fixture_toolchain(producer_identity: str) -> dict[str, dict[str, str]]:
+    return {
+        "content_producer": {
+            "name": "LibreOffice",
+            "identity": producer_identity,
+        },
+        "source_builder": {
+            "name": "python-docx",
+            "version": docx.__version__,
+        },
+        "metadata_normalizer": {
+            "name": "pypdf",
+            "version": PYPDF_VERSION,
+        },
+    }
+
+
+def _check_locked_toolchain(
+    toolchain: dict[str, dict[str, str]],
+) -> None:
+    print(
+        "Fixture toolchain: "
+        + json.dumps(toolchain, ensure_ascii=False, sort_keys=True)
+    )
+    if not MANIFEST.exists():
+        return
+    locked_manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    locked = {
+        name: locked_manifest.get(name)
+        for name in toolchain
+    }
+    if locked == toolchain:
+        return
+    if os.environ.get(TOOLCHAIN_CHANGE_ENV) == "1":
+        print(
+            "Accepting intentional fixture toolchain change because "
+            f"{TOOLCHAIN_CHANGE_ENV}=1"
+        )
+        return
+    raise RuntimeError(
+        "FIXTURE_TOOLCHAIN_MISMATCH: checked manifest toolchain differs "
+        "from the current generator environment; install the locked fixture "
+        "dependencies and LibreOffice build, or set "
+        f"{TOOLCHAIN_CHANGE_ENV}=1 for an intentional corpus migration. "
+        f"locked={locked!r}, current={toolchain!r}"
+    )
+
+
 def _convert_with_libreoffice(
     source: Path,
     output_dir: Path,
@@ -183,39 +238,104 @@ def _normalize_pdf_metadata(
 
 def _write_manifest(
     *,
-    producer_identity: str,
+    toolchain: dict[str, dict[str, str]],
     page_count: int,
 ) -> None:
     with OUTPUT.open("rb") as stream:
         pdf_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     payload = {
-        "schema_version": "pdf_fixture_manifest_v1",
+        "schema_version": "pdf_fixture_manifest_v2",
         "fixture": OUTPUT.name,
         "pdf_sha256": pdf_sha256,
         "page_count": page_count,
-        "content_producer": {
-            "name": "LibreOffice",
-            "identity": producer_identity,
-        },
-        "source_builder": {
-            "name": "python-docx",
-            "version": docx.__version__,
-        },
-        "metadata_normalizer": {
-            "name": "pypdf",
-            "version": PYPDF_VERSION,
-        },
+        **toolchain,
         "cases": [
             {
                 "page": 1,
                 "topology": "horizontal_merge",
-                "expected_column_span": 2,
+                "expected_table": {
+                    "row_count": 2,
+                    "column_count": 2,
+                },
+                "expected_cells": [
+                    {
+                        "row_index": 1,
+                        "column_index": 1,
+                        "row_span": 1,
+                        "column_span": 2,
+                        "text": "LO merged requirement header",
+                    },
+                    {
+                        "row_index": 2,
+                        "column_index": 1,
+                        "row_span": 1,
+                        "column_span": 1,
+                        "text": "REQ-LO-H",
+                    },
+                    {
+                        "row_index": 2,
+                        "column_index": 2,
+                        "row_span": 1,
+                        "column_span": 1,
+                        "text": "Accepted",
+                    },
+                ],
+                "source": {
+                    "quote": "LO merged requirement header",
+                    "cell_ids": ["cell_00000001_r0001_c0001"],
+                    "selected_row_index": 1,
+                },
+                "projection": {
+                    "owner_cell_id": "cell_00000001_r0001_c0001",
+                    "span_field": "column_span",
+                    "span_value": 2,
+                    "occurrence_role": "original",
+                },
             },
             {
                 "page": 2,
                 "topology": "vertical_merge",
-                "expected_row_span": 2,
-                "expected_projection_role": "row_span_projection",
+                "expected_table": {
+                    "row_count": 2,
+                    "column_count": 2,
+                },
+                "expected_cells": [
+                    {
+                        "row_index": 1,
+                        "column_index": 1,
+                        "row_span": 2,
+                        "column_span": 1,
+                        "text": "LO shared control",
+                    },
+                    {
+                        "row_index": 1,
+                        "column_index": 2,
+                        "row_span": 1,
+                        "column_span": 1,
+                        "text": "LO first state",
+                    },
+                    {
+                        "row_index": 2,
+                        "column_index": 2,
+                        "row_span": 1,
+                        "column_span": 1,
+                        "text": "LO second state",
+                    },
+                ],
+                "source": {
+                    "quote": "LO shared control | LO second state",
+                    "cell_ids": [
+                        "cell_00000002_r0001_c0001",
+                        "cell_00000002_r0002_c0002",
+                    ],
+                    "selected_row_index": 2,
+                },
+                "projection": {
+                    "owner_cell_id": "cell_00000002_r0001_c0001",
+                    "span_field": "row_span",
+                    "span_value": 2,
+                    "occurrence_role": "row_span_projection",
+                },
             },
         ],
     }
@@ -228,6 +348,8 @@ def _write_manifest(
 def build_fixture() -> None:
     executable = _soffice_path()
     producer_identity = _soffice_identity(executable)
+    toolchain = _fixture_toolchain(producer_identity)
+    _check_locked_toolchain(toolchain)
     with tempfile.TemporaryDirectory(
         prefix="spectrail-pdf-merged-libreoffice-"
     ) as temporary:
@@ -245,7 +367,7 @@ def build_fixture() -> None:
             producer_identity=producer_identity,
         )
     _write_manifest(
-        producer_identity=producer_identity,
+        toolchain=toolchain,
         page_count=page_count,
     )
 

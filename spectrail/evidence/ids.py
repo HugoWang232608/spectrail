@@ -8,6 +8,11 @@ def table_id(index: int) -> str:
     return f"tbl_{index:08d}"
 
 
+def table_continuation_id(index: int) -> str:
+    _require_positive(index, "table continuation index")
+    return f"tblcont_{index:08d}"
+
+
 def cell_id(table_index: int, row_index: int, column_index: int) -> str:
     _require_positive(table_index, "table index")
     _require_positive(row_index, "row index")

@@ -40,6 +40,7 @@ STRUCTURED_CAPABILITIES = frozenset({"page_region", "table_cell"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TABLE_ID_RE = re.compile(r"^tbl_(\d{8})$")
 CELL_ID_RE = re.compile(r"^cell_(\d{8})_r(\d{4})_c(\d{4})$")
+TABLE_CONTINUATION_ID_RE = re.compile(r"^tblcont_(\d{8})$")
 
 
 class EvidenceModel(BaseModel):
@@ -365,6 +366,11 @@ class TableRecord(EvidenceModel):
         )
     )
     confidence: float | None = None
+    continuation_role: Literal["single", "start", "continuation"] = "single"
+    continuation_group_id: str | None = None
+    continuation_sequence: int | None = None
+    continuation_of_table_id: str | None = None
+    continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -379,6 +385,63 @@ class TableRecord(EvidenceModel):
             raise ValueError("table confidence must be between 0 and 1")
         if self.parser_method == "docx_xml" and self.topology_status != "complete":
             raise ValueError("DOCX tables must declare complete topology")
+        continuation_fields = (
+            self.continuation_group_id,
+            self.continuation_sequence,
+            self.continuation_of_table_id,
+        )
+        if self.continuation_role == "single":
+            if any(value is not None for value in continuation_fields):
+                raise ValueError(
+                    "a single table cannot declare continuation identity"
+                )
+            if self.continued_header_cell_ids:
+                raise ValueError(
+                    "a single table cannot declare continued header lineage"
+                )
+        else:
+            if self.parser_method != "pymupdf_find_tables":
+                raise ValueError("table continuation is supported only for PDF tables")
+            if self.continuation_group_id is None:
+                raise ValueError("continued tables require a continuation group ID")
+            continuation_match = TABLE_CONTINUATION_ID_RE.fullmatch(
+                self.continuation_group_id
+            )
+            if (
+                continuation_match is None
+                or int(continuation_match.group(1)) < 1
+            ):
+                raise ValueError("table continuation group ID is not canonical")
+            if self.continuation_sequence is None or self.continuation_sequence < 1:
+                raise ValueError(
+                    "continued tables require a positive continuation sequence"
+                )
+            if self.continuation_role == "start":
+                if self.continuation_sequence != 1:
+                    raise ValueError(
+                        "a table continuation start must use sequence 1"
+                    )
+                if self.continuation_of_table_id is not None:
+                    raise ValueError(
+                        "a table continuation start cannot reference a root table"
+                    )
+                if self.continued_header_cell_ids:
+                    raise ValueError(
+                        "a table continuation start cannot map continued headers"
+                    )
+            else:
+                if self.continuation_sequence < 2:
+                    raise ValueError(
+                        "a continued table must use sequence 2 or greater"
+                    )
+                if self.continuation_of_table_id is None:
+                    raise ValueError(
+                        "a continued table must reference its root table"
+                    )
+                if not self.continued_header_cell_ids:
+                    raise ValueError(
+                        "a continued table must map its repeated header cells"
+                    )
         _require_unique(self.block_ids, "table block IDs")
         _require_unique(self.cell_ids, "table cell IDs")
         _require_unique(self.occurrence_ids, "table occurrence IDs")
@@ -532,6 +595,7 @@ class EvidenceIndex(EvidenceModel):
                     raise ValueError(
                         f"table occurrence references a block outside the table: {occurrence_id}"
                     )
+        _validate_table_continuations(self.tables, cells_by_id)
         for cell in self.cells:
             table = tables_by_id.get(cell.table_id)
             if table is None:
@@ -626,6 +690,118 @@ class EvidenceIndex(EvidenceModel):
             blocks_by_id,
         )
         return self
+
+
+def _validate_table_continuations(
+    tables: list[TableRecord],
+    cells_by_id: dict[str, TableCellRecord],
+) -> None:
+    tables_by_id = {table.table_id: table for table in tables}
+    groups: dict[str, list[TableRecord]] = {}
+    for table in tables:
+        if table.continuation_group_id is not None:
+            groups.setdefault(table.continuation_group_id, []).append(table)
+        if table.continuation_role != "continuation":
+            continue
+        root = tables_by_id.get(table.continuation_of_table_id or "")
+        if root is None:
+            raise ValueError(
+                f"continued table references unknown root table: {table.table_id}"
+            )
+        if root.continuation_role != "start":
+            raise ValueError(
+                f"continued table root is not a continuation start: {table.table_id}"
+            )
+        if root.continuation_group_id != table.continuation_group_id:
+            raise ValueError(
+                f"continued table and root use different groups: {table.table_id}"
+            )
+        if (
+            root.page is None
+            or table.page is None
+            or table.page <= root.page
+        ):
+            raise ValueError(
+                f"continued table must follow its root page: {table.table_id}"
+            )
+        if table.column_count != root.column_count:
+            raise ValueError(
+                f"continued table column count differs from root: {table.table_id}"
+            )
+        local_header_ids = {
+            cell_id
+            for cell_id in table.cell_ids
+            if cells_by_id[cell_id].is_header
+        }
+        root_header_ids = {
+            cell_id
+            for cell_id in root.cell_ids
+            if cells_by_id[cell_id].is_header
+        }
+        mapping = table.continued_header_cell_ids
+        if set(mapping) != local_header_ids or set(mapping.values()) != root_header_ids:
+            raise ValueError(
+                "continued header lineage must cover local and root header cells: "
+                f"{table.table_id}"
+            )
+        if len(set(mapping.values())) != len(mapping):
+            raise ValueError(
+                f"continued header lineage must be one-to-one: {table.table_id}"
+            )
+        for local_id, root_id in mapping.items():
+            local_cell = cells_by_id.get(local_id)
+            root_cell = cells_by_id.get(root_id)
+            if local_cell is None or root_cell is None:
+                raise ValueError(
+                    f"continued header lineage references unknown cells: {table.table_id}"
+                )
+            if (
+                local_cell.row_index != 1
+                or root_cell.row_index != 1
+                or local_cell.column_index != root_cell.column_index
+                or local_cell.column_span != root_cell.column_span
+                or local_cell.row_span != root_cell.row_span
+                or local_cell.text != root_cell.text
+            ):
+                raise ValueError(
+                    "continued header lineage does not preserve header topology and "
+                    f"text: {table.table_id}/{local_id}/{root_id}"
+                )
+
+    for group_id, group_tables in groups.items():
+        ordered = sorted(
+            group_tables,
+            key=lambda table: table.continuation_sequence or 0,
+        )
+        sequences = [table.continuation_sequence for table in ordered]
+        if sequences != list(range(1, len(ordered) + 1)):
+            raise ValueError(
+                f"table continuation sequences must be contiguous: {group_id}"
+            )
+        if not ordered or ordered[0].continuation_role != "start":
+            raise ValueError(
+                f"table continuation group must begin with a start table: {group_id}"
+            )
+        if any(table.continuation_role != "continuation" for table in ordered[1:]):
+            raise ValueError(
+                f"table continuation group has an invalid member role: {group_id}"
+            )
+        pages = [table.page for table in ordered]
+        if any(page is None for page in pages):
+            raise ValueError(
+                f"table continuation group pages must be adjacent: {group_id}"
+            )
+        concrete_pages = [page for page in pages if page is not None]
+        if any(
+            following != current + 1
+            for current, following in zip(
+                concrete_pages,
+                concrete_pages[1:],
+            )
+        ):
+            raise ValueError(
+                f"table continuation group pages must be adjacent: {group_id}"
+            )
 
 
 def _validate_table_row_groups(

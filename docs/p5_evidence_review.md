@@ -457,10 +457,35 @@ the current public renderer output. A stale JSON or PNG fixture therefore
 fails Python acceptance before Playwright can approve an impossible or old
 browser response.
 
+### M5.2 multi-page table continuation
+
+PDF table continuation keeps the page-local trust boundary intact. Every page
+still owns a separate `TableRecord`, canonical cell ID namespace, bbox, and
+`TableLocator`; no source or locator spans pages. The parser links adjacent
+page-local records only when all of the following are uniquely provable:
+
+- exactly one complete table reaches the previous page's bottom edge and
+  exactly one complete table begins at the next page's top edge;
+- both tables have the same column count;
+- their complete first-row header cells preserve canonical text, anchor
+  columns, row/column spans, and normalized horizontal boundaries; and
+- the pages are adjacent and every group sequence is contiguous.
+
+Accepted records expose `continuation_group_id`, `continuation_role`,
+`continuation_sequence`, and the root `continuation_of_table_id`.
+`continued_header_cell_ids` maps each page-local repeated header cell to the
+root table's canonical header cell. Evidence validation independently checks
+the group ordering, adjacent pages, root identity, one-to-one header coverage,
+text, and topology. A mismatch or ambiguous page edge leaves both tables as
+independent `single` records; it is never guessed.
+
+The checked `pdf_table_continuation.pdf` fixture contains a three-page chain.
+Acceptance proves page-local table identities, root header lineage, prompt
+source canonicalization, quote matching, `structured_required`, page/cell
+locators, `table_evidence_view_v1`, and the Review UI continuation label.
+
 ## Next acceptance steps
 
-- add multi-page PDF table/header continuation fixtures without weakening
-  per-page table identity;
 - expand the corpus further with externally authored files from additional PDF
   producers as real customer samples become available;
 - expose preview metadata separately if non-PDF renderers are introduced;

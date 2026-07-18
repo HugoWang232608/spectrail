@@ -174,6 +174,15 @@ function TableEvidenceView({
             <span>
               primary rows {data.primary_row_start}–{data.primary_row_end}
             </span>
+            {data.continuation_role && data.continuation_role !== 'single' ? (
+              <span>
+                {data.continuation_role === 'start'
+                  ? 'continued table start'
+                  : `continued from ${data.continuation_of_table_id}`}
+                {' · sequence '}
+                {data.continuation_sequence}
+              </span>
+            ) : null}
           </div>
           <div className="table-evidence-scroll">
             <table

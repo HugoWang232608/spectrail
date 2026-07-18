@@ -139,6 +139,11 @@ export type TableEvidenceResponse = {
   bbox?: BoundingBox | null
   primary_row_start: number
   primary_row_end: number
+  continuation_role?: 'single' | 'start' | 'continuation'
+  continuation_group_id?: string | null
+  continuation_sequence?: number | null
+  continuation_of_table_id?: string | null
+  continued_header_cell_ids?: Record<string, string>
   warnings: string[]
   rows: TableEvidenceRow[]
 }

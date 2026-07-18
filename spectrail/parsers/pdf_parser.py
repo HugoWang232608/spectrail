@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.metadata import PackageNotFoundError as DistributionNotFoundError
 from importlib.metadata import version as distribution_version
 import math
 import re
 from statistics import median
 from pathlib import Path
+from typing import Literal
 
 from spectrail.core.ids import block_id
 from spectrail.core.models import DocumentBlock
@@ -21,6 +22,7 @@ from spectrail.evidence.ids import (
     occurrence_id,
     page_id,
     table_id,
+    table_continuation_id,
 )
 from spectrail.evidence.models import (
     BlockEvidenceRecord,
@@ -81,6 +83,8 @@ PDF_TABLE_DETECTION_STRATEGY = "lines_strict"
 PDF_TABLE_GEOMETRY_TOLERANCE = 0.5
 PDF_TABLE_DETECTION_SNAP_TOLERANCE = 0.5
 PDF_TABLE_OVERLAP_AREA_EPSILON = 0.25
+PDF_TABLE_CONTINUATION_EDGE_RATIO = 0.08
+PDF_TABLE_CONTINUATION_BOUNDARY_TOLERANCE_RATIO = 0.005
 
 
 class _PdfTableEvidenceUnavailable(ValueError):
@@ -127,6 +131,7 @@ class PdfParserV2:
 
         _mark_repeated_page_edges(page_layouts)
         _assign_pdf_sections(page_layouts)
+        _mark_pdf_table_continuations(page_layouts)
 
         blocks: list[DocumentBlock] = []
         evidence_blocks: list[BlockEvidenceRecord] = []
@@ -138,6 +143,10 @@ class PdfParserV2:
         repeated_edge_candidate_blocks = 0
         table_index = 0
         occurrence_index = 0
+        table_ids_by_source: dict[tuple[int, int], str] = {}
+        header_cell_ids_by_source: dict[
+            tuple[int, int], dict[tuple[int, int], str]
+        ] = {}
 
         for layout in page_layouts:
             page_block_ids: list[str] = []
@@ -159,6 +168,19 @@ class PdfParserV2:
             for source_index, candidate in enumerate(ordered, start=1):
                 if candidate.table is not None:
                     table_index += 1
+                    continuation_root_table_id: str | None = None
+                    continuation_root_header_cell_ids: dict[
+                        tuple[int, int], str
+                    ] = {}
+                    if candidate.table.continuation_root_key is not None:
+                        continuation_root_table_id = table_ids_by_source[
+                            candidate.table.continuation_root_key
+                        ]
+                        continuation_root_header_cell_ids = (
+                            header_cell_ids_by_source[
+                                candidate.table.continuation_root_key
+                            ]
+                        )
                     built = _build_pdf_table_evidence(
                         candidate.table,
                         document_id=document_id,
@@ -170,6 +192,10 @@ class PdfParserV2:
                         first_block_order=len(blocks) + 1,
                         table_index=table_index,
                         first_occurrence_index=occurrence_index + 1,
+                        continuation_root_table_id=continuation_root_table_id,
+                        continuation_root_header_cell_ids=(
+                            continuation_root_header_cell_ids
+                        ),
                     )
                     blocks.extend(built.blocks)
                     evidence_blocks.extend(built.evidence_blocks)
@@ -179,6 +205,16 @@ class PdfParserV2:
                     occurrence_index += len(built.occurrences)
                     page_block_ids.extend(block.block_id for block in built.blocks)
                     page_table_ids.append(built.table.table_id)
+                    source_key = (
+                        layout.page,
+                        candidate.table.source_table_number,
+                    )
+                    table_ids_by_source[source_key] = built.table.table_id
+                    header_cell_ids_by_source[source_key] = {
+                        (cell.row_index, cell.column_index): cell.cell_id
+                        for cell in built.cells
+                        if cell.is_header
+                    }
                     continue
 
                 order = len(blocks) + 1
@@ -368,6 +404,10 @@ class _ProjectedPdfTable:
     row_count: int
     column_count: int
     cells: tuple[_ProjectedPdfTableCell, ...]
+    continuation_group_index: int | None = None
+    continuation_role: Literal["single", "start", "continuation"] = "single"
+    continuation_sequence: int | None = None
+    continuation_root_key: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -1249,6 +1289,8 @@ def _build_pdf_table_evidence(
     first_block_order: int,
     table_index: int,
     first_occurrence_index: int,
+    continuation_root_table_id: str | None,
+    continuation_root_header_cell_ids: dict[tuple[int, int], str],
 ) -> _BuiltPdfTableEvidence:
     table_identifier = table_id(table_index)
     cell_identifiers = {
@@ -1348,6 +1390,14 @@ def _build_pdf_table_evidence(
                 "table_row_start": row_start,
                 "table_row_end": row_end,
                 "repeated_header_rows": [1] if repeated_header else [],
+                "continuation_role": table.continuation_role,
+                "continuation_group_id": (
+                    table_continuation_id(table.continuation_group_index)
+                    if table.continuation_group_index is not None
+                    else None
+                ),
+                "continuation_sequence": table.continuation_sequence,
+                "continuation_of_table_id": continuation_root_table_id,
             },
         )
         blocks.append(block)
@@ -1404,11 +1454,40 @@ def _build_pdf_table_evidence(
         occurrence_ids=table_occurrence_ids,
         parser_method="pymupdf_find_tables",
         topology_status="complete",
-        warnings=(
-            ["PDF_REPEATED_HEADER_PROJECTED"]
-            if len(row_groups) > 1 and header_available
-            else []
+        continuation_role=table.continuation_role,
+        continuation_group_id=(
+            table_continuation_id(table.continuation_group_index)
+            if table.continuation_group_index is not None
+            else None
         ),
+        continuation_sequence=table.continuation_sequence,
+        continuation_of_table_id=continuation_root_table_id,
+        continued_header_cell_ids=(
+            {
+                cell_identifiers[(cell.row_index, cell.column_index)]:
+                    continuation_root_header_cell_ids[
+                        (cell.row_index, cell.column_index)
+                    ]
+                for cell in table.cells
+                if cell.is_header
+            }
+            if table.continuation_role == "continuation"
+            else {}
+        ),
+        warnings=[
+            *(
+                ["PDF_REPEATED_HEADER_PROJECTED"]
+                if len(row_groups) > 1 and header_available
+                else []
+            ),
+            *(
+                ["PDF_TABLE_CONTINUATION_START"]
+                if table.continuation_role == "start"
+                else ["PDF_TABLE_CONTINUATION_HEADER_PROJECTED"]
+                if table.continuation_role == "continuation"
+                else []
+            ),
+        ],
     )
     return _BuiltPdfTableEvidence(
         blocks=blocks,
@@ -1873,6 +1952,177 @@ def _assign_pdf_sections(page_layouts: list[_PageLayout]) -> None:
             block.section_path = _section_path(sections_by_level)
 
 
+def _mark_pdf_table_continuations(page_layouts: list[_PageLayout]) -> None:
+    """Link only uniquely provable table continuations on adjacent pages.
+
+    Each page keeps its own table and cell identities. The link records lineage
+    only after page-edge position, complete header topology, text, and
+    normalized horizontal geometry all agree.
+    """
+
+    continuation_group_index = 0
+    for previous_layout, current_layout in zip(page_layouts, page_layouts[1:]):
+        previous_candidates = [
+            table
+            for table in _layout_tables(previous_layout)
+            if table.bbox.y1
+            >= previous_layout.height
+            * (1.0 - PDF_TABLE_CONTINUATION_EDGE_RATIO)
+        ]
+        current_candidates = [
+            table
+            for table in _layout_tables(current_layout)
+            if table.bbox.y0
+            <= current_layout.height * PDF_TABLE_CONTINUATION_EDGE_RATIO
+        ]
+        if len(previous_candidates) != 1 or len(current_candidates) != 1:
+            continue
+        previous = previous_candidates[0]
+        current = current_candidates[0]
+        if not _pdf_table_continuation_headers_match(
+            previous,
+            previous_layout,
+            current,
+            current_layout,
+        ):
+            continue
+
+        previous_key = (
+            previous_layout.page,
+            previous.source_table_number,
+        )
+        if previous.continuation_group_index is None:
+            continuation_group_index += 1
+            group_index = continuation_group_index
+            root_key = previous_key
+            previous = replace(
+                previous,
+                continuation_group_index=group_index,
+                continuation_role="start",
+                continuation_sequence=1,
+            )
+            _replace_layout_table(previous_layout, previous)
+            previous_layout.warnings.append(
+                "PDF_TABLE_CONTINUATION_START: "
+                f"table={previous.source_table_number}, "
+                f"group={table_continuation_id(group_index)}"
+            )
+        else:
+            group_index = previous.continuation_group_index
+            root_key = previous.continuation_root_key or previous_key
+
+        current = replace(
+            current,
+            continuation_group_index=group_index,
+            continuation_role="continuation",
+            continuation_sequence=(previous.continuation_sequence or 1) + 1,
+            continuation_root_key=root_key,
+        )
+        _replace_layout_table(current_layout, current)
+        current_layout.warnings.append(
+            "PDF_TABLE_CONTINUATION_HEADER_PROJECTED: "
+            f"table={current.source_table_number}, "
+            f"from_page={root_key[0]}, "
+            f"group={table_continuation_id(group_index)}"
+        )
+
+
+def _layout_tables(layout: _PageLayout) -> list[_ProjectedPdfTable]:
+    return [
+        block.table
+        for block in layout.blocks
+        if block.table is not None
+    ]
+
+
+def _replace_layout_table(
+    layout: _PageLayout,
+    replacement: _ProjectedPdfTable,
+) -> None:
+    for block in layout.blocks:
+        if (
+            block.table is not None
+            and block.table.source_table_number
+            == replacement.source_table_number
+        ):
+            block.table = replacement
+            block.text = _render_pdf_table_row_group(
+                replacement,
+                row_start=1,
+                row_end=replacement.row_count,
+                repeated_header=False,
+            )[0]
+            return
+    raise ValueError(
+        "projected PDF table is not registered by its page layout: "
+        f"page {layout.page}/table {replacement.source_table_number}"
+    )
+
+
+def _pdf_table_continuation_headers_match(
+    previous: _ProjectedPdfTable,
+    previous_layout: _PageLayout,
+    current: _ProjectedPdfTable,
+    current_layout: _PageLayout,
+) -> bool:
+    if previous.column_count != current.column_count:
+        return False
+    previous_headers = _pdf_table_header_cells(previous)
+    current_headers = _pdf_table_header_cells(current)
+    if not previous_headers or len(previous_headers) != len(current_headers):
+        return False
+    if previous_layout.width <= 0 or current_layout.width <= 0:
+        return False
+    for previous_cell, current_cell in zip(previous_headers, current_headers):
+        if (
+            previous_cell.text != current_cell.text
+            or previous_cell.column_index != current_cell.column_index
+            or previous_cell.column_span != current_cell.column_span
+            or previous_cell.row_span != current_cell.row_span
+        ):
+            return False
+        previous_bounds = (
+            previous_cell.bbox.x0 / previous_layout.width,
+            previous_cell.bbox.x1 / previous_layout.width,
+        )
+        current_bounds = (
+            current_cell.bbox.x0 / current_layout.width,
+            current_cell.bbox.x1 / current_layout.width,
+        )
+        if any(
+            abs(left - right)
+            > PDF_TABLE_CONTINUATION_BOUNDARY_TOLERANCE_RATIO
+            for left, right in zip(previous_bounds, current_bounds)
+        ):
+            return False
+    return True
+
+
+def _pdf_table_header_cells(
+    table: _ProjectedPdfTable,
+) -> list[_ProjectedPdfTableCell]:
+    headers = sorted(
+        (
+            cell
+            for cell in table.cells
+            if cell.row_index == 1 and cell.is_header
+        ),
+        key=lambda cell: cell.column_index,
+    )
+    if (
+        not headers
+        or any(cell.row_span != 1 for cell in headers)
+        or headers[0].column_index != 1
+    ):
+        return []
+    next_column = 1
+    for cell in headers:
+        if cell.column_index != next_column:
+            return []
+        next_column += cell.column_span
+    return headers if next_column == table.column_count + 1 else []
+
+
 def _resolve_bold_heading_candidates(page_layouts: list[_PageLayout]) -> None:
     reading_sequence: list[tuple[_PageLayout, _PageTextBlock]] = []
     for layout in page_layouts:
@@ -2218,7 +2468,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.16",
+        parser_version="2.17",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -2256,6 +2506,15 @@ def _parser_identity() -> ParserIdentity:
             ),
             "rejected_table_region_projection": (
                 "block_80pct_overlap_or_fragment_center_v2"
+            ),
+            "multi_page_table_continuation": (
+                "adjacent_page_edges_unique_header_boundary_lineage_v1"
+            ),
+            "multi_page_table_continuation_edge_ratio": (
+                PDF_TABLE_CONTINUATION_EDGE_RATIO
+            ),
+            "multi_page_table_continuation_boundary_tolerance_ratio": (
+                PDF_TABLE_CONTINUATION_BOUNDARY_TOLERANCE_RATIO
             ),
         },
         runtime_dependencies={

@@ -897,6 +897,34 @@ describe('SourceViewer', () => {
     expect(screen.getAllByText(/repeated_header \[/).length).toBeGreaterThan(0)
   })
 
+  it('shows verified multi-page table continuation lineage', async () => {
+    const block = {
+      ...makeBlock('blk_continued_table', 'Header | Status\nREQ-1 | Approved'),
+      type: 'table' as const
+    }
+    const source = makeTableSource(block.block_id)
+    const response = {
+      ...makeTableEvidenceResponse(block.block_id),
+      continuation_role: 'continuation' as const,
+      continuation_group_id: 'tblcont_00000001',
+      continuation_sequence: 2,
+      continuation_of_table_id: 'tbl_00000000',
+      continued_header_cell_ids: {
+        cell_00000001_r0001_c0001: 'cell_00000000_r0001_c0001'
+      }
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(response)))
+
+    renderViewer(makeRequirement('req_continued_table', [source]), [block])
+
+    await screen.findByRole('grid', {
+      name: 'Table evidence tbl_00000001'
+    })
+    expect(
+      screen.getByText('continued from tbl_00000000 · sequence 2')
+    ).toBeTruthy()
+  })
+
   it('withholds the table grid when table-cell validation failed', () => {
     const block = {
       ...makeBlock('blk_invalid_table', 'A | B'),

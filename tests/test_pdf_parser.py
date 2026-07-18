@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.16"
+    assert parsed.parser_identity.parser_version == "2.17"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -466,6 +466,199 @@ def test_pdf_v2_checked_in_table_fixture_builds_structured_evidence():
     ).read_bytes()
     assert hashlib.sha256(checked_preview).hexdigest() == (
         hashlib.sha256(current_preview).hexdigest()
+    )
+
+
+def test_pdf_v2_links_checked_multi_page_table_continuation_and_validates_source():
+    path = Path("tests/fixtures/pdf_table_continuation.pdf")
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert len(index.tables) == 3
+    root, second, third = index.tables
+    assert [
+        (
+            table.page,
+            table.continuation_role,
+            table.continuation_group_id,
+            table.continuation_sequence,
+            table.continuation_of_table_id,
+        )
+        for table in index.tables
+    ] == [
+        (1, "start", "tblcont_00000001", 1, None),
+        (2, "continuation", "tblcont_00000001", 2, root.table_id),
+        (3, "continuation", "tblcont_00000001", 3, root.table_id),
+    ]
+    assert second.continued_header_cell_ids == {
+        "cell_00000002_r0001_c0001": "cell_00000001_r0001_c0001",
+        "cell_00000002_r0001_c0002": "cell_00000001_r0001_c0002",
+    }
+    assert third.continued_header_cell_ids == {
+        "cell_00000003_r0001_c0001": "cell_00000001_r0001_c0001",
+        "cell_00000003_r0001_c0002": "cell_00000001_r0001_c0002",
+    }
+    assert index.pages[0].table_ids == [root.table_id]
+    assert index.pages[1].table_ids == [second.table_id]
+    assert index.pages[2].table_ids == [third.table_id]
+    assert all(
+        table.row_count == 3 and table.column_count == 2
+        for table in index.tables
+    )
+    validate_evidence_index_against_parsed_document(index, parsed)
+
+    table_block = next(
+        block
+        for block in parsed.blocks
+        if block.page == 2 and block.type == "table"
+    )
+    assert table_block.metadata["continuation_role"] == "continuation"
+    assert table_block.metadata["continuation_group_id"] == "tblcont_00000001"
+    assert table_block.metadata["continuation_sequence"] == 2
+    assert table_block.metadata["continuation_of_table_id"] == root.table_id
+
+    source_cell_ids = [
+        "cell_00000002_r0002_c0001",
+        "cell_00000002_r0002_c0002",
+    ]
+    source_quote = "REQ-CONT-003 | Open"
+    prompt = build_reqir_prompt(
+        ModelRequest(
+            document_text=parsed.text,
+            document_name=parsed.document_name,
+            source_format=parsed.source_format,
+            parser_name=parsed.parser_name,
+            model_mode="mock",
+            blocks=parsed.blocks,
+            evidence_index=index,
+            metadata={"evidence_policy": "structured_required"},
+        )
+    )
+    assert source_quote in prompt
+    assert all(cell_identifier in prompt for cell_identifier in source_cell_ids)
+    requirement = ReqIRExtractor().extract(
+        {
+            "items": [
+                {
+                    "statement": (
+                        "The system shall preserve the continued table row."
+                    ),
+                    "source_block_id": table_block.block_id,
+                    "source_quote": source_quote,
+                    "source_cell_ids": source_cell_ids,
+                    "source_table_row_index": 2,
+                }
+            ]
+        },
+        parsed.blocks,
+        document_name=parsed.document_name,
+    )[0]
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    quote_validated, quote_report = SourceQuoteValidator().validate(
+        [requirement],
+        parsed.blocks,
+        registry,
+    )
+    locator_validated, locator_report, failures = (
+        SourceLocatorValidator().validate(
+            quote_validated,
+            index,
+            registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+    assert quote_report.valid is True
+    assert locator_report.valid is True
+    assert failures == []
+    assert locator_validated == [requirement]
+    source = requirement.sources[0]
+    assert source.locator_status == "PASS_STRUCTURED"
+    assert source.table_locator is not None
+    assert source.table_locator.table_id == second.table_id
+    assert source.table_locator.selected_row_index == 2
+    assert source.page_locator is not None
+    assert source.page_locator.page == 2
+    assert source.page_locator.derivation == "table_cell_union"
+
+    projection = build_table_evidence_view(
+        index,
+        task_id="continuation-fixture-task",
+        table_id=second.table_id,
+        block_id=table_block.block_id,
+    )
+    assert projection.continuation_role == "continuation"
+    assert projection.continuation_group_id == "tblcont_00000001"
+    assert projection.continuation_sequence == 2
+    assert projection.continuation_of_table_id == root.table_id
+    assert projection.continued_header_cell_ids == (
+        second.continued_header_cell_ids
+    )
+    assert [row.physical_row_index for row in projection.rows] == [1, 2, 3]
+
+    invalid_payload = index.model_dump(mode="json")
+    invalid_payload["tables"][1]["continued_header_cell_ids"][
+        "cell_00000002_r0001_c0001"
+    ] = "cell_00000001_r0002_c0001"
+    with pytest.raises(
+        ValueError,
+        match="continued header lineage must cover local and root header cells",
+    ):
+        type(index).model_validate(invalid_payload)
+
+
+def test_pdf_v2_does_not_guess_continuation_when_headers_differ(
+    tmp_path: Path,
+):
+    path = tmp_path / "independent-edge-tables.pdf"
+    document = fitz.open()
+    for page_index, header in enumerate(
+        (("Requirement", "Status"), ("Requirement", "Decision"))
+    ):
+        page = document.new_page(width=400, height=300)
+        top = 16 if page_index == 0 else 8
+        row_height = 92
+        for x in (40, 250, 360):
+            page.draw_line((x, top), (x, top + 3 * row_height))
+        for row_index in range(4):
+            y = top + row_index * row_height
+            page.draw_line((40, y), (360, y))
+        values = (
+            header,
+            (f"REQ-{page_index + 1}A", "Open"),
+            (f"REQ-{page_index + 1}B", "Closed"),
+        )
+        for row_index, row in enumerate(values):
+            baseline = top + row_index * row_height + 25
+            page.insert_text((48, baseline), row[0])
+            page.insert_text((258, baseline), row[1])
+    document.save(path)
+    document.close()
+
+    parsed = PdfParserV2().parse(path)
+    index = parsed.evidence_index
+    assert index is not None
+    assert len(index.tables) == 2
+    assert [table.continuation_role for table in index.tables] == [
+        "single",
+        "single",
+    ]
+    assert all(table.continuation_group_id is None for table in index.tables)
+    assert not any(
+        warning.startswith("PDF_TABLE_CONTINUATION_")
+        for warning in parsed.warnings
     )
 
 

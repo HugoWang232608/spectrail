@@ -244,6 +244,35 @@ def test_api_table_evidence_reuses_projection_for_pdf_table(
     ]
 
 
+def test_api_table_evidence_exposes_pdf_continuation_lineage(
+    api_client: TestClient,
+):
+    task_id, parsed = _create_completed_pdf_table_task(
+        api_client,
+        source=Path("tests/fixtures/pdf_table_continuation.pdf"),
+    )
+    assert parsed.evidence_index is not None
+    root, continued, _ = parsed.evidence_index.tables
+    block_id = continued.block_ids[0]
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/tables/{continued.table_id}"
+        f"/blocks/{block_id}/evidence"
+        f"?expected_evidence_fingerprint="
+        f"{parsed.evidence_index.evidence_fingerprint}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["continuation_role"] == "continuation"
+    assert payload["continuation_group_id"] == "tblcont_00000001"
+    assert payload["continuation_sequence"] == 2
+    assert payload["continuation_of_table_id"] == root.table_id
+    assert payload["continued_header_cell_ids"] == (
+        continued.continued_header_cell_ids
+    )
+
+
 def test_api_table_evidence_preserves_repeated_header_projection(
     api_client: TestClient,
 ):
@@ -851,8 +880,11 @@ def _create_completed_docx_table_task(
     return task_id, parsed
 
 
-def _create_completed_pdf_table_task(api_client: TestClient):
-    source = Path("tests/fixtures/pdf_table_requirements.pdf")
+def _create_completed_pdf_table_task(
+    api_client: TestClient,
+    *,
+    source: Path = Path("tests/fixtures/pdf_table_requirements.pdf"),
+):
     created = api_client.post("/api/tasks", json={})
     task_id = created.json()["task_id"]
     uploaded = api_client.post(

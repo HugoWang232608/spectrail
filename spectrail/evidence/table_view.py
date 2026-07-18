@@ -58,6 +58,11 @@ class TableEvidenceView(EvidenceModel):
     bbox: BoundingBox | None = None
     primary_row_start: int
     primary_row_end: int
+    continuation_role: Literal["single", "start", "continuation"] = "single"
+    continuation_group_id: str | None = None
+    continuation_sequence: int | None = None
+    continuation_of_table_id: str | None = None
+    continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     rows: list[TableEvidenceRowView] = Field(default_factory=list)
 
@@ -179,6 +184,11 @@ def build_table_evidence_view(
         bbox=table.bbox,
         primary_row_start=block.table_row_start,
         primary_row_end=block.table_row_end,
+        continuation_role=table.continuation_role,
+        continuation_group_id=table.continuation_group_id,
+        continuation_sequence=table.continuation_sequence,
+        continuation_of_table_id=table.continuation_of_table_id,
+        continued_header_cell_ids=dict(table.continued_header_cell_ids),
         warnings=list(table.warnings),
         rows=rows,
     )

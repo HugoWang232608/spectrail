@@ -198,7 +198,14 @@ One outer task transaction covers the generation and readable-status checks,
 ReqIR mutation, reviewer log update, and XLSX regeneration. A concurrent rerun
 therefore returns `RUN_GENERATION_CHANGED` before any review artifact is
 written, even when the new run happens to reuse the same requirement ID.
-Successful `ReviewResponse` bodies return the actual `run_generation`.
+The three resulting artifacts are first generated in a same-filesystem staging
+directory. The staged review log and ReqIR are read back and validated, and the
+workbook must reopen with the expected sheet and row count. Only then are
+backups created and the three targets replaced. An in-process publication
+failure restores every original target; a generation or XLSX-generation
+failure occurs before publication and leaves all three target files byte-for-
+byte unchanged. Successful `ReviewResponse` bodies return the actual
+`run_generation`.
 
 Downloads and auxiliary review artifacts are conditional reads as well:
 
@@ -212,9 +219,12 @@ GET /api/tasks/{task_id}/quarantined
 ```
 
 Successful responses use `Cache-Control: private, no-store` and return
-`X-Spectrail-Run-Generation`. The Review UI includes the generation in both
-download links, preventing a page showing generation N from silently
-downloading generation N+1 exports.
+`X-Spectrail-Run-Generation`. The Review UI downloads exports with `fetch`,
+validates the response generation, and creates a temporary Blob URL only for a
+successful response. `RUN_GENERATION_CHANGED` remains a structured React error
+with a **Reload task evidence** action, preventing a page showing generation N
+from silently downloading generation N+1 exports or presenting an opaque
+browser download failure.
 
 `LocalTaskStore` caches the fully validated `EvidenceIndex`, validated blocks,
 and block-scoped table projections by task ID plus artifact device, inode, size,

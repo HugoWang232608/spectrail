@@ -135,15 +135,17 @@ export async function reviewRequirement(
   })
 }
 
-export function getExportUrl(
+export async function downloadExport(
   taskId: string,
   filename: 'reqir.json' | 'requirements.xlsx',
   expectedRunGeneration: number
-): string {
-  return (
-    `${trimTrailingSlash(API_BASE_URL)}/tasks/${taskId}/exports/${filename}` +
-    `?expected_run_generation=${expectedRunGeneration}`
+): Promise<Blob> {
+  const response = await requestResponse(
+    `/tasks/${encodeURIComponent(taskId)}/exports/${filename}` +
+      `?expected_run_generation=${expectedRunGeneration}`
   )
+  requireResponseRunGeneration(response, expectedRunGeneration)
+  return response.blob()
 }
 
 export function getPagePreviewUrl(taskId: string, page: number): string {

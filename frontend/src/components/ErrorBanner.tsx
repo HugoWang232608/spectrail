@@ -3,9 +3,18 @@ import type { ApiError } from '../api/types'
 type ErrorBannerProps = {
   error: ApiError | null
   onDismiss: () => void
+  actionLabel?: string
+  actionDisabled?: boolean
+  onAction?: () => void
 }
 
-function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
+function ErrorBanner({
+  error,
+  onDismiss,
+  actionLabel,
+  actionDisabled = false,
+  onAction
+}: ErrorBannerProps) {
   if (!error) {
     return null
   }
@@ -16,12 +25,22 @@ function ErrorBanner({ error, onDismiss }: ErrorBannerProps) {
         <strong>{error.code}</strong>
         <p>{error.message}</p>
       </div>
-      <button type="button" className="ghost-button" onClick={onDismiss}>
-        Dismiss
-      </button>
+      <div className="banner-actions">
+        {actionLabel && onAction ? (
+          <button
+            type="button"
+            disabled={actionDisabled}
+            onClick={onAction}
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+        <button type="button" className="ghost-button" onClick={onDismiss}>
+          Dismiss
+        </button>
+      </div>
     </div>
   )
 }
 
 export default ErrorBanner
-

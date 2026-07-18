@@ -1,17 +1,21 @@
-import { getExportUrl } from '../api/client'
-
 type ExportPanelProps = {
   taskId: string | null
   runGeneration: number | null
   available: boolean
+  busy: boolean
+  onDownload: (
+    filename: 'reqir.json' | 'requirements.xlsx'
+  ) => void
 }
 
 function ExportPanel({
   taskId,
   runGeneration,
-  available
+  available,
+  busy,
+  onDownload
 }: ExportPanelProps) {
-  const disabled = !taskId || runGeneration == null || !available
+  const disabled = !taskId || runGeneration == null || !available || busy
 
   return (
     <section className="panel compact-panel export-panel" aria-labelledby="export-heading">
@@ -20,37 +24,22 @@ function ExportPanel({
       </div>
 
       <div className="export-row">
-        {disabled ? (
-          <>
-            <button type="button" disabled>
-              Download reqir.json
-            </button>
-            <button type="button" disabled>
-              Download requirements.xlsx
-            </button>
-          </>
-        ) : (
-          <>
-            <a
-              className="download-button"
-              href={getExportUrl(taskId, 'reqir.json', runGeneration)}
-              download
-            >
-              Download reqir.json
-            </a>
-            <a
-              className="download-button"
-              href={getExportUrl(
-                taskId,
-                'requirements.xlsx',
-                runGeneration
-              )}
-              download
-            >
-              Download requirements.xlsx
-            </a>
-          </>
-        )}
+        <button
+          type="button"
+          className="download-button"
+          disabled={disabled}
+          onClick={() => onDownload('reqir.json')}
+        >
+          Download reqir.json
+        </button>
+        <button
+          type="button"
+          className="download-button"
+          disabled={disabled}
+          onClick={() => onDownload('requirements.xlsx')}
+        >
+          Download requirements.xlsx
+        </button>
       </div>
     </section>
   )

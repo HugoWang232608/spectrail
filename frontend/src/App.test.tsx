@@ -13,6 +13,7 @@ import App from './App'
 
 const api = vi.hoisted(() => ({
   createTask: vi.fn(),
+  downloadExport: vi.fn(),
   getBlocks: vi.fn(),
   getReqIR: vi.fn(),
   getTask: vi.fn(),
@@ -23,10 +24,6 @@ const api = vi.hoisted(() => ({
 
 vi.mock('./api/client', () => ({
   API_BASE_URL: '/api',
-  getExportUrl: (taskId: string, filename: string, runGeneration: number) => (
-    `/api/tasks/${taskId}/exports/${filename}` +
-    `?expected_run_generation=${runGeneration}`
-  ),
   ...api
 }))
 
@@ -43,7 +40,7 @@ afterEach(() => {
 })
 
 describe('App pipeline run reconciliation', () => {
-  it('binds review writes and export links to the loaded run generation', async () => {
+  it('binds review writes to the loaded run generation', async () => {
     const task = completedTask(1)
     api.getTask.mockResolvedValueOnce(task)
     api.getReqIR
@@ -67,12 +64,6 @@ describe('App pipeline run reconciliation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load' }))
     await screen.findByText('Review evidence', { selector: 'mark' })
 
-    const reqirDownload = screen.getByRole('link', {
-      name: 'Download reqir.json'
-    })
-    expect(reqirDownload.getAttribute('href')).toContain(
-      'expected_run_generation=1'
-    )
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
     await waitFor(() => {
@@ -86,6 +77,41 @@ describe('App pipeline run reconciliation', () => {
       )
     })
     expect(api.getReqIR).toHaveBeenLastCalledWith('task-1', 1)
+  })
+
+  it('shows a reload action when a generation-bound export is stale', async () => {
+    api.getTask.mockResolvedValueOnce(completedTask(1))
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_export', 'Export evidence')
+    )
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'Export evidence')
+    )
+    api.downloadExport.mockRejectedValueOnce({
+      code: 'RUN_GENERATION_CHANGED',
+      message: 'expected task run generation 1, found 2'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await screen.findByText('Export evidence', { selector: 'mark' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Download reqir.json'
+    }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('RUN_GENERATION_CHANGED')
+    expect(api.downloadExport).toHaveBeenCalledWith(
+      'task-1',
+      'reqir.json',
+      1
+    )
+    expect(screen.getByRole('button', {
+      name: 'Reload task evidence'
+    })).toBeTruthy()
   })
 
   it('clears stale review state, reruns the task, and loads rebuilt Evidence', async () => {
@@ -281,7 +307,7 @@ describe('App pipeline run reconciliation', () => {
     await waitFor(() => expect(api.getReqIR).toHaveBeenCalledTimes(2))
     expect(screen.getAllByText('Existing evidence').length).toBeGreaterThan(0)
     expect(screen.queryByText('No requirements')).toBeNull()
-    expect(screen.getByRole('link', {
+    expect(screen.getByRole('button', {
       name: 'Download reqir.json'
     })).toBeTruthy()
   })

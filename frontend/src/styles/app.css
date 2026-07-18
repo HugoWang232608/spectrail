@@ -389,6 +389,13 @@ dd {
   margin: 3px 0 0;
 }
 
+.banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .notice-banner {
   display: flex;
   align-items: center;

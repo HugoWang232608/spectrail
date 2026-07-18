@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE_URL,
   createTask,
+  downloadExport,
   getBlocks,
   getReqIR,
   getTask,
@@ -35,7 +36,14 @@ import {
   PIPELINE_RERUN_CONFIRMATION
 } from './evidence/evidenceRecovery'
 
-type BusyAction = 'create' | 'load' | 'upload' | 'run' | 'review' | null
+type BusyAction =
+  | 'create'
+  | 'load'
+  | 'upload'
+  | 'run'
+  | 'review'
+  | 'export'
+  | null
 type EvidenceLoadResult = {
   evidenceFingerprint: string | null
   trusted: boolean
@@ -261,6 +269,22 @@ function App() {
     })
   }
 
+  async function handleDownload(
+    filename: 'reqir.json' | 'requirements.xlsx'
+  ) {
+    if (!task) {
+      return
+    }
+    await perform('export', async () => {
+      const blob = await downloadExport(
+        task.task_id,
+        filename,
+        task.run_generation
+      )
+      saveDownloadedBlob(blob, filename)
+    })
+  }
+
   async function handleReloadEvidence() {
     if (!task) {
       return
@@ -392,7 +416,21 @@ function App() {
         <span className="api-pill">{API_BASE_URL}</span>
       </header>
 
-      <ErrorBanner error={error} onDismiss={() => setError(null)} />
+      <ErrorBanner
+        error={error}
+        onDismiss={() => setError(null)}
+        actionLabel={
+          error?.code === 'RUN_GENERATION_CHANGED'
+            ? 'Reload task evidence'
+            : undefined
+        }
+        actionDisabled={busy}
+        onAction={
+          error?.code === 'RUN_GENERATION_CHANGED'
+            ? () => void handleReloadEvidence()
+            : undefined
+        }
+      />
       <NoticeBanner notice={notice} onDismiss={() => setNotice(null)} />
 
       <section className="workspace-grid" aria-label="Task workflow">
@@ -421,6 +459,8 @@ function App() {
             taskId={task?.task_id ?? null}
             runGeneration={task?.run_generation ?? null}
             available={isReadableStatus(task?.status)}
+            busy={busy}
+            onDownload={(filename) => void handleDownload(filename)}
           />
         </div>
 
@@ -596,6 +636,18 @@ function requireRunGeneration(
       )
     } satisfies ApiError
   }
+}
+
+function saveDownloadedBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.hidden = true
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export default App

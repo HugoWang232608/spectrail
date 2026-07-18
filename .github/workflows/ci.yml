@@ -38,12 +38,20 @@ jobs:
         run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev]"
       - name: Run evaluation quality gate
         run: python -m spectrail evaluate eval/cases --output outputs/evaluation
+      - name: Run real-world PDF corpus quality gate
+        if: always()
+        run: >-
+          python -m spectrail evaluate-pdf-corpus
+          eval/pdf_corpus_v1/manifest.json
+          --output outputs/pdf-corpus
       - name: Upload evaluation reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evaluation-reports
-          path: outputs/evaluation
+          path: |
+            outputs/evaluation
+            outputs/pdf-corpus
           if-no-files-found: warn
 
   backend:

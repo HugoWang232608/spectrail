@@ -25,6 +25,7 @@ from spectrail.migrations import migrate_task
 from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineError, PipelineRunner
 from spectrail.task_transactions import task_operation, task_root_for_artifact
+from spectrail.evaluation.pdf_corpus import PdfCorpusRunner
 from spectrail.evaluation.runner import EvaluationRunner
 from spectrail.review.service import (
     apply_review_to_package,
@@ -116,6 +117,22 @@ def main(argv: list[str] | None = None) -> int:
     evaluate_parser.add_argument("--output", default="outputs/evaluation")
     evaluate_parser.set_defaults(func=run_evaluate)
 
+    pdf_corpus_parser = subparsers.add_parser(
+        "evaluate-pdf-corpus",
+        help="run parser-level PDF corpus observations",
+    )
+    pdf_corpus_parser.add_argument("manifest", help="pdf_corpus_v1 manifest")
+    pdf_corpus_parser.add_argument(
+        "--include-extended",
+        action="store_true",
+        help="include optional extended corpus cases",
+    )
+    pdf_corpus_parser.add_argument(
+        "--output",
+        default="outputs/pdf-corpus",
+    )
+    pdf_corpus_parser.set_defaults(func=run_pdf_corpus)
+
     args = parser.parse_args(argv)
     return args.func(args)
 
@@ -159,6 +176,22 @@ def run_evaluate(args: argparse.Namespace) -> int:
             print(f"\nFailed evaluation report: {markdown_path}")
             if markdown_path.exists():
                 print(markdown_path.read_text(encoding="utf-8").rstrip())
+    return 0 if report["passed"] else 1
+
+
+def run_pdf_corpus(args: argparse.Namespace) -> int:
+    try:
+        report = PdfCorpusRunner().run(
+            args.manifest,
+            args.output,
+            include_extended=args.include_extended,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(
+        f"Evaluated {report['case_count']} PDF corpus case(s): "
+        f"{report['case_passed']} passed"
+    )
     return 0 if report["passed"] else 1
 
 

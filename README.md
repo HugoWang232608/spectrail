@@ -450,3 +450,25 @@ discarded.
 
 See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
 contract and next acceptance steps.
+
+## M5.3 Real-World PDF Corpus
+
+The parser-level `pdf_corpus_v1` gate complements requirement extraction
+evaluation with selected real-document observations. It checks source and
+Evidence identity, quote-to-block/page alignment, exhaustive heading sets on
+annotated pages, table topology, fail-closed table fallback, and authored
+continuation relationships without invoking an LLM.
+
+Run the checked core corpus with:
+
+```bash
+python -m spectrail evaluate-pdf-corpus \
+  eval/pdf_corpus_v1/manifest.json \
+  --output outputs/pdf-corpus
+```
+
+The initial seed is the externally authored Microsoft Word IEEE 29148 example
+already checked into the repository. Heading precision/recall is report-only
+while the corpus is expanded; trusted text/page observations are release
+gates. See [docs/pdf_corpus_v1.md](docs/pdf_corpus_v1.md) for the manifest
+contract, provenance policy, metrics, and expansion plan.

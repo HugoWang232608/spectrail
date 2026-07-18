@@ -1,0 +1,123 @@
+{
+  "schema_version": "pdf_corpus_v1",
+  "name": "SpecTrail real-world PDF corpus v1",
+  "metadata": {
+    "annotation_policy": "selected source observations plus exhaustive page-level heading sets",
+    "core_target": "4-6 checked-in, redistribution-reviewed PDFs",
+    "extended_target": "8-12 provenance-locked PDFs",
+    "trust_policy": "abstention is acceptable; unsupported structure must not become trusted Evidence"
+  },
+  "thresholds": {
+    "case_pass_rate_min": 1.0,
+    "gate_observation_pass_rate_min": 1.0,
+    "gate_observation_evaluated_count_min": 5,
+    "text_source_accuracy_min": 1.0,
+    "text_source_evaluated_count_min": 5,
+    "page_region_availability_rate_min": 1.0,
+    "page_region_evaluated_count_min": 5
+  },
+  "cases": [
+    {
+      "case_id": "ieee29148_word_export",
+      "document": "../../tests/fixtures/ieee29148_srs_example.pdf",
+      "tier": "core",
+      "source": {
+        "provenance": "external_document",
+        "producer_family": "Microsoft Word for Office 365",
+        "source_url": "https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf",
+        "redistribution_status": "existing_checked_fixture_terms_unverified",
+        "license_note": "Existing repository fixture; provenance is recorded, but redistribution terms have not yet been independently classified.",
+        "source_sha256": "db505b45a4771b5b4a444a6a88f48e19167fb4d0ba84058c18b6a9875aff83b0"
+      },
+      "expected_parser_name": "pdf_parser_v2",
+      "expected_parser_version": "2.18",
+      "expected_evidence_fingerprint": "b2793917b65cd81781a3bce68f010bbc8178fb02263615acbbd5d568d6e8ce97",
+      "observations": [
+        {
+          "observation_id": "create-document-source",
+          "kind": "text_source",
+          "quote": "[DEMO-SRS-53] The application shall allow users to create a new empty document.",
+          "page": 5,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "2. Requirements",
+            "2.2.1 File Operations",
+            "2.2.1.1 Create Document"
+          ]
+        },
+        {
+          "observation_id": "open-document-source",
+          "kind": "text_source",
+          "quote": "[DEMO-SRS-56] The application shall allow users to open a document from a chosen file.",
+          "page": 5,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "2. Requirements",
+            "2.2.1 File Operations",
+            "2.2.1.2 Open File"
+          ]
+        },
+        {
+          "observation_id": "table-of-contents-source",
+          "kind": "text_source",
+          "quote": "[DEMO-SRS-80] The application shall display the table of contents containing section headings organized according to their document tree hierarchy.",
+          "page": 6,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "2. Requirements",
+            "2.2.2 Document View",
+            "2.2.2.1 Table of Contents"
+          ]
+        },
+        {
+          "observation_id": "smooth-scrolling-source",
+          "kind": "text_source",
+          "quote": "[DEMO-SRS-173] While a user scrolls the requirements table, the application should not display scrolling jerks longer than 200ms.",
+          "page": 10,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "2. Requirements",
+            "2.4.3 Smooth Scrolling"
+          ]
+        },
+        {
+          "observation_id": "internet-isolation-source",
+          "kind": "text_source",
+          "quote": "[DEMO-SRS-176] The application shall not send any project data to the Internet.",
+          "page": 10,
+          "expected_block_type": "paragraph",
+          "expected_section_path": [
+            "2. Requirements",
+            "2.5 Logical database requirements"
+          ]
+        },
+        {
+          "observation_id": "page-5-heading-set",
+          "kind": "heading_page",
+          "gate": false,
+          "page": 5,
+          "expected_headings": [
+            "2. Requirements",
+            "2.2.1 File Operations",
+            "2.2.1.1 Create Document",
+            "2.2.1.2 Open File",
+            "2.2.1.3 Save Local File",
+            "2.2.1.4 Document Template",
+            "2.2.1.5 Import",
+            "2.2.1.6 Export",
+            "2.2.2 Document View"
+          ],
+          "notes": "Report-only until the real-world heading baseline is large enough to set stable thresholds."
+        },
+        {
+          "observation_id": "page-1-decoration-vs-heading",
+          "kind": "heading_page",
+          "gate": false,
+          "page": 1,
+          "expected_headings": [],
+          "notes": "The date currently exposes a known heading false positive and intentionally remains report-only."
+        }
+      ]
+    }
+  ]
+}

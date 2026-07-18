@@ -639,8 +639,10 @@ canonical block fallback in one browser screenshot.
 
 ## Next acceptance steps
 
-- expand the corpus further with externally authored files from additional PDF
-  producers as real customer samples become available;
+- expand `pdf_corpus_v1` beyond its initial Microsoft Word seed with
+  redistribution-reviewed files from additional PDF producers and real
+  customer samples;
 - expose preview metadata separately if non-PDF renderers are introduced;
 - distinguish running decoration from repeated contextual headings in PDF
-  section inference.
+  section inference, using the report-only corpus heading metrics as the
+  baseline.

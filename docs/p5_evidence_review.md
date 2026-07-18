@@ -382,7 +382,8 @@ anchor, `row_span`, and `column_span`. It accepts the result only when:
 - every physical coordinate is covered by exactly one logical cell;
 - every detector projection refers to the same inferred owner;
 - every merged cell has one unambiguous anchor; and
-- the detector does not assign conflicting non-empty text to one logical cell.
+- all occupied slots, including bbox-less projection slots, assign at most one
+  unique normalized non-empty text value to their inferred logical owner.
 
 An accepted vertical merge is serialized once per occupied physical row. The
 anchor occurrence is `original`; subsequent rows use

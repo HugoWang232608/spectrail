@@ -1,6 +1,6 @@
 {
   "name": "PDF vertical merged-cell evidence",
-  "evidenceFingerprint": "1a1d875fb875ca8d8ced6e30e846247156c5c859f47ebe3a692b5da7d373f5a9",
+  "evidenceFingerprint": "ae89d3c557751e649dde136156a4232cdcee2cfda48a178d4959670628b70740",
   "requirement": {
     "id": "req_pdf_merged_table",
     "version": 1,
@@ -81,7 +81,7 @@
           "cell_00000001_r0002_c0002"
         ],
         "source_table_row_index": 2,
-        "source_evidence_key": "src_08f2dc854f4ff4b34f16cc45",
+        "source_evidence_key": "src_92488b310575a222acbf3230",
         "provisional_text_locator": null,
         "locator_status": "PASS_STRUCTURED",
         "capability_results": [
@@ -156,7 +156,7 @@
   "tableEvidence": {
     "schema_version": "table_evidence_view_v1",
     "task_id": "visual-task",
-    "evidence_fingerprint": "1a1d875fb875ca8d8ced6e30e846247156c5c859f47ebe3a692b5da7d373f5a9",
+    "evidence_fingerprint": "ae89d3c557751e649dde136156a4232cdcee2cfda48a178d4959670628b70740",
     "table_id": "tbl_00000001",
     "block_id": "blk_0001",
     "row_count": 2,

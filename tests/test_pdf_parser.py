@@ -84,7 +84,7 @@ def test_text_pdf_parser_extracts_page_aware_blocks(tmp_path: Path):
     assert "The system shall show source quotes." in parsed.text
     assert parsed.parser_identity is not None
     assert parsed.parser_identity.parser_name == "pdf_parser_v2"
-    assert parsed.parser_identity.parser_version == "2.15"
+    assert parsed.parser_identity.parser_version == "2.16"
     assert parsed.parser_identity.runtime_dependencies["PyMuPDF"] == fitz.__version__
     assert parsed.parser_identity.runtime_dependencies["MuPDF"] == fitz.mupdf_version
     assert parsed.evidence_index is not None
@@ -501,6 +501,92 @@ def test_pdf_v2_checked_horizontal_merge_infers_column_span():
         (2, "original"),
         (2, "original"),
     ]
+
+    table_block = parsed.blocks[0]
+    merged_cell_id = "cell_00000001_r0001_c0001"
+    prompt = build_reqir_prompt(
+        ModelRequest(
+            document_text=parsed.text,
+            document_name=parsed.document_name,
+            source_format=parsed.source_format,
+            parser_name=parsed.parser_name,
+            model_mode="mock",
+            blocks=parsed.blocks,
+            evidence_index=index,
+            metadata={"evidence_policy": "structured_required"},
+        )
+    )
+    assert "column_span=2" in prompt
+    assert merged_cell_id in prompt
+
+    requirement = ReqIRExtractor().extract(
+        {
+            "items": [
+                {
+                    "statement": (
+                        "The system shall retain the merged requirement "
+                        "header."
+                    ),
+                    "source_block_id": table_block.block_id,
+                    "source_quote": "Merged requirement header",
+                    "source_cell_ids": [merged_cell_id],
+                    "source_table_row_index": 1,
+                }
+            ]
+        },
+        parsed.blocks,
+        document_name=parsed.document_name,
+    )[0]
+    canonicalize_source_cell_ids([requirement], index)
+    registry = build_quote_match_registry(
+        [requirement],
+        parsed.blocks,
+        evidence_fingerprint=index.evidence_fingerprint,
+        evidence_index=index,
+    )
+    SourceEvidenceEnricher().enrich(
+        [requirement],
+        index,
+        registry,
+        parsed.blocks,
+    )
+    quote_validated, quote_report = SourceQuoteValidator().validate(
+        [requirement],
+        parsed.blocks,
+        registry,
+    )
+    locator_validated, locator_report, failures = (
+        SourceLocatorValidator().validate(
+            quote_validated,
+            index,
+            registry,
+            policy="structured_required",
+            document_blocks=parsed.blocks,
+        )
+    )
+    source = requirement.sources[0]
+    assert quote_report.valid is True
+    assert locator_report.valid is True
+    assert failures == []
+    assert locator_validated == [requirement]
+    assert source.locator_status == "PASS_STRUCTURED"
+    assert source.table_locator is not None
+    assert source.table_locator.cell_ids == [merged_cell_id]
+    assert source.table_locator.selected_row_index == 1
+    assert source.page_locator is not None
+    assert source.page_locator.derivation == "table_cell_union"
+    assert source.page_locator.bbox == source.table_locator.bbox
+
+    projection = build_table_evidence_view(
+        index,
+        task_id="horizontal-merge-task",
+        table_id=index.tables[0].table_id,
+        block_id=table_block.block_id,
+    )
+    projected_merged = projection.rows[0].cells[0]
+    assert projected_merged.cell_id == merged_cell_id
+    assert projected_merged.column_span == 2
+    assert projected_merged.occurrences[0].occurrence_role == "original"
     validate_evidence_index_against_parsed_document(index, parsed)
 
 
@@ -770,6 +856,61 @@ def test_pdf_v2_checked_ambiguous_merge_downgrades_table_cell():
     assert strict == []
     assert strict_report.valid is False
     assert len(strict_failures) == 1
+
+
+def test_pdf_v2_rejects_conflicting_text_from_bboxless_merged_slot(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raw_table = SimpleNamespace(
+        row_count=2,
+        col_count=2,
+        bbox=(50.0, 50.0, 300.0, 150.0),
+        rows=[
+            SimpleNamespace(
+                cells=[
+                    (50.0, 50.0, 175.0, 150.0),
+                    (175.0, 50.0, 300.0, 100.0),
+                ]
+            ),
+            SimpleNamespace(
+                cells=[
+                    None,
+                    (175.0, 100.0, 300.0, 150.0),
+                ]
+            ),
+        ],
+        extract=lambda: [
+            ["Shared", "First state"],
+            ["Different", "Second state"],
+        ],
+        header=SimpleNamespace(
+            names=["Shared", "First state"],
+            external=False,
+        ),
+    )
+    monkeypatch.setattr(
+        fitz.Page,
+        "find_tables",
+        lambda self, **kwargs: SimpleNamespace(tables=[raw_table]),
+    )
+    document = fitz.open()
+    page = document.new_page(width=400, height=300)
+    projected, rejected, warnings = _extract_page_tables(
+        page,
+        page_width=400,
+        page_height=300,
+    )
+    document.close()
+
+    assert projected == []
+    assert len(rejected) == 1
+    assert rejected[0].reason == (
+        "PDF_TABLE_MERGED_TEXT_CONFLICT: row=1, column=1"
+    )
+    assert warnings == [
+        "PDF_TABLE_CELL_EVIDENCE_UNAVAILABLE: table=1, "
+        "reason=PDF_TABLE_MERGED_TEXT_CONFLICT: row=1, column=1"
+    ]
 
 
 def test_pdf_v2_table_source_passes_structured_locator_validation():

@@ -854,8 +854,22 @@ def _project_pdf_merged_table_cells(
                 f"row={slot[0]}, column={slot[1]}"
             )
 
-    projected: list[_ProjectedPdfTableCell] = []
     extracted_rows = [list(values) for values in extracted]
+    texts_by_owner: dict[
+        tuple[int, int, int, int],
+        set[str],
+    ] = {}
+    for row_index, column_index in sorted(expected_slots):
+        text = _canonicalize_pdf_table_cell_text(
+            extracted_rows[row_index - 1][column_index - 1] or ""
+        )
+        if text.strip():
+            texts_by_owner.setdefault(
+                occupied[(row_index, column_index)],
+                set(),
+            ).add(text)
+
+    projected: list[_ProjectedPdfTableCell] = []
     for key in sorted(references):
         row_start, row_end, column_start, column_end = key
         anchor = (row_start + 1, column_start + 1)
@@ -864,15 +878,7 @@ def _project_pdf_merged_table_cells(
                 "PDF_TABLE_MERGED_ANCHOR_MISSING: "
                 f"row={anchor[0]}, column={anchor[1]}"
             )
-        candidate_texts = [
-            _canonicalize_pdf_table_cell_text(
-                extracted_rows[row_index - 1][column_index - 1] or ""
-            )
-            for row_index, column_index in references[key]
-        ]
-        non_empty_texts = {
-            text for text in candidate_texts if text.strip()
-        }
+        non_empty_texts = texts_by_owner.get(key, set())
         if len(non_empty_texts) > 1:
             raise _PdfTableEvidenceUnavailable(
                 "PDF_TABLE_MERGED_TEXT_CONFLICT: "
@@ -2212,7 +2218,7 @@ def _parser_identity() -> ParserIdentity:
         mupdf_version = "unknown"
     return ParserIdentity(
         parser_name=PdfParserV2.parser_name,
-        parser_version="2.15",
+        parser_version="2.16",
         source_format="pdf",
         parser_config={
             "text_extraction": "pymupdf_dict_blocks_spans",
@@ -2235,7 +2241,7 @@ def _parser_identity() -> ParserIdentity:
                 "contained_aligned_complete_non_overlapping_v1"
             ),
             "merged_table_topology": (
-                "unique_boundary_lattice_complete_slot_coverage_v1"
+                "unique_boundary_lattice_complete_slot_coverage_v2"
             ),
             "table_block_mode": "complete_row_groups",
             "max_primary_rows_per_table_block": (

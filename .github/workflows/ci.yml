@@ -5,6 +5,20 @@ on:
   pull_request:
 
 jobs:
+  fixture-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install locked fixture tooling
+        run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev,fixtures]"
+      - name: Compile fixture generators
+        run: python -m py_compile tests/fixtures/build_pdf_merged_table_libreoffice_fixture.py
+      - name: Test fixture toolchain guards
+        run: pytest tests/test_fixture_tooling.py
+
   evaluation:
     runs-on: ubuntu-latest
     steps:

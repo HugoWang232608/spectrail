@@ -238,10 +238,12 @@ def _normalize_pdf_metadata(
 
 def _write_manifest(
     *,
+    output: Path,
+    manifest: Path,
     toolchain: dict[str, dict[str, str]],
     page_count: int,
 ) -> None:
-    with OUTPUT.open("rb") as stream:
+    with output.open("rb") as stream:
         pdf_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     payload = {
         "schema_version": "pdf_fixture_manifest_v2",
@@ -339,10 +341,31 @@ def _write_manifest(
             },
         ],
     }
-    MANIFEST.write_text(
+    manifest.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _validate_staged_pair(
+    output: Path,
+    manifest: Path,
+) -> None:
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if payload.get("fixture") != OUTPUT.name:
+        raise RuntimeError("staged fixture manifest names the wrong PDF")
+    with output.open("rb") as stream:
+        actual_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    if payload.get("pdf_sha256") != actual_sha256:
+        raise RuntimeError("staged fixture PDF does not match its manifest")
+
+
+def _publish_checked_pair(
+    staged_output: Path,
+    staged_manifest: Path,
+) -> None:
+    os.replace(staged_output, OUTPUT)
+    os.replace(staged_manifest, MANIFEST)
 
 
 def build_fixture() -> None:
@@ -351,7 +374,8 @@ def build_fixture() -> None:
     toolchain = _fixture_toolchain(producer_identity)
     _check_locked_toolchain(toolchain)
     with tempfile.TemporaryDirectory(
-        prefix="spectrail-pdf-merged-libreoffice-"
+        prefix=".spectrail-pdf-merged-libreoffice-",
+        dir=ROOT,
     ) as temporary:
         work = Path(temporary)
         source = work / "pdf_table_merged_libreoffice.docx"
@@ -363,13 +387,19 @@ def build_fixture() -> None:
         )
         page_count = _normalize_pdf_metadata(
             converted,
-            OUTPUT,
+            work / OUTPUT.name,
             producer_identity=producer_identity,
         )
-    _write_manifest(
-        toolchain=toolchain,
-        page_count=page_count,
-    )
+        staged_output = work / OUTPUT.name
+        staged_manifest = work / MANIFEST.name
+        _write_manifest(
+            output=staged_output,
+            manifest=staged_manifest,
+            toolchain=toolchain,
+            page_count=page_count,
+        )
+        _validate_staged_pair(staged_output, staged_manifest)
+        _publish_checked_pair(staged_output, staged_manifest)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ type SourceViewerProps = {
   reloadingEvidence?: boolean
   onReloadEvidence?: () => void
   rerunningEvidence?: boolean
+  evidenceRecoveryDisabled?: boolean
   onRerunEvidence?: () => void
 }
 
@@ -48,6 +49,7 @@ function SourceViewer({
   reloadingEvidence = false,
   onReloadEvidence,
   rerunningEvidence = false,
+  evidenceRecoveryDisabled = false,
   onRerunEvidence
 }: SourceViewerProps) {
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>({
@@ -230,6 +232,7 @@ function SourceViewer({
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
               rerunningEvidence={rerunningEvidence}
+              evidenceRecoveryDisabled={evidenceRecoveryDisabled}
               onRerunEvidence={onRerunEvidence}
             />
           ) : null}
@@ -246,6 +249,7 @@ function SourceViewer({
               reloadingEvidence={reloadingEvidence}
               onReloadEvidence={onReloadEvidence}
               rerunningEvidence={rerunningEvidence}
+              evidenceRecoveryDisabled={evidenceRecoveryDisabled}
               onRerunEvidence={onRerunEvidence}
             />
           ) : null}
@@ -271,6 +275,7 @@ function SourceViewer({
               <div className="block-context-unavailable" role="alert">
                 {requiresTaskRerun(blockContextError) ? (
                   <EvidenceRerunRecovery
+                    disabled={evidenceRecoveryDisabled}
                     rerunning={rerunningEvidence}
                     onRerun={onRerunEvidence}
                   />
@@ -314,6 +319,7 @@ function PageEvidencePreview({
   reloadingEvidence,
   onReloadEvidence,
   rerunningEvidence,
+  evidenceRecoveryDisabled,
   onRerunEvidence
 }: {
   taskId: string
@@ -323,6 +329,7 @@ function PageEvidencePreview({
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
   rerunningEvidence: boolean
+  evidenceRecoveryDisabled: boolean
   onRerunEvidence?: () => void
 }) {
   const locator = source.page_locator
@@ -447,6 +454,7 @@ function PageEvidencePreview({
         <div className="preview-unavailable" role="alert">
           {requiresTaskRerun(previewError) ? (
             <EvidenceRerunRecovery
+              disabled={evidenceRecoveryDisabled}
               rerunning={rerunningEvidence}
               onRerun={onRerunEvidence}
             />

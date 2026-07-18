@@ -27,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         evidenceFingerprint={evidenceFingerprint}
         blocksEvidenceFingerprint={evidenceFingerprint}
         rerunningEvidence={false}
+        evidenceRecoveryDisabled={false}
       />
     </main>
   </React.StrictMode>

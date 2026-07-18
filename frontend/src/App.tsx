@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   API_BASE_URL,
@@ -22,6 +22,7 @@ import SourceViewer from './components/SourceViewer'
 import StatusPanel from './components/StatusPanel'
 import TaskPanel from './components/TaskPanel'
 import UploadPanel from './components/UploadPanel'
+import { EVIDENCE_RERUN_CONFIRMATION } from './evidence/evidenceRecovery'
 
 type BusyAction = 'create' | 'load' | 'upload' | 'run' | 'review' | null
 
@@ -37,6 +38,7 @@ function App() {
   const [requirementSearch, setRequirementSearch] = useState('')
   const [error, setError] = useState<ApiError | null>(null)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
+  const busyActionRef = useRef<BusyAction>(null)
 
   const busy = busyAction !== null
   const requirements = reqir?.items ?? []
@@ -124,14 +126,28 @@ function App() {
   }
 
   async function handleRerunEvidence() {
-    if (!task) {
+    if (
+      !task
+      || busyActionRef.current !== null
+      || !window.confirm(EVIDENCE_RERUN_CONFIRMATION)
+    ) {
       return
     }
 
+    const taskId = task.task_id
     await perform('run', async () => {
       clearReviewEvidence()
-      await runTask(task.task_id)
-      const loaded = await getTask(task.task_id)
+      try {
+        await runTask(taskId)
+      } catch (caught) {
+        try {
+          setTask(await getTask(taskId))
+        } catch {
+          // Preserve the original pipeline error when snapshot refresh fails.
+        }
+        throw caught
+      }
+      const loaded = await getTask(taskId)
       setTask(loaded)
       await loadReqIRIfCompleted(loaded)
     })
@@ -215,6 +231,10 @@ function App() {
   }
 
   async function perform(action: Exclude<BusyAction, null>, taskAction: () => Promise<void>) {
+    if (busyActionRef.current !== null) {
+      return
+    }
+    busyActionRef.current = action
     setBusyAction(action)
     setError(null)
     try {
@@ -222,6 +242,7 @@ function App() {
     } catch (caught) {
       setError(toApiError(caught))
     } finally {
+      busyActionRef.current = null
       setBusyAction(null)
     }
   }
@@ -297,6 +318,7 @@ function App() {
                 reloadingEvidence={busyAction === 'load'}
                 onReloadEvidence={() => void handleReloadEvidence()}
                 rerunningEvidence={busyAction === 'run'}
+                evidenceRecoveryDisabled={busy}
                 onRerunEvidence={() => void handleRerunEvidence()}
               />
             </div>

@@ -20,6 +20,7 @@ type TableEvidenceViewProps = {
   reloadingEvidence: boolean
   onReloadEvidence?: () => void
   rerunningEvidence: boolean
+  evidenceRecoveryDisabled: boolean
   onRerunEvidence?: () => void
 }
 
@@ -31,6 +32,7 @@ function TableEvidenceView({
   reloadingEvidence,
   onReloadEvidence,
   rerunningEvidence,
+  evidenceRecoveryDisabled,
   onRerunEvidence
 }: TableEvidenceViewProps) {
   const locator = source.table_locator
@@ -134,6 +136,7 @@ function TableEvidenceView({
         <div className="preview-unavailable" role="alert">
           {requiresTaskRerun(error) ? (
             <EvidenceRerunRecovery
+              disabled={evidenceRecoveryDisabled}
               rerunning={rerunningEvidence}
               onRerun={onRerunEvidence}
             />

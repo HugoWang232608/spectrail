@@ -494,7 +494,12 @@ verification, and the task must be rerun with the current PDF parser.
 Review recognizes that code across canonical blocks, page previews, and table
 projections. It suppresses ineffective reload/retry actions and offers one
 `Rerun task` recovery action, which clears the stale ReqIR, blocks, and source
-selection before running the pipeline and loading the rebuilt Evidence.
+selection before running the pipeline and loading the rebuilt Evidence. The
+action is disabled while any other task operation is active and requires
+confirmation because rerunning deletes existing review decisions, edits,
+review history, and exports. If the rerun fails, Review refreshes the task
+snapshot so failed status and export availability match the backend while the
+original pipeline error remains visible.
 
 The authored-marker v1 grammar is intentionally strict and fail-closed. It
 accepts an ASCII `Table <token>` root label plus `Table <token> (continued)`,

@@ -33,10 +33,12 @@ const EVIDENCE_FINGERPRINT = 'a'.repeat(64)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
 })
 
 describe('App legacy Evidence recovery', () => {
@@ -80,6 +82,9 @@ describe('App legacy Evidence recovery', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Rerun task' }))
 
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('deletes existing review decisions')
+    )
     expect(api.runTask).toHaveBeenCalledWith('task-1')
     expect(await screen.findByText('No requirements')).toBeTruthy()
     expect(screen.getByText('No source')).toBeTruthy()
@@ -100,35 +105,126 @@ describe('App legacy Evidence recovery', () => {
     expect(screen.getAllByText('Rebuilt evidence').length).toBeGreaterThan(0)
     expect(screen.queryByText('Old parser evidence')).toBeNull()
   })
+
+  it('disables rerun while another task load is pending', async () => {
+    const pendingLoad = deferred<TaskStatusResponse>()
+    api.getTask
+      .mockResolvedValueOnce(completedTask())
+      .mockReturnValueOnce(pendingLoad.promise)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_old', 'Old parser evidence')
+    )
+    api.getBlocks.mockRejectedValueOnce({
+      code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+      message: 'legacy Evidence must be rebuilt'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    expect(await screen.findByRole('button', {
+      name: 'Rerun task'
+    })).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-2' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    await waitFor(() => expect(api.getTask).toHaveBeenCalledTimes(2))
+
+    const rerun = screen.getByRole('button', { name: 'Rerun task' })
+    expect(rerun.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(rerun)
+    expect(api.runTask).not.toHaveBeenCalled()
+    expect(confirm).not.toHaveBeenCalled()
+
+    await act(async () => {
+      pendingLoad.resolve(taskWithStatus('task-2', 'uploaded'))
+    })
+    await waitFor(() => {
+      expect(screen.getByText('task-2')).toBeTruthy()
+    })
+  })
+
+  it('refreshes the failed task snapshot while preserving the pipeline error', async () => {
+    const completed = completedTask()
+    const failed = taskWithStatus('task-1', 'failed')
+    api.getTask
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce(failed)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_old', 'Old parser evidence')
+    )
+    api.getBlocks.mockRejectedValueOnce({
+      code: 'EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED',
+      message: 'legacy Evidence must be rebuilt'
+    })
+    api.runTask.mockRejectedValueOnce({
+      code: 'PIPELINE_FAILED',
+      message: 'parser rerun failed'
+    })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Rerun task'
+    }))
+
+    const error = await screen.findByRole('alert')
+    expect(error.textContent).toContain('PIPELINE_FAILED')
+    expect(error.textContent).toContain('parser rerun failed')
+    expect(api.getTask).toHaveBeenCalledTimes(2)
+    expect(screen.getAllByText('failed').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', {
+      name: 'Download reqir.json'
+    }).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('link', {
+      name: 'Download reqir.json'
+    })).toBeNull()
+    expect(screen.getByText('No requirements')).toBeTruthy()
+    expect(screen.getByText('No source')).toBeTruthy()
+  })
 })
 
 function completedTask(): TaskStatusResponse {
+  return taskWithStatus('task-1', 'completed')
+}
+
+function taskWithStatus(
+  taskId: string,
+  status: string
+): TaskStatusResponse {
   return {
-    task_id: 'task-1',
-    status: 'completed',
+    task_id: taskId,
+    status,
     task: {
-      task_id: 'task-1',
+      task_id: taskId,
       goal: 'Review requirements',
       model_mode: 'mock',
-      status: 'completed',
+      status,
       created_at: '2026-07-18T00:00:00Z',
       updated_at: '2026-07-18T00:00:01Z',
       input_document: 'input/original.pdf',
       original_filename: 'requirements.pdf',
-      output_dir: 'outputs/tasks/task-1',
+      output_dir: `outputs/tasks/${taskId}`,
       pipeline_config: {}
     },
     manifest: {
-      task_id: 'task-1',
-      status: 'completed',
+      task_id: taskId,
+      status,
       input_document: 'input/original.pdf',
-      output_dir: 'outputs/tasks/task-1',
+      output_dir: `outputs/tasks/${taskId}`,
       model_mode: 'mock',
       started_at: '2026-07-18T00:00:00Z',
       completed_at: '2026-07-18T00:00:01Z',
       counts: {},
       outputs: {},
-      error: null,
+      error: status === 'failed' ? 'parser rerun failed' : null,
       warning_codes: [],
       zero_result_reason: null
     }

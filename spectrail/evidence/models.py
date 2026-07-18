@@ -371,25 +371,23 @@ class TableRecord(EvidenceModel):
     continuation_sequence: int | None = None
     continuation_of_table_id: str | None = None
     continuation_label: str | None = None
-    continuation_basis: Literal[
-        "legacy_header_geometry_heuristic",
-        "explicit_marker_page_edge_header_match",
-    ] | None = None
+    continuation_basis: (
+        Literal["explicit_marker_page_edge_header_match"] | None
+    ) = None
     continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
-    def identify_legacy_continuation_basis(cls, value: Any) -> Any:
+    def reject_legacy_continuation_without_basis(cls, value: Any) -> Any:
         if (
             isinstance(value, dict)
             and value.get("continuation_role") in {"start", "continuation"}
-            and "continuation_basis" not in value
+            and value.get("continuation_basis") is None
         ):
-            return {
-                **value,
-                "continuation_basis": "legacy_header_geometry_heuristic",
-            }
+            raise ValueError(
+                "EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED"
+            )
         return value
 
     @model_validator(mode="after")

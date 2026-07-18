@@ -9,6 +9,7 @@ from spectrail.tasks.store import (
     BlocksNotFoundError,
     BlocksUnavailableError,
     EvidenceVersionChangedError,
+    LegacyEvidenceContinuationRebuildRequiredError,
     PagePreviewNotFoundError,
     PagePreviewUnavailableError,
     TableEvidenceNotFoundError,
@@ -42,6 +43,12 @@ def get_blocks(
         raise _error(404, "BLOCKS_NOT_FOUND", str(exc)) from exc
     except BlocksUnavailableError as exc:
         raise _error(409, "BLOCKS_UNAVAILABLE", str(exc)) from exc
+    except LegacyEvidenceContinuationRebuildRequiredError as exc:
+        raise _error(
+            409,
+            "EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED",
+            str(exc),
+        ) from exc
     except EvidenceVersionChangedError as exc:
         raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
@@ -82,6 +89,12 @@ def get_table_evidence(
         raise _error(404, "TABLE_EVIDENCE_NOT_FOUND", str(exc)) from exc
     except TableEvidenceUnavailableError as exc:
         raise _error(409, "TABLE_EVIDENCE_UNAVAILABLE", str(exc)) from exc
+    except LegacyEvidenceContinuationRebuildRequiredError as exc:
+        raise _error(
+            409,
+            "EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED",
+            str(exc),
+        ) from exc
     except EvidenceVersionChangedError as exc:
         raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 
@@ -114,6 +127,12 @@ def get_page_preview(
         raise _error(404, "PAGE_PREVIEW_NOT_FOUND", str(exc)) from exc
     except PagePreviewUnavailableError as exc:
         raise _error(409, "PAGE_PREVIEW_UNAVAILABLE", str(exc)) from exc
+    except LegacyEvidenceContinuationRebuildRequiredError as exc:
+        raise _error(
+            409,
+            "EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED",
+            str(exc),
+        ) from exc
     except EvidenceVersionChangedError as exc:
         raise _error(409, "EVIDENCE_VERSION_CHANGED", str(exc)) from exc
 

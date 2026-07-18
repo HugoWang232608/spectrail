@@ -180,9 +180,7 @@ function TableEvidenceView({
                   ? data.continuation_role === 'start'
                     ? `${data.continuation_label} · continuation start`
                     : `${data.continuation_label} · continued from ${data.continuation_of_table_id}`
-                  : data.continuation_role === 'start'
-                    ? 'possible continuation start'
-                    : `possible continuation from ${data.continuation_of_table_id}`}
+                  : 'Continuation metadata unavailable'}
                 {' · sequence '}
                 {data.continuation_sequence}
               </span>

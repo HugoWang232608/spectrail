@@ -11,6 +11,7 @@ from spectrail.chunking import SectionAwareChunker
 from spectrail.core.io import read_json
 from spectrail.core.models import RequirementIR, SourceSpan
 from spectrail.evidence import (
+    BoundingBox,
     build_quote_match_registry,
     build_table_evidence_view,
 )
@@ -653,14 +654,11 @@ def test_pdf_v2_links_checked_multi_page_table_continuation_and_validates_source
     for table_payload in legacy_payload["tables"]:
         table_payload.pop("continuation_basis")
         table_payload.pop("continuation_label")
-    legacy_index = type(index).model_validate(legacy_payload)
-    assert [
-        table.continuation_basis for table in legacy_index.tables
-    ] == [
-        "legacy_header_geometry_heuristic",
-        "legacy_header_geometry_heuristic",
-        "legacy_header_geometry_heuristic",
-    ]
+    with pytest.raises(
+        ValueError,
+        match="EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED",
+    ):
+        type(index).model_validate(legacy_payload)
 
 
 def test_pdf_v2_does_not_link_identical_independent_edge_tables_without_marker(
@@ -701,6 +699,171 @@ def test_pdf_v2_does_not_link_identical_independent_edge_tables_without_marker(
     assert not any(
         warning.startswith("PDF_TABLE_CONTINUATION_")
         for warning in parsed.warnings
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "root_markers",
+        "continuation_markers",
+    ),
+    [
+        pytest.param(
+            [("Table 1", BoundingBox(x0=50, y0=270, x1=150, y1=280))],
+            [
+                (
+                    "Table 2 (continued)",
+                    BoundingBox(x0=50, y0=5, x1=180, y1=15),
+                )
+            ],
+            id="mismatched-table-label",
+        ),
+        pytest.param(
+            [("Table 1", BoundingBox(x0=50, y0=270, x1=150, y1=280))],
+            [
+                (
+                    "Table 1 (continued)",
+                    BoundingBox(x0=50, y0=5, x1=180, y1=15),
+                ),
+                (
+                    "Table 1 (continued)",
+                    BoundingBox(x0=200, y0=5, x1=330, y1=15),
+                ),
+            ],
+            id="duplicate-continuation-marker",
+        ),
+        pytest.param(
+            [("Table 1", BoundingBox(x0=50, y0=220, x1=150, y1=230))],
+            [
+                (
+                    "Table 1 (continued)",
+                    BoundingBox(x0=50, y0=5, x1=180, y1=15),
+                )
+            ],
+            id="root-label-beyond-allowed-distance",
+        ),
+    ],
+)
+def test_pdf_v2_requires_unique_nearby_matching_continuation_markers(
+    root_markers: list[tuple[str, BoundingBox]],
+    continuation_markers: list[tuple[str, BoundingBox]],
+):
+    root_layout = _continuation_test_layout(
+        page=1,
+        table_bbox=BoundingBox(x0=40, y0=300, x1=360, y1=380),
+        markers=root_markers,
+    )
+    continuation_layout = _continuation_test_layout(
+        page=2,
+        table_bbox=BoundingBox(x0=40, y0=30, x1=360, y1=110),
+        markers=continuation_markers,
+    )
+
+    pdf_parser_module._mark_pdf_table_continuations(
+        [root_layout, continuation_layout]
+    )
+
+    root_table = pdf_parser_module._layout_tables(root_layout)[0]
+    continuation_table = pdf_parser_module._layout_tables(
+        continuation_layout
+    )[0]
+    assert root_table.continuation_role == "single"
+    assert continuation_table.continuation_role == "single"
+    assert root_table.continuation_group_index is None
+    assert continuation_table.continuation_group_index is None
+    assert root_layout.warnings == []
+    assert continuation_layout.warnings == []
+
+
+def _continuation_test_layout(
+    *,
+    page: int,
+    table_bbox: BoundingBox,
+    markers: list[tuple[str, BoundingBox]],
+) -> pdf_parser_module._PageLayout:
+    middle_x = (table_bbox.x0 + table_bbox.x1) / 2
+    middle_y = (table_bbox.y0 + table_bbox.y1) / 2
+    table = pdf_parser_module._ProjectedPdfTable(
+        source_table_number=1,
+        bbox=table_bbox,
+        row_count=2,
+        column_count=2,
+        cells=(
+            pdf_parser_module._ProjectedPdfTableCell(
+                row_index=1,
+                column_index=1,
+                text="Requirement",
+                bbox=BoundingBox(
+                    x0=table_bbox.x0,
+                    y0=table_bbox.y0,
+                    x1=middle_x,
+                    y1=middle_y,
+                ),
+                is_header=True,
+            ),
+            pdf_parser_module._ProjectedPdfTableCell(
+                row_index=1,
+                column_index=2,
+                text="Status",
+                bbox=BoundingBox(
+                    x0=middle_x,
+                    y0=table_bbox.y0,
+                    x1=table_bbox.x1,
+                    y1=middle_y,
+                ),
+                is_header=True,
+            ),
+            pdf_parser_module._ProjectedPdfTableCell(
+                row_index=2,
+                column_index=1,
+                text=f"REQ-{page}",
+                bbox=BoundingBox(
+                    x0=table_bbox.x0,
+                    y0=middle_y,
+                    x1=middle_x,
+                    y1=table_bbox.y1,
+                ),
+                is_header=False,
+            ),
+            pdf_parser_module._ProjectedPdfTableCell(
+                row_index=2,
+                column_index=2,
+                text="Open",
+                bbox=BoundingBox(
+                    x0=middle_x,
+                    y0=middle_y,
+                    x1=table_bbox.x1,
+                    y1=table_bbox.y1,
+                ),
+                is_header=False,
+            ),
+        ),
+    )
+    blocks = [
+        pdf_parser_module._PageTextBlock(
+            text=text,
+            bbox=bbox,
+            fragments=[],
+            source_block_number=index,
+        )
+        for index, (text, bbox) in enumerate(markers, start=1)
+    ]
+    blocks.append(
+        pdf_parser_module._PageTextBlock(
+            text="Requirement | Status\n"
+            f"REQ-{page} | Open",
+            bbox=table_bbox,
+            fragments=[],
+            source_block_number=len(blocks) + 1,
+            table=table,
+        )
+    )
+    return pdf_parser_module._PageLayout(
+        page=page,
+        width=400,
+        height=400,
+        rotation=0,
+        blocks=blocks,
     )
 
 

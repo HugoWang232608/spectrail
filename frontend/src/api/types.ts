@@ -145,7 +145,6 @@ export type TableEvidenceResponse = {
   continuation_of_table_id?: string | null
   continuation_label?: string | null
   continuation_basis?:
-    | 'legacy_header_geometry_heuristic'
     | 'explicit_marker_page_edge_header_match'
     | null
   continued_header_cell_ids?: Record<string, string>

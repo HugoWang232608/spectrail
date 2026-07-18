@@ -470,9 +470,8 @@ page-local records only when all of the following evidence agrees:
 
 - exactly one complete table reaches the previous page's bottom edge and
   exactly one complete table begins at the next page's top edge;
-- the root table has one nearby stable label such as `Table 1`, and every
-  following page has exactly one matching explicit marker such as
-  `Table 1 (continued)`;
+- the root table has exactly one nearby stable label, and every following page
+  has exactly one matching explicit continuation marker;
 - both tables have the same column count;
 - their complete first-row header cells preserve canonical text, anchor
   columns, row/column spans, and normalized horizontal boundaries; and
@@ -489,9 +488,16 @@ text, and topology. A mismatch or ambiguous page edge leaves both tables as
 independent `single` records. In particular, adjacent complete tables with the
 same header and column geometry remain independent when the authored
 continuation marker is absent. Artifacts produced by the short-lived earlier
-geometry-only implementation are loaded with
-`continuation_basis=legacy_header_geometry_heuristic`; Review labels that
-lineage as only a possible continuation.
+geometry-only implementation are not silently migrated: loading fails with
+`EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED` before fingerprint
+verification, and the task must be rerun with the current PDF parser.
+
+The authored-marker v1 grammar is intentionally strict and fail-closed. It
+accepts an ASCII `Table <token>` root label plus `Table <token> (continued)`,
+`Table <token> - continued`, or `Table <token>: continued` on later pages.
+Mismatched labels, duplicate nearby markers, markers beyond the allowed
+distance, em-dash/CJK variants, and other unrecognized forms leave the tables
+independent. They are not inferred from header geometry alone.
 
 The checked `pdf_table_continuation.pdf` fixture contains a three-page chain.
 Acceptance proves page-local table identities, root header lineage, prompt

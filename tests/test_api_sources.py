@@ -19,7 +19,10 @@ from spectrail.evidence.pdf_preview import render_pdf_page
 from spectrail.api.app import create_app
 from spectrail.parsers.docx_parser import DocxParserV2
 from spectrail.parsers.pdf_parser import PdfParserV2
-from spectrail.tasks import LocalTaskStore
+from spectrail.tasks import (
+    LegacyEvidenceContinuationRebuildRequiredError,
+    LocalTaskStore,
+)
 
 
 def test_api_blocks_returns_completed_task_blocks(api_client: TestClient, completed_api_task: dict):
@@ -275,6 +278,54 @@ def test_api_table_evidence_exposes_pdf_continuation_lineage(
     assert payload["continued_header_cell_ids"] == (
         continued.continued_header_cell_ids
     )
+
+
+def test_api_rejects_legacy_pdf_continuation_before_fingerprint_validation(
+    api_client: TestClient,
+):
+    task_id, parsed = _create_completed_pdf_table_task(
+        api_client,
+        source=Path("tests/fixtures/pdf_table_continuation.pdf"),
+    )
+    assert parsed.evidence_index is not None
+    _, continued, _ = parsed.evidence_index.tables
+    task_dir = api_client.app.state.task_store.get_task_dir(task_id)
+    evidence_path = task_dir / "parsed" / "evidence_index.json"
+    legacy_payload = read_json(evidence_path)
+    for table_payload in legacy_payload["tables"]:
+        table_payload.pop("continuation_basis")
+        table_payload.pop("continuation_label")
+    write_json(evidence_path, legacy_payload)
+    store = api_client.app.state.task_store
+
+    with pytest.raises(
+        LegacyEvidenceContinuationRebuildRequiredError,
+        match="must be rebuilt with the current parser",
+    ):
+        store.read_table_evidence(
+            task_id,
+            table_id=continued.table_id,
+            block_id=continued.block_ids[0],
+            expected_evidence_fingerprint=(
+                parsed.evidence_index.evidence_fingerprint
+            ),
+        )
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/tables/{continued.table_id}"
+        f"/blocks/{continued.block_ids[0]}/evidence"
+        f"?expected_evidence_fingerprint="
+        f"{parsed.evidence_index.evidence_fingerprint}"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "EVIDENCE_LEGACY_CONTINUATION_REBUILD_REQUIRED",
+        "message": (
+            "legacy PDF table continuation Evidence must be rebuilt "
+            "with the current parser"
+        ),
+    }
 
 
 def test_api_table_evidence_preserves_repeated_header_projection(

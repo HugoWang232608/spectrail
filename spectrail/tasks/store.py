@@ -84,6 +84,10 @@ class EvidenceVersionChangedError(TaskStoreError):
     pass
 
 
+class LegacyEvidenceContinuationRebuildRequiredError(TaskStoreError):
+    pass
+
+
 # Backward-compatible import name for callers of the first table-only API.
 TableEvidenceVersionChangedError = EvidenceVersionChangedError
 
@@ -563,9 +567,20 @@ class LocalTaskStore:
                 return cache_entry
 
         try:
-            index = EvidenceIndex.model_validate(read_json(evidence_path))
+            payload = read_json(evidence_path)
+            if _requires_legacy_continuation_rebuild(payload):
+                raise LegacyEvidenceContinuationRebuildRequiredError(
+                    "legacy PDF table continuation Evidence must be rebuilt "
+                    "with the current parser"
+                )
+            index = EvidenceIndex.model_validate(payload)
             validate_evidence_fingerprint(index)
-        except (OSError, TypeError, ValueError):
+        except (
+            LegacyEvidenceContinuationRebuildRequiredError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
             self._invalidate_evidence_cache(task_id)
             raise
         cache_entry = _TaskEvidenceCacheEntry(
@@ -640,6 +655,20 @@ class LocalTaskStore:
         with self._evidence_cache_lock:
             cache_entry.source_file_signature = None
             cache_entry.source_sha256 = None
+
+
+def _requires_legacy_continuation_rebuild(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    tables = payload.get("tables")
+    if not isinstance(tables, list):
+        return False
+    return any(
+        isinstance(table, dict)
+        and table.get("continuation_role") in {"start", "continuation"}
+        and table.get("continuation_basis") is None
+        for table in tables
+    )
 
 
 def _now_iso() -> str:

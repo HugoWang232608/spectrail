@@ -63,10 +63,9 @@ class TableEvidenceView(EvidenceModel):
     continuation_sequence: int | None = None
     continuation_of_table_id: str | None = None
     continuation_label: str | None = None
-    continuation_basis: Literal[
-        "legacy_header_geometry_heuristic",
-        "explicit_marker_page_edge_header_match",
-    ] | None = None
+    continuation_basis: (
+        Literal["explicit_marker_page_edge_header_match"] | None
+    ) = None
     continued_header_cell_ids: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     rows: list[TableEvidenceRowView] = Field(default_factory=list)

@@ -32,11 +32,16 @@ outputs/pdf-corpus/pdf_corpus_report.md
 ```
 
 An existing non-empty output directory must contain the ownership marker.
-After manifest validation, the runner removes its two known report files before
-parsing any case, so an interrupted run cannot leave an earlier successful
-report looking current. A managed file or symlink is unlinked without following
-the link; a managed directory fails closed. Other files are left untouched, and
-the runner never recursively deletes the output root.
+After manifest validation, the runner removes its known final and staging paths
+before parsing any case, so an interrupted run cannot leave an earlier
+successful report looking current. A managed file or symlink is unlinked
+without following the link; a managed directory fails closed. Other files are
+left untouched, and the runner never recursively deletes the output root.
+
+Successful publication stages and validates both reports, fsyncs their content,
+then publishes Markdown followed by JSON. The JSON report is the authoritative
+machine result and is published last; Markdown is a rebuildable projection. If
+staging fails, neither final report is published.
 
 ## Manifest contract
 
@@ -46,19 +51,29 @@ Each case records:
 case_id
 document
 tier = core | extended
-source provenance, producer family, URL and redistribution status
+source provenance, normalized producer_family_id, display producer family,
+URL and redistribution status
 source_sha256
-optional expected PDF title, creator and producer metadata
+expected PDF title, creator or producer metadata for every core case
 expected parser name/version
-optional Evidence fingerprint
+optional default and platform-specific Evidence fingerprints
 typed observations
 ```
 
 Paths are resolved relative to the manifest. Source SHA-256, parser identity,
 declared PDF metadata, and an optional Evidence fingerprint are checked before
-a case can pass. This prevents `producer_family` from being only an unchecked
-label. Fingerprint changes report an intentional stale fixture instead of
-silently accepting new parser output.
+a case can pass. External documents must declare a source URL. Core cases must
+lock PDF metadata and cannot be download-only. Producer counts use the stable,
+normalized `producer_family_id`, while `producer_family` remains a display
+label. These rules prevent producer provenance from being only an unchecked
+label.
+
+Exact Evidence fingerprints default to `expected_evidence_fingerprint`. A case
+may override it in `expected_evidence_fingerprints_by_platform`, keyed by the
+reported runtime identity such as `linux-x86_64` or `darwin-arm64`. This is only
+for stable native-library geometry differences: observations and capability
+gates remain identical on every platform. Fingerprint changes report an
+intentional stale fixture instead of silently accepting new parser output.
 
 The observation types are:
 
@@ -80,10 +95,12 @@ continuation_pair
   an explicitly linked or explicitly independent pair of page-local tables
 ```
 
-Every observation declares `gate=true` by default. A report-only observation
-still contributes diagnostic metrics but cannot fail its case. This is used for
-heading inference until enough real producers are annotated to set stable
-precision/recall thresholds.
+Every observation declares `gate=true` by default. Only `heading_page` may set
+`gate=false`; all text, table, fallback, and continuation observations always
+participate in the release gate. A report-only heading still contributes
+diagnostic heading metrics but cannot fail its case. This keeps release metrics
+from being silently weakened while heading inference accumulates enough real
+producer annotations for stable precision/recall thresholds.
 
 ## Metrics and zero denominators
 
@@ -91,8 +108,8 @@ The suite reports:
 
 ```text
 case pass rate
-case count, producer-family count, external-document count and
-redistribution-reviewed count
+case count, producer-family count, external-document count,
+redistribution-reviewed count and metadata-locked case count
 gated observation pass rate and evaluated count
 selected text-source accuracy and evaluated count
 page-region availability rate and evaluated count

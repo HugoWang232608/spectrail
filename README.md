@@ -472,7 +472,12 @@ Microsoft Word, pdfTeX, LibreOffice, and ReportLab. It includes two external
 documents, simple and merged tables, authored continuation, and an adjacent
 same-shape table pair that must remain independent without authored markers.
 Source bytes, PDF creator/producer metadata, parser identity, and Evidence
-fingerprints are locked. Heading precision/recall remains report-only while
-trusted text/page, table topology, and continuation precision are release
-gates. See [docs/pdf_corpus_v1.md](docs/pdf_corpus_v1.md) for the manifest
-contract, provenance policy, metrics, and expansion plan.
+fingerprints are locked. Platform-specific fingerprint overrides are explicit
+for deterministic native-library geometry differences, and the report records
+the runtime platform identity. Core cases require metadata locks and cannot be
+download-only; external cases require a source URL; producer counts use a
+normalized producer-family ID. Only heading observations may remain
+report-only, while trusted text/page, table topology, and continuation precision
+are release gates. See [docs/pdf_corpus_v1.md](docs/pdf_corpus_v1.md) for the
+manifest contract, provenance policy, durable report publication, metrics, and
+expansion plan.

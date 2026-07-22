@@ -40,10 +40,17 @@ jobs:
         run: python -m spectrail evaluate eval/cases --output outputs/evaluation
       - name: Run real-world PDF corpus quality gate
         if: always()
-        run: >-
-          python -m spectrail evaluate-pdf-corpus
-          eval/pdf_corpus_v1/manifest.json
-          --output outputs/pdf-corpus
+        run: |
+          set +e
+          python -m spectrail evaluate-pdf-corpus \
+            eval/pdf_corpus_v1/manifest.json \
+            --output outputs/pdf-corpus
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "PDF corpus quality gate failed; report follows:"
+            cat outputs/pdf-corpus/pdf_corpus_report.md 2>/dev/null || true
+          fi
+          exit "$status"
       - name: Upload evaluation reports
         if: always()
         uses: actions/upload-artifact@v4

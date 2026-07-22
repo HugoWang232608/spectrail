@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fitz
 import pytest
 from pydantic import ValidationError
 
@@ -10,6 +11,7 @@ from spectrail.cli import main
 from spectrail.core.io import read_json, write_json
 from spectrail.evaluation.pdf_corpus import (
     PDF_CORPUS_OUTPUT_MARKER_PAYLOAD,
+    PdfCorpusCase,
     PdfCorpusManifest,
     PdfCorpusRunner,
 )
@@ -36,6 +38,8 @@ def test_checked_pdf_corpus_reports_multi_producer_structural_baseline(
     assert report["metrics"]["producer_family_count"] == 4
     assert report["metrics"]["external_document_case_count"] == 2
     assert report["metrics"]["redistribution_reviewed_case_count"] == 4
+    assert report["metrics"]["metadata_locked_case_count"] == 5
+    assert report["runtime_platform_id"]
     assert report["metrics"]["text_source_accuracy"] == 1.0
     assert report["metrics"]["page_region_availability_rate"] == 1.0
     assert report["metrics"]["selected_table_topology_precision"] == 1.0
@@ -378,6 +382,101 @@ def test_pdf_corpus_manifest_rejects_duplicate_observation_ids() -> None:
         )
 
 
+def test_pdf_corpus_core_case_requires_metadata_lock() -> None:
+    case = _case(
+        "missing-metadata",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["source"].pop("expected_pdf_metadata")
+
+    with pytest.raises(
+        ValidationError,
+        match="core PDF corpus cases require expected_pdf_metadata",
+    ):
+        PdfCorpusCase.model_validate(case)
+
+
+def test_pdf_corpus_external_source_requires_url() -> None:
+    case = _case(
+        "missing-source-url",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["source"]["provenance"] = "external_document"
+
+    with pytest.raises(
+        ValidationError,
+        match="external PDF corpus sources require source_url",
+    ):
+        PdfCorpusCase.model_validate(case)
+
+
+def test_pdf_corpus_core_case_cannot_be_download_only() -> None:
+    case = _case(
+        "download-only-core",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["source"]["redistribution_status"] = "download_only"
+
+    with pytest.raises(
+        ValidationError,
+        match="core PDF corpus cases cannot use download_only sources",
+    ):
+        PdfCorpusCase.model_validate(case)
+
+
+def test_pdf_corpus_producer_family_id_must_be_normalized() -> None:
+    case = _case(
+        "invalid-producer-family",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["source"]["producer_family_id"] = "ReportLab PDF"
+
+    with pytest.raises(ValidationError, match="producer_family_id"):
+        PdfCorpusCase.model_validate(case)
+
+
+def test_pdf_corpus_only_heading_observations_may_be_report_only() -> None:
+    case = _case(
+        "report-only-text",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [
+            {
+                "observation_id": "report-only-text",
+                "kind": "text_source",
+                "gate": False,
+                "quote": "REQ-001",
+                "page": 1,
+            }
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="only heading_page observations may use gate=false",
+    ):
+        PdfCorpusCase.model_validate(case)
+
+
+def test_pdf_corpus_platform_fingerprint_overrides_default() -> None:
+    case = _case(
+        "platform-fingerprint",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["expected_evidence_fingerprint"] = "a" * 64
+    case["expected_evidence_fingerprints_by_platform"] = {
+        "linux-x86_64": "b" * 64,
+    }
+    parsed = PdfCorpusCase.model_validate(case)
+
+    assert parsed.expected_fingerprint_for_platform("linux-x86_64") == "b" * 64
+    assert parsed.expected_fingerprint_for_platform("darwin-arm64") == "a" * 64
+
+
 def test_pdf_corpus_output_refuses_nonempty_unowned_directory(
     tmp_path: Path,
 ) -> None:
@@ -478,6 +577,57 @@ def test_pdf_corpus_rejects_managed_report_directory_before_cleanup(
     assert markdown_report.read_text(encoding="utf-8") == "# stale success\n"
 
 
+def test_pdf_corpus_accepts_and_upgrades_legacy_output_marker(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "owned"
+    output.mkdir()
+    write_json(
+        output / ".spectrail-pdf-corpus-output",
+        {
+            "schema_version": "spectrail_pdf_corpus_output_v1",
+            "managed_paths": [
+                "pdf_corpus_report.json",
+                "pdf_corpus_report.md",
+            ],
+        },
+    )
+
+    result = PdfCorpusRunner().run(
+        "eval/pdf_corpus_v1/manifest.json",
+        output,
+    )
+
+    assert result["passed"] is True
+    assert read_json(output / ".spectrail-pdf-corpus-output") == (
+        PDF_CORPUS_OUTPUT_MARKER_PAYLOAD
+    )
+
+
+def test_pdf_corpus_does_not_publish_partial_report_when_staging_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "output"
+
+    def fail_markdown_write(path: Path, value: str) -> None:
+        del path, value
+        raise OSError("simulated Markdown staging failure")
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.pdf_corpus._write_text_durable",
+        fail_markdown_write,
+    )
+
+    with pytest.raises(OSError, match="simulated Markdown staging failure"):
+        PdfCorpusRunner().run("eval/pdf_corpus_v1/manifest.json", output)
+
+    assert not (output / "pdf_corpus_report.json").exists()
+    assert not (output / "pdf_corpus_report.md").exists()
+    assert not (output / ".pdf_corpus_report.json.staged").exists()
+    assert not (output / ".pdf_corpus_report.md.staged").exists()
+
+
 def test_pdf_corpus_unknown_threshold_is_a_configuration_error(
     tmp_path: Path,
 ) -> None:
@@ -507,15 +657,32 @@ def _case(
     document: Path,
     observations: list[dict],
 ) -> dict:
+    with fitz.open(document) as pdf:
+        metadata = {
+            name: pdf.metadata.get(name)
+            for name in ("creator", "producer", "title")
+            if pdf.metadata.get(name)
+        }
     return {
         "case_id": case_id,
         "document": document.as_posix(),
         "source": {
             "provenance": "project_fixture",
+            "producer_family_id": "test_fixture",
             "producer_family": "test fixture",
             "redistribution_status": "redistribution_permitted",
             "license_note": "Project fixture.",
             "source_sha256": sha256_file(document),
+            "expected_pdf_metadata": metadata,
         },
         "observations": observations,
+    }
+
+
+def _heading_observation() -> dict:
+    return {
+        "observation_id": "heading",
+        "kind": "heading_page",
+        "page": 1,
+        "expected_headings": [],
     }

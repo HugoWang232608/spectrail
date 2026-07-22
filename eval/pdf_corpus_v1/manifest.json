@@ -13,6 +13,7 @@
     "producer_family_count_min": 4,
     "external_document_case_count_min": 2,
     "redistribution_reviewed_case_count_min": 4,
+    "metadata_locked_case_count_min": 5,
     "gate_observation_pass_rate_min": 1.0,
     "gate_observation_evaluated_count_min": 20,
     "text_source_accuracy_min": 1.0,
@@ -33,6 +34,7 @@
       "tier": "core",
       "source": {
         "provenance": "external_document",
+        "producer_family_id": "microsoft_word_office365",
         "producer_family": "Microsoft Word for Office 365",
         "source_url": "https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf",
         "redistribution_status": "existing_checked_fixture_terms_unverified",
@@ -140,6 +142,7 @@
       "tier": "core",
       "source": {
         "provenance": "external_document",
+        "producer_family_id": "pdftex",
         "producer_family": "pdfTeX",
         "source_url": "https://mirrors.ctan.org/macros/latex/contrib/booktabs/booktabs.pdf",
         "redistribution_status": "redistribution_permitted",
@@ -153,6 +156,9 @@
       "expected_parser_name": "pdf_parser_v2",
       "expected_parser_version": "2.18",
       "expected_evidence_fingerprint": "d03739e3301c1032ce3550a1605e00815f12ccb7482395f5c76a880d5075a438",
+      "expected_evidence_fingerprints_by_platform": {
+        "linux-x86_64": "9371aa3042eff00b07c4ab41ad288780f2a68524934b2772f8e4e6ca778f25f1"
+      },
       "observations": [
         {
           "observation_id": "abstract-source",
@@ -216,6 +222,7 @@
       "tier": "core",
       "source": {
         "provenance": "project_fixture",
+        "producer_family_id": "libreoffice",
         "producer_family": "LibreOffice",
         "redistribution_status": "redistribution_permitted",
         "license_note": "Project-authored Apache-2.0 fixture generated through LibreOffice; the locked toolchain is recorded in pdf_table_merged_libreoffice.manifest.json.",
@@ -290,6 +297,7 @@
       "tier": "core",
       "source": {
         "provenance": "project_fixture",
+        "producer_family_id": "reportlab",
         "producer_family": "ReportLab",
         "redistribution_status": "redistribution_permitted",
         "license_note": "Project-authored Apache-2.0 deterministic simple-table fixture.",
@@ -345,6 +353,7 @@
       "tier": "core",
       "source": {
         "provenance": "project_fixture",
+        "producer_family_id": "reportlab",
         "producer_family": "ReportLab",
         "redistribution_status": "redistribution_permitted",
         "license_note": "Project-authored Apache-2.0 deterministic authored-continuation fixture.",

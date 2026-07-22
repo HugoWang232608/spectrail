@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import platform
+import re
 from collections import Counter
 from json import JSONDecodeError
 from pathlib import Path
@@ -16,12 +19,23 @@ from spectrail.parsers import parse_document
 
 PDF_CORPUS_OUTPUT_MARKER = ".spectrail-pdf-corpus-output"
 PDF_CORPUS_OUTPUT_MARKER_PAYLOAD = {
-    "schema_version": "spectrail_pdf_corpus_output_v1",
+    "schema_version": "spectrail_pdf_corpus_output_v2",
     "managed_paths": [
         "pdf_corpus_report.json",
         "pdf_corpus_report.md",
+        ".pdf_corpus_report.json.staged",
+        ".pdf_corpus_report.md.staged",
     ],
 }
+PDF_CORPUS_OUTPUT_MARKER_LEGACY_PAYLOADS = (
+    {
+        "schema_version": "spectrail_pdf_corpus_output_v1",
+        "managed_paths": [
+            "pdf_corpus_report.json",
+            "pdf_corpus_report.md",
+        ],
+    },
+)
 PDF_CORPUS_METRIC_NAMES = frozenset(
     {
         "case_pass_rate",
@@ -29,6 +43,7 @@ PDF_CORPUS_METRIC_NAMES = frozenset(
         "producer_family_count",
         "external_document_case_count",
         "redistribution_reviewed_case_count",
+        "metadata_locked_case_count",
         "gate_observation_pass_rate",
         "gate_observation_evaluated_count",
         "text_source_accuracy",
@@ -68,6 +83,10 @@ class PdfMetadataExpectation(PdfCorpusModel):
 
 class PdfCorpusSource(PdfCorpusModel):
     provenance: Literal["external_document", "project_fixture"]
+    producer_family_id: str = Field(
+        min_length=1,
+        pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)*$",
+    )
     producer_family: str = Field(min_length=1)
     source_url: str | None = None
     redistribution_status: Literal[
@@ -86,6 +105,12 @@ class PdfCorpusSource(PdfCorpusModel):
         if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
             raise ValueError("source_sha256 must be a lowercase SHA-256")
         return value
+
+    @model_validator(mode="after")
+    def validate_external_provenance(self) -> "PdfCorpusSource":
+        if self.provenance == "external_document" and not self.source_url:
+            raise ValueError("external PDF corpus sources require source_url")
+        return self
 
 
 class ObservationBase(PdfCorpusModel):
@@ -173,6 +198,9 @@ class PdfCorpusCase(PdfCorpusModel):
     expected_parser_name: str = "pdf_parser_v2"
     expected_parser_version: str | None = None
     expected_evidence_fingerprint: str | None = None
+    expected_evidence_fingerprints_by_platform: dict[str, str] = Field(
+        default_factory=dict
+    )
     observations: list[PdfCorpusObservation] = Field(min_length=1)
 
     @field_validator("expected_evidence_fingerprint")
@@ -190,12 +218,61 @@ class PdfCorpusCase(PdfCorpusModel):
             )
         return value
 
+    @field_validator("expected_evidence_fingerprints_by_platform")
+    @classmethod
+    def validate_platform_fingerprints(
+        cls,
+        value: dict[str, str],
+    ) -> dict[str, str]:
+        for platform_id, fingerprint in value.items():
+            if not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", platform_id):
+                raise ValueError(
+                    "Evidence fingerprint platform IDs must be normalized: "
+                    f"{platform_id!r}"
+                )
+            if len(fingerprint) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in fingerprint
+            ):
+                raise ValueError(
+                    "platform Evidence fingerprints must be lowercase SHA-256"
+                )
+        return value
+
     @model_validator(mode="after")
     def validate_observation_ids(self) -> "PdfCorpusCase":
         identifiers = [item.observation_id for item in self.observations]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("observation IDs must be unique within a corpus case")
+        if self.tier == "core":
+            if self.source.expected_pdf_metadata is None:
+                raise ValueError(
+                    "core PDF corpus cases require expected_pdf_metadata"
+                )
+            if self.source.redistribution_status == "download_only":
+                raise ValueError(
+                    "core PDF corpus cases cannot use download_only sources"
+                )
+        invalid_report_only = [
+            item.observation_id
+            for item in self.observations
+            if not item.gate and not isinstance(item, HeadingPageObservation)
+        ]
+        if invalid_report_only:
+            raise ValueError(
+                "only heading_page observations may use gate=false: "
+                + ", ".join(invalid_report_only)
+            )
         return self
+
+    def expected_fingerprint_for_platform(
+        self,
+        platform_id: str,
+    ) -> str | None:
+        return self.expected_evidence_fingerprints_by_platform.get(
+            platform_id,
+            self.expected_evidence_fingerprint,
+        )
 
 
 class PdfCorpusManifest(PdfCorpusModel):
@@ -277,6 +354,7 @@ class PdfCorpusRunner:
             self._run_case(case, manifest_file.parent)
             for case in selected_cases
         ]
+        runtime_platform_id = _runtime_platform_id()
         metrics = _build_suite_metrics(reports)
         threshold_results = _threshold_results(metrics, manifest.thresholds)
         cases_passed = sum(report["passed"] for report in reports)
@@ -291,15 +369,12 @@ class PdfCorpusRunner:
                 and all(item["passed"] for item in threshold_results.values())
             ),
             "include_extended": include_extended,
+            "runtime_platform_id": runtime_platform_id,
             "metrics": metrics,
             "threshold_results": threshold_results,
             "cases": reports,
         }
-        write_json(output / "pdf_corpus_report.json", suite)
-        (output / "pdf_corpus_report.md").write_text(
-            _suite_markdown(suite),
-            encoding="utf-8",
-        )
+        _publish_reports(output, suite)
         return suite
 
     def _run_case(
@@ -334,11 +409,13 @@ class PdfCorpusRunner:
             )
             actual_evidence_fingerprint = evidence_index.evidence_fingerprint
             actual_source_sha256 = evidence_index.source_sha256
+            runtime_platform_id = _runtime_platform_id()
             identity_issues = _identity_issues(
                 case,
                 parsed,
                 evidence_index,
                 actual_pdf_metadata,
+                runtime_platform_id,
             )
             observation_results = [
                 _evaluate_observation(item, parsed.blocks, evidence_index)
@@ -370,6 +447,7 @@ class PdfCorpusRunner:
             "actual_evidence_fingerprint": actual_evidence_fingerprint,
             "actual_source_sha256": actual_source_sha256,
             "actual_pdf_metadata": actual_pdf_metadata,
+            "runtime_platform_id": _runtime_platform_id(),
             "error": error,
             "observation_count": len(case.observations),
             "gated_observation_count": len(gated_results),
@@ -385,6 +463,7 @@ def _identity_issues(
     parsed: Any,
     evidence_index: EvidenceIndex,
     pdf_metadata: dict[str, Any],
+    runtime_platform_id: str,
 ) -> list[str]:
     issues: list[str] = []
     identity = parsed.parser_identity
@@ -408,14 +487,17 @@ def _identity_issues(
             f"expected={case.source.source_sha256!r} "
             f"actual={evidence_index.source_sha256!r}"
         )
+    expected_fingerprint = case.expected_fingerprint_for_platform(
+        runtime_platform_id
+    )
     if (
-        case.expected_evidence_fingerprint is not None
-        and evidence_index.evidence_fingerprint
-        != case.expected_evidence_fingerprint
+        expected_fingerprint is not None
+        and evidence_index.evidence_fingerprint != expected_fingerprint
     ):
         issues.append(
             "evidence_fingerprint "
-            f"expected={case.expected_evidence_fingerprint!r} "
+            f"platform={runtime_platform_id!r} "
+            f"expected={expected_fingerprint!r} "
             f"actual={evidence_index.evidence_fingerprint!r}"
         )
     expected_metadata = case.source.expected_pdf_metadata
@@ -836,7 +918,7 @@ def _build_suite_metrics(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "case_evaluated_count": len(reports),
         "producer_family_count": len(
             {
-                report["source"]["producer_family"]
+                report["source"]["producer_family_id"]
                 for report in reports
             }
         ),
@@ -847,6 +929,10 @@ def _build_suite_metrics(reports: list[dict[str, Any]]) -> dict[str, Any]:
         "redistribution_reviewed_case_count": sum(
             report["source"]["redistribution_status"]
             in {"public_domain", "redistribution_permitted"}
+            for report in reports
+        ),
+        "metadata_locked_case_count": sum(
+            report["source"]["expected_pdf_metadata"] is not None
             for report in reports
         ),
         "gate_observation_pass_rate": _ratio(
@@ -978,7 +1064,7 @@ def _prepare_output(output: Path) -> Path:
             )
     else:
         output.mkdir(parents=True)
-    if not _valid_output_marker(marker):
+    if _read_output_marker(marker) != PDF_CORPUS_OUTPUT_MARKER_PAYLOAD:
         write_json(marker, PDF_CORPUS_OUTPUT_MARKER_PAYLOAD)
     managed_targets = [
         output / relative
@@ -1001,12 +1087,78 @@ def _prepare_output(output: Path) -> Path:
 
 
 def _valid_output_marker(marker: Path) -> bool:
+    payload = _read_output_marker(marker)
+    return payload == PDF_CORPUS_OUTPUT_MARKER_PAYLOAD or payload in (
+        PDF_CORPUS_OUTPUT_MARKER_LEGACY_PAYLOADS
+    )
+
+
+def _read_output_marker(marker: Path) -> Any | None:
     if marker.is_symlink() or not marker.is_file():
-        return False
+        return None
     try:
-        return read_json(marker) == PDF_CORPUS_OUTPUT_MARKER_PAYLOAD
+        return read_json(marker)
     except (OSError, UnicodeError, JSONDecodeError):
-        return False
+        return None
+
+
+def _runtime_platform_id() -> str:
+    system = re.sub(r"[^a-z0-9]+", "_", platform.system().lower()).strip("_")
+    machine = re.sub(r"[^a-z0-9]+", "_", platform.machine().lower()).strip("_")
+    machine = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(machine, machine)
+    return f"{system}-{machine}"
+
+
+def _publish_reports(output: Path, suite: dict[str, Any]) -> None:
+    json_staged = output / ".pdf_corpus_report.json.staged"
+    markdown_staged = output / ".pdf_corpus_report.md.staged"
+    json_target = output / "pdf_corpus_report.json"
+    markdown_target = output / "pdf_corpus_report.md"
+    markdown = _suite_markdown(suite)
+    try:
+        write_json(json_staged, suite)
+        _fsync_file(json_staged)
+        _write_text_durable(markdown_staged, markdown)
+        if read_json(json_staged) != suite:
+            raise ValueError("PDF_CORPUS_STAGED_JSON_INVALID")
+        if markdown_staged.read_text(encoding="utf-8") != markdown:
+            raise ValueError("PDF_CORPUS_STAGED_MARKDOWN_INVALID")
+
+        # Markdown is a rebuildable projection. Publish it first and the
+        # authoritative JSON last, so JSON presence marks a complete result.
+        os.replace(markdown_staged, markdown_target)
+        _fsync_directory(output)
+        os.replace(json_staged, json_target)
+        _fsync_directory(output)
+    finally:
+        for staged in (json_staged, markdown_staged):
+            if staged.is_symlink() or staged.is_file():
+                staged.unlink()
+
+
+def _write_text_durable(path: Path, value: str) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(value)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _suite_markdown(suite: dict[str, Any]) -> str:
@@ -1015,6 +1167,7 @@ def _suite_markdown(suite: dict[str, Any]) -> str:
         "",
         f"- Passed: {suite['passed']}",
         f"- Cases: {suite['case_passed']} / {suite['case_count']}",
+        f"- Runtime platform: {suite['runtime_platform_id']}",
         "",
         "## Metrics",
         "",

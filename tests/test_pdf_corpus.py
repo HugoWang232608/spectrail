@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import fitz
@@ -397,6 +398,23 @@ def test_pdf_corpus_core_case_requires_metadata_lock() -> None:
         PdfCorpusCase.model_validate(case)
 
 
+def test_pdf_corpus_core_metadata_must_lock_creator_or_producer() -> None:
+    case = _case(
+        "title-only-metadata",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["source"]["expected_pdf_metadata"] = {
+        "title": "SpecTrail PDF table evidence fixture",
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="core PDF corpus metadata must lock creator or producer",
+    ):
+        PdfCorpusCase.model_validate(case)
+
+
 def test_pdf_corpus_external_source_requires_url() -> None:
     case = _case(
         "missing-source-url",
@@ -475,6 +493,23 @@ def test_pdf_corpus_platform_fingerprint_overrides_default() -> None:
 
     assert parsed.expected_fingerprint_for_platform("linux-x86_64") == "b" * 64
     assert parsed.expected_fingerprint_for_platform("darwin-arm64") == "a" * 64
+
+
+def test_pdf_corpus_platform_fingerprint_requires_default() -> None:
+    case = _case(
+        "platform-fingerprint-without-default",
+        Path("tests/fixtures/pdf_table_requirements.pdf"),
+        [_heading_observation()],
+    )
+    case["expected_evidence_fingerprints_by_platform"] = {
+        "linux-x86_64": "b" * 64,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="platform Evidence fingerprint overrides require a default",
+    ):
+        PdfCorpusCase.model_validate(case)
 
 
 def test_pdf_corpus_output_refuses_nonempty_unowned_directory(
@@ -624,6 +659,35 @@ def test_pdf_corpus_does_not_publish_partial_report_when_staging_fails(
 
     assert not (output / "pdf_corpus_report.json").exists()
     assert not (output / "pdf_corpus_report.md").exists()
+    assert not (output / ".pdf_corpus_report.json.staged").exists()
+    assert not (output / ".pdf_corpus_report.md.staged").exists()
+
+
+def test_pdf_corpus_json_remains_absent_when_final_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "output"
+    real_replace = os.replace
+
+    def fail_json_replace(source: Path, target: Path) -> None:
+        if Path(source).name == ".pdf_corpus_report.json.staged":
+            raise OSError("simulated authoritative JSON publication failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(
+        "spectrail.evaluation.pdf_corpus.os.replace",
+        fail_json_replace,
+    )
+
+    with pytest.raises(
+        OSError,
+        match="simulated authoritative JSON publication failure",
+    ):
+        PdfCorpusRunner().run("eval/pdf_corpus_v1/manifest.json", output)
+
+    assert not (output / "pdf_corpus_report.json").exists()
+    assert (output / "pdf_corpus_report.md").is_file()
     assert not (output / ".pdf_corpus_report.json.staged").exists()
     assert not (output / ".pdf_corpus_report.md.staged").exists()
 

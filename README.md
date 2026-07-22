@@ -474,9 +474,11 @@ same-shape table pair that must remain independent without authored markers.
 Source bytes, PDF creator/producer metadata, parser identity, and Evidence
 fingerprints are locked. Platform-specific fingerprint overrides are explicit
 for deterministic native-library geometry differences, and the report records
-the runtime platform identity. Core cases require metadata locks and cannot be
-download-only; external cases require a source URL; producer counts use a
-normalized producer-family ID. Only heading observations may remain
+the runtime platform identity. Core cases must lock PDF creator or producer
+metadata and cannot be download-only; external cases require a source URL;
+producer counts use a normalized producer-family ID. Platform overrides also
+require a default fingerprint, so unlisted systems cannot skip exact identity
+validation. Only heading observations may remain
 report-only, while trusted text/page, table topology, and continuation precision
 are release gates. See [docs/pdf_corpus_v1.md](docs/pdf_corpus_v1.md) for the
 manifest contract, provenance policy, durable report publication, metrics, and

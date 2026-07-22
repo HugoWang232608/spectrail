@@ -245,14 +245,27 @@ class PdfCorpusCase(PdfCorpusModel):
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("observation IDs must be unique within a corpus case")
         if self.tier == "core":
-            if self.source.expected_pdf_metadata is None:
+            metadata = self.source.expected_pdf_metadata
+            if metadata is None:
                 raise ValueError(
                     "core PDF corpus cases require expected_pdf_metadata"
+                )
+            if not any((metadata.creator, metadata.producer)):
+                raise ValueError(
+                    "core PDF corpus metadata must lock creator or producer"
                 )
             if self.source.redistribution_status == "download_only":
                 raise ValueError(
                     "core PDF corpus cases cannot use download_only sources"
                 )
+        if (
+            self.expected_evidence_fingerprints_by_platform
+            and self.expected_evidence_fingerprint is None
+        ):
+            raise ValueError(
+                "platform Evidence fingerprint overrides require a default "
+                "expected_evidence_fingerprint"
+            )
         invalid_report_only = [
             item.observation_id
             for item in self.observations

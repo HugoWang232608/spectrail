@@ -54,7 +54,8 @@ tier = core | extended
 source provenance, normalized producer_family_id, display producer family,
 URL and redistribution status
 source_sha256
-expected PDF title, creator or producer metadata for every core case
+expected PDF creator or producer metadata for every core case, with title as
+an optional additional identity field
 expected parser name/version
 optional default and platform-specific Evidence fingerprints
 typed observations
@@ -63,17 +64,20 @@ typed observations
 Paths are resolved relative to the manifest. Source SHA-256, parser identity,
 declared PDF metadata, and an optional Evidence fingerprint are checked before
 a case can pass. External documents must declare a source URL. Core cases must
-lock PDF metadata and cannot be download-only. Producer counts use the stable,
-normalized `producer_family_id`, while `producer_family` remains a display
-label. These rules prevent producer provenance from being only an unchecked
-label.
+lock at least one of PDF `creator` or `producer` and cannot be download-only;
+`title` alone is not accepted as producer provenance. Producer counts use the
+stable, normalized `producer_family_id`, while `producer_family` remains a
+display label. These rules prevent producer provenance from being only an
+unchecked label.
 
 Exact Evidence fingerprints default to `expected_evidence_fingerprint`. A case
 may override it in `expected_evidence_fingerprints_by_platform`, keyed by the
 reported runtime identity such as `linux-x86_64` or `darwin-arm64`. This is only
 for stable native-library geometry differences: observations and capability
-gates remain identical on every platform. Fingerprint changes report an
-intentional stale fixture instead of silently accepting new parser output.
+gates remain identical on every platform. Platform overrides require a default
+fingerprint so an unlisted platform still performs exact identity validation.
+Fingerprint changes report an intentional stale fixture instead of silently
+accepting new parser output.
 
 The observation types are:
 

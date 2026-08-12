@@ -320,7 +320,9 @@ The external PDF fixture `tests/fixtures/ieee29148_srs_example.pdf` is downloade
 https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf
 ```
 
-It is used only for parser smoke testing with a real text-based SRS PDF; the mock end-to-end pipeline demos use the project-authored `docs/sample_srs.*` files so source block IDs stay aligned with `fixtures/mock_reqir_response.json`.
+It is used only for parser smoke testing with a real text-based SRS PDF; the
+mock end-to-end pipeline demos use the project-authored `docs/sample_srs.*`
+files so source block IDs stay aligned with the bundled mock response fixture.
 
 Format boundaries:
 

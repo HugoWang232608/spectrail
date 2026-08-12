@@ -52,7 +52,9 @@ restoration remain out of scope.
 
 ## Mock Fixture Constraint
 
-The current `MockModel` reads `fixtures/mock_reqir_response.json` and ignores the document text. That fixture is intentionally bound to `source_block_id` values such as `blk_0006`.
+The current `MockModel` reads the package-bundled `mock_reqir_response.json`
+and ignores the document text. That fixture is intentionally bound to
+`source_block_id` values such as `blk_0006`.
 
 Because `SourceQuoteValidator` checks each quote inside the referenced block, P2 end-to-end tests generate DOCX and PDF fixtures from `docs/sample_srs.md` blocks. This keeps block order aligned with the Markdown sample and proves the full chain:
 

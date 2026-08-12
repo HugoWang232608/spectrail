@@ -8,6 +8,7 @@ from spectrail.agent.fixtures import (
     resolve_bundled_agent_fixture,
 )
 from spectrail.llm.recorded_agent_planner import RecordedAgentPlanner
+from spectrail.llm.mock_model import MockModel
 
 
 EXPECTED_AGENT_FIXTURES = {
@@ -31,6 +32,13 @@ def test_bundled_agent_fixture_set_is_complete_and_loadable():
     assert fixture is not None
     assert fixture.parent == BUNDLED_AGENT_FIXTURE_ROOT
     assert RecordedAgentPlanner(fixture).fixture.steps
+
+
+def test_default_mock_fixture_is_package_owned_and_loadable():
+    fixture = MockModel().fixture_path
+
+    assert fixture == BUNDLED_AGENT_FIXTURE_ROOT.parent / "mock_reqir_response.json"
+    assert fixture.is_file()
 
 
 @pytest.mark.parametrize(
@@ -64,4 +72,5 @@ def test_agent_fixture_package_data_is_declared():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
     assert '[tool.setuptools.package-data]' in pyproject
+    assert '"spectrail.fixtures" = ["*.json"]' in pyproject
     assert '"spectrail.fixtures.agent" = ["*.json"]' in pyproject

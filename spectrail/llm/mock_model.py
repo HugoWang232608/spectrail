@@ -10,8 +10,14 @@ from spectrail.llm.prompt_builder import CHUNKED_PROMPT_VERSION, PROMPT_VERSION,
 class MockModel:
     model_mode = "mock"
 
-    def __init__(self, fixture_path: str | Path = "fixtures/mock_reqir_response.json") -> None:
-        self.fixture_path = Path(fixture_path)
+    def __init__(self, fixture_path: str | Path | None = None) -> None:
+        self.fixture_path = (
+            Path(fixture_path)
+            if fixture_path is not None
+            else Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "mock_reqir_response.json"
+        )
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         payload = read_json(self.fixture_path)

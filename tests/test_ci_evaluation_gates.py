@@ -23,3 +23,5 @@ def test_ci_builds_and_verifies_bundled_agent_fixture_wheel():
         "python scripts/verify_agent_fixture_wheel.py "
         "dist/spectrail-*.whl"
     ) in workflow
+    assert "name: Smoke test installed wheel" in workflow
+    assert "scripts/smoke_installed_wheel.py" in workflow

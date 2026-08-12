@@ -8,10 +8,11 @@ from spectrail.api.routes import exports, review, sources, tasks
 from spectrail.api.transaction_errors import task_transaction_error_detail
 from spectrail.task_transactions import TaskTransactionError
 from spectrail.tasks import LocalTaskStore, TaskTransactionInProgressError
+from spectrail import __version__
 
 
 def create_app(task_store: LocalTaskStore | None = None) -> FastAPI:
-    app = FastAPI(title="SpecTrail API", version="0.1.0")
+    app = FastAPI(title="SpecTrail API", version=__version__)
     app.state.task_store = task_store or LocalTaskStore()
     app.add_middleware(
         CORSMiddleware,

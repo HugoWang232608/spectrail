@@ -53,5 +53,5 @@ def test_mock_fixture_covers_markdown_block_types():
 
 
 def test_fixture_items_are_parseable_requirement_candidates():
-    payload = read_json("fixtures/mock_reqir_response.json")
+    payload = read_json("spectrail/fixtures/mock_reqir_response.json")
     assert len(payload["items"]) >= 14

@@ -30,7 +30,7 @@
         "blk_0013", "blk_0014", "blk_0015", "blk_0016", "blk_0017", "blk_0018",
         "blk_0019", "blk_0020", "blk_0021", "blk_0022"
       ],
-      "fixture": "../../../mock_reqir_response.json"
+      "fixture": "../../../../spectrail/fixtures/mock_reqir_response.json"
     },
     {
       "chunk_id": "chk_00000002",

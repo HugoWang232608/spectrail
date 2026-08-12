@@ -88,6 +88,13 @@ jobs:
         run: |
           python -m pip wheel --no-deps --wheel-dir dist .
           python scripts/verify_agent_fixture_wheel.py dist/spectrail-*.whl
+      - name: Smoke test installed wheel
+        run: |
+          python -m venv --system-site-packages .wheel-smoke-venv
+          .wheel-smoke-venv/bin/python -m pip install \
+            --no-deps --force-reinstall dist/spectrail-*.whl
+          .wheel-smoke-venv/bin/python scripts/smoke_installed_wheel.py \
+            docs/sample_srs.md
       - name: Run deterministic release smoke pipelines
         run: |
           python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo

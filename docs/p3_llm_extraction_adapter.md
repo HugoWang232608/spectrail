@@ -6,7 +6,7 @@ P3 adds a small model-client layer between parsed documents and ReqIR extraction
 
 ```text
 mock
-  Uses fixtures/mock_reqir_response.json.
+  Uses the package-bundled `mock_reqir_response.json`.
   Deterministic and intended for CI, demos, and regression tests.
 
 recorded

@@ -1,0 +1,118 @@
+{
+  "schema_version": "real_world_agent_corpus_v1",
+  "name": "SpecTrail v0.9 fixed-vs-Agent real-world corpus",
+  "downloaded_at": "2026-08-13",
+  "redistribution_policy": "External documents are fetched into the gitignored outputs directory and are not committed.",
+  "documents": [
+    {
+      "case_id": "openspec_conventions_md",
+      "filename": "01_openspec_conventions.md",
+      "source_url": "https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/openspec/specs/openspec-conventions/spec.md",
+      "source_page": "https://github.com/Fission-AI/OpenSpec/blob/main/openspec/specs/openspec-conventions/spec.md",
+      "sha256": "b6730156d02c1a04722d6065cd509a2c620cee5d35f4afe7c39d710911aca861",
+      "format": "markdown",
+      "length_class": "short",
+      "structure_class": "structured_behavioral_spec",
+      "selection_reason": "Compact SHALL/GIVEN/WHEN/THEN specification with explicit requirement headings."
+    },
+    {
+      "case_id": "business_requirements_template_md",
+      "filename": "02_business_requirements_template.md",
+      "source_url": "https://raw.githubusercontent.com/documize/document-templates/master/project-management/requirements-capture.md",
+      "source_page": "https://github.com/documize/document-templates/blob/master/project-management/requirements-capture.md",
+      "sha256": "d4092e858d71f38f7f217169d6a6db4d209a51ec55430435486b0d2f566f05b9",
+      "format": "markdown",
+      "length_class": "medium",
+      "structure_class": "poorly_filled_template",
+      "selection_reason": "Real business-requirements template containing guidance, placeholders, run-on headings, and almost no filled requirements."
+    },
+    {
+      "case_id": "csv_spec_md",
+      "filename": "03_csv_spec.md",
+      "source_url": "https://raw.githubusercontent.com/parsecsv/csv-spec/master/csv-spec.md",
+      "source_page": "https://github.com/parsecsv/csv-spec/blob/master/csv-spec.md",
+      "sha256": "cc2bfe9db68be2ea2f89f0baf3f41fd40132b1b1495a820a0c0b931df564f7e2",
+      "format": "markdown",
+      "length_class": "short",
+      "structure_class": "normative_technical_spec",
+      "selection_reason": "Compact technical specification mixing prose, examples, and RFC 2119 normative language."
+    },
+    {
+      "case_id": "eu_age_verification_md",
+      "filename": "04_eu_age_verification.md",
+      "source_url": "https://raw.githubusercontent.com/eu-digital-identity-wallet/av-doc-technical-specification/main/docs/architecture-and-technical-specifications.md",
+      "source_page": "https://github.com/eu-digital-identity-wallet/av-doc-technical-specification/blob/main/docs/architecture-and-technical-specifications.md",
+      "sha256": "532a3e7182cded00c4858df916d7ddc72595aed44ab63b3bbd58dfd37ebf96e7",
+      "format": "markdown",
+      "length_class": "long",
+      "structure_class": "mixed_architecture_and_requirements",
+      "selection_reason": "Long official architecture/SRS document with a normative high-level requirements section."
+    },
+    {
+      "case_id": "eudi_security_controls_md",
+      "filename": "05_eudi_security_controls.md",
+      "source_url": "https://raw.githubusercontent.com/eu-digital-identity-wallet/eudi-doc-testing-application/main/doc/security/EUDI-Wallet-NiScy_Security_Requirements_and_Controls_Documentation.md",
+      "source_page": "https://github.com/eu-digital-identity-wallet/eudi-doc-testing-application/blob/main/doc/security/EUDI-Wallet-NiScy_Security_Requirements_and_Controls_Documentation.md",
+      "sha256": "9a21bbacd6b45002b03e7c2fb8ba81bceff0cb94d48a8a4556fecd427a1c00ac",
+      "format": "markdown",
+      "length_class": "long",
+      "structure_class": "html_table_heavy_markdown",
+      "selection_reason": "Large official security requirements document dominated by embedded HTML tables."
+    },
+    {
+      "case_id": "business_requirements_template_docx",
+      "filename": "06_business_requirements_template.docx",
+      "source_url": "https://raw.githubusercontent.com/documize/document-templates/master/project-management/requirements-capture.docx",
+      "source_page": "https://github.com/documize/document-templates/blob/master/project-management/requirements-capture.docx",
+      "sha256": "334cad45e8cf8a23b2bb96aed86ee1c18f31caaf41458b8cd5ffc512e6f0b62f",
+      "format": "docx",
+      "length_class": "medium",
+      "structure_class": "table_heavy_docx_template",
+      "selection_reason": "Native Word counterpart of the business-requirements template with five parsed tables; paired with Markdown to expose format effects."
+    },
+    {
+      "case_id": "risk_register_table_docx",
+      "filename": "07_risk_register_table.docx",
+      "source_url": "https://raw.githubusercontent.com/documize/document-templates/master/project-management/risk-register.docx",
+      "source_page": "https://github.com/documize/document-templates/blob/master/project-management/risk-register.docx",
+      "sha256": "3baeb78ee0949114983c59c5e7f7fd0b4df345f2c6b8f318ab7daa91704a0376",
+      "format": "docx",
+      "length_class": "short",
+      "structure_class": "semi_structured_docx_negative_control",
+      "selection_reason": "Native Word risk-register form parsed as headings, lists, and paragraphs; used as a weak-requirement negative control."
+    },
+    {
+      "case_id": "reqview_srs_pdf",
+      "filename": "09_reqview_srs.pdf",
+      "source_url": "https://www.reqview.com/papers/ReqView-Example_Software_Requirements_Specification_SRS_Document.pdf",
+      "source_page": "https://www.reqview.com/doc/iso-iec-ieee-29148-srs-example/",
+      "sha256": "f3ecca1c5f3a8bf1032c95dc5681d69e8b1e6211dcb1fb1ccae490052e09124b",
+      "format": "pdf",
+      "length_class": "medium",
+      "structure_class": "ordinary_srs_pdf",
+      "selection_reason": "13-page ISO/IEC/IEEE 29148-style SRS with explicit requirement identifiers."
+    },
+    {
+      "case_id": "nist_ir_8214c_pdf",
+      "filename": "10_nist_ir_8214c.pdf",
+      "source_url": "https://nvlpubs.nist.gov/nistpubs/ir/2026/NIST.IR.8214C.pdf",
+      "source_page": "https://csrc.nist.gov/pubs/ir/8214/c/final",
+      "sha256": "de54616748224f5250a42369f64aaf58bebd894453cba9753448e733a6375b18",
+      "format": "pdf",
+      "length_class": "long",
+      "structure_class": "long_normative_pdf",
+      "selection_reason": "113-page NIST call containing an explicit list of shall statements, tables, appendices, and dense technical prose."
+    },
+    {
+      "case_id": "nasa_se_handbook_pdf",
+      "filename": "11_nasa_se_handbook.pdf",
+      "source_url": "https://www.nasa.gov/wp-content/uploads/2018/09/nasa_systems_engineering_handbook_0.pdf",
+      "source_page": "https://www.nasa.gov/reference/systems-engineering-handbook/",
+      "sha256": "8eeb4887a4dc57a23049da7dd2ed556833cf98e214b240468d987873164ff688",
+      "format": "pdf",
+      "length_class": "very_long",
+      "structure_class": "guidance_not_requirements",
+      "selection_reason": "297-page guidance handbook with figures, tables, headers, and non-directive prose; deliberate abstention/false-positive stress case."
+    }
+  ]
+}

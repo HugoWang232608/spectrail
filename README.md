@@ -441,6 +441,13 @@ formats, statuses, API parameters, and validation behavior.
 
 The checked evaluation suite currently covers the original single-pass sample, a three-chunk long-document mock run, strict replay of the same long document from a request-fingerprint-bound Recorded bundle, and a selected-scope case over the included IEEE 29148 text PDF. All four gate source alignment recall, requirement exact recall, and export grounding at `1.0`.
 
+The post-release v0.9 real-world Agent study uses a separate SHA-locked external
+corpus and is intentionally not a CI quality gate. Its first production-path
+run exposed live-provider contract blockers before a valid fixed-vs-Agent
+quality comparison could be made. See the
+[real-world Agent validation report](docs/evaluations/v0.9-real-world-agent.md)
+and the reproducible manifest in `eval/real_world_agent_v1/manifest.json`.
+
 ## Evidence review
 
 The Review UI consumes typed locator artifacts produced by the DOCX/PDF

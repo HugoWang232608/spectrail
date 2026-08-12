@@ -5,6 +5,13 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from spectrail.agent import (
+    AgentRunner,
+    build_default_agent_policy,
+    create_agent_planner,
+)
+from spectrail.agent.errors import AgentError
+from spectrail.chunking import ChunkingConfig
 from spectrail.core.io import read_json, reqir_package_dump, write_json
 from spectrail.core.models import DocumentBlock, RequirementIR, ValidationReport
 from spectrail.evidence import (
@@ -23,7 +30,7 @@ from spectrail.exporters.xlsx_exporter import export_requirements_xlsx
 from spectrail.llm.errors import ModelError
 from spectrail.migrations import migrate_task
 from spectrail.parsers import DocumentParseError, ParsedDocument
-from spectrail.pipeline import PipelineError, PipelineRunner
+from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 from spectrail.task_transactions import task_operation, task_root_for_artifact
 from spectrail.evaluation.pdf_corpus import PdfCorpusRunner
 from spectrail.evaluation.runner import EvaluationRunner
@@ -62,6 +69,19 @@ def main(argv: list[str] | None = None) -> int:
         default="structured_if_available",
     )
     extract_parser.add_argument("--fail-fast", action="store_true")
+    extract_parser.add_argument(
+        "--orchestration-mode",
+        "--orchestration",
+        choices=["fixed", "agent"],
+        default="fixed",
+    )
+    extract_parser.add_argument(
+        "--planner-mode",
+        choices=["recorded", "live"],
+        default=None,
+    )
+    extract_parser.add_argument("--planner-fixture", default=None)
+    extract_parser.add_argument("--planner-model-name", default=None)
     extract_parser.add_argument(
         "--insecure",
         action="store_true",
@@ -139,24 +159,72 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_extract(args: argparse.Namespace) -> int:
     try:
-        result = PipelineRunner().extract(
-            document_path=args.document,
-            output_dir=args.output,
-            model_mode=args.model_mode,
-            model_name=args.model_name,
-            recorded_fixture=args.recorded_fixture,
-            dump_prompt=args.dump_prompt,
-            insecure=args.insecure,
-            chunking_mode=args.chunking,
-            max_rendered_prompt_chars=args.max_rendered_prompt_chars,
-            overlap_blocks=args.overlap_blocks,
-            validation_policy=args.validation_policy,
-            evidence_policy=args.evidence_policy,
-            fail_fast=args.fail_fast,
-        )
-    except (PipelineError, DocumentParseError, ModelError) as exc:
+        if args.orchestration_mode == "fixed":
+            if any(
+                value is not None
+                for value in (
+                    args.planner_mode,
+                    args.planner_fixture,
+                    args.planner_model_name,
+                )
+            ):
+                raise AgentError("AGENT_OPTIONS_REQUIRE_AGENT_MODE")
+            result = PipelineRunner().extract(
+                document_path=args.document,
+                output_dir=args.output,
+                model_mode=args.model_mode,
+                model_name=args.model_name,
+                recorded_fixture=args.recorded_fixture,
+                dump_prompt=args.dump_prompt,
+                insecure=args.insecure,
+                chunking_mode=args.chunking,
+                max_rendered_prompt_chars=args.max_rendered_prompt_chars,
+                overlap_blocks=args.overlap_blocks,
+                validation_policy=args.validation_policy,
+                evidence_policy=args.evidence_policy,
+                fail_fast=args.fail_fast,
+            )
+            validated_count = result.validated_count
+            output_dir = result.output_dir
+        else:
+            if args.planner_mode is None:
+                raise AgentError("AGENT_PLANNER_MODE_REQUIRED")
+            if args.fail_fast:
+                raise AgentError("AGENT_FAIL_FAST_NOT_ALLOWED")
+            pipeline_config = PipelineConfig(
+                model_mode=args.model_mode,
+                model_name=args.model_name,
+                recorded_fixture=args.recorded_fixture,
+                chunking=ChunkingConfig(
+                    mode=args.chunking,
+                    max_rendered_prompt_chars=args.max_rendered_prompt_chars,
+                    overlap_blocks=args.overlap_blocks,
+                    fail_fast=False,
+                ),
+                validation_policy=args.validation_policy,
+                evidence_policy=args.evidence_policy,
+                dump_prompt=args.dump_prompt,
+                insecure=args.insecure,
+            )
+            planner = create_agent_planner(
+                planner_mode=args.planner_mode,
+                recorded_fixture=args.planner_fixture,
+                model_name=args.planner_model_name,
+                insecure=args.insecure,
+            )
+            agent_result = AgentRunner(
+                planner=planner,
+                policy=build_default_agent_policy(pipeline_config),
+                pipeline_config=pipeline_config,
+            ).run(args.document, args.output)
+            manifest = read_json(agent_result.manifest_path)
+            validated_count = manifest.get("counts", {}).get(
+                "validated_requirements", 0
+            )
+            output_dir = agent_result.output_dir
+    except (AgentError, PipelineError, DocumentParseError, ModelError) as exc:
         raise SystemExit(str(exc)) from exc
-    print(f"Generated {result.validated_count} requirements in {result.output_dir}")
+    print(f"Generated {validated_count} requirements in {output_dir}")
     return 0
 
 

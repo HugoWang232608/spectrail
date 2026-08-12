@@ -13,6 +13,10 @@ class AgentPlannerFixtureError(AgentError):
     """Raised when deterministic planner replay cannot continue safely."""
 
 
+class AgentConfigurationError(AgentError):
+    """Raised when an Agent orchestration entry point is misconfigured."""
+
+
 class AgentPolicyViolationError(AgentError):
     """Raised before a planner action can cross a policy boundary."""
 

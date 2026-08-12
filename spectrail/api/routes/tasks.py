@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 
+from spectrail.agent import (
+    AgentRunner,
+    build_default_agent_policy,
+    create_agent_planner,
+)
+from spectrail.agent.errors import AgentError
 from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import (
     DocumentUploadResponse,
@@ -12,6 +20,7 @@ from spectrail.api.schemas import (
 )
 from spectrail.api.transaction_errors import task_transaction_http_error
 from spectrail.core.manifest import fail_manifest, init_manifest
+from spectrail.chunking import ChunkingConfig
 from spectrail.llm.errors import (
     ModelConfigurationError,
     ModelError,
@@ -20,7 +29,12 @@ from spectrail.llm.errors import (
     ModelResponseParseError,
 )
 from spectrail.parsers import DocumentParseError, UnsupportedDocumentTypeError
-from spectrail.pipeline import PipelineValidationError, PipelineRunner, UnsupportedModelModeError
+from spectrail.pipeline import (
+    PipelineConfig,
+    PipelineValidationError,
+    PipelineRunner,
+    UnsupportedModelModeError,
+)
 from spectrail.tasks import (
     LocalTaskStore,
     RunGenerationChangedError,
@@ -32,6 +46,9 @@ from spectrail.task_transactions import TaskTransactionError, task_operation
 
 
 router = APIRouter(tags=["tasks"])
+AGENT_FIXTURE_ROOT = (
+    Path(__file__).resolve().parents[3] / "fixtures" / "agent"
+)
 
 
 @router.post("/tasks", response_model=TaskResponse)
@@ -49,6 +66,10 @@ def create_task(
             "validation_policy": request.validation_policy,
             "evidence_policy": request.evidence_policy,
             "fail_fast": request.fail_fast,
+            "orchestration_mode": request.orchestration_mode,
+            "planner_mode": request.planner_mode,
+            "planner_fixture": request.planner_fixture,
+            "planner_model_name": request.planner_model_name,
         },
     )
     return _task_response(task)
@@ -102,26 +123,65 @@ def _run_task_locked(task_id: str, store: LocalTaskStore) -> dict:
         run_generation = task["run_generation"]
         store.reset_output_from_pipeline(task_id)
         config = task.get("pipeline_config", {})
-        result = PipelineRunner().extract(
-            document_path=document,
-            output_dir=task_dir,
-            model_mode=task["model_mode"],
-            chunking_mode=config.get("chunking_mode", "auto"),
-            max_rendered_prompt_chars=config.get("max_rendered_prompt_chars", 16000),
-            overlap_blocks=config.get("overlap_blocks", 1),
-            validation_policy=config.get("validation_policy", "strict"),
-            evidence_policy=config.get(
-                "evidence_policy", "structured_if_available"
-            ),
-            fail_fast=config.get("fail_fast", False),
-            run_generation=run_generation,
-        )
+        if config.get("orchestration_mode", "fixed") == "agent":
+            pipeline_config = PipelineConfig(
+                model_mode=task["model_mode"],
+                chunking=ChunkingConfig(
+                    mode=config.get("chunking_mode", "auto"),
+                    max_rendered_prompt_chars=config.get(
+                        "max_rendered_prompt_chars", 16000
+                    ),
+                    overlap_blocks=config.get("overlap_blocks", 1),
+                    fail_fast=False,
+                ),
+                validation_policy=config.get("validation_policy", "strict"),
+                evidence_policy=config.get(
+                    "evidence_policy", "structured_if_available"
+                ),
+            )
+            planner_fixture = _resolve_agent_fixture(
+                config.get("planner_fixture")
+            )
+            planner = create_agent_planner(
+                planner_mode=config.get("planner_mode"),
+                recorded_fixture=planner_fixture,
+                model_name=config.get("planner_model_name"),
+            )
+            result = AgentRunner(
+                planner=planner,
+                policy=build_default_agent_policy(pipeline_config),
+                pipeline_config=pipeline_config,
+            ).run(
+                document,
+                task_dir,
+                run_generation=run_generation,
+            )
+        else:
+            result = PipelineRunner().extract(
+                document_path=document,
+                output_dir=task_dir,
+                model_mode=task["model_mode"],
+                chunking_mode=config.get("chunking_mode", "auto"),
+                max_rendered_prompt_chars=config.get(
+                    "max_rendered_prompt_chars", 16000
+                ),
+                overlap_blocks=config.get("overlap_blocks", 1),
+                validation_policy=config.get("validation_policy", "strict"),
+                evidence_policy=config.get(
+                    "evidence_policy", "structured_if_available"
+                ),
+                fail_fast=config.get("fail_fast", False),
+                run_generation=run_generation,
+            )
         manifest = store.read_manifest(task_id) or {}
         store.update_task(task_id, status=manifest.get("status", "completed"))
     except TaskNotFoundError as exc:
         raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
     except TaskNotReadyError as exc:
         raise _error(409, "DOCUMENT_NOT_UPLOADED", str(exc)) from exc
+    except AgentError as exc:
+        _mark_task_failed(store, task_id, run_generation, exc)
+        raise _error(422, "AGENT_RUN_FAILED", str(exc)) from exc
     except UnsupportedModelModeError as exc:
         _mark_task_failed(store, task_id, run_generation, exc)
         raise _error(400, "INVALID_MODEL_MODE", str(exc)) from exc
@@ -261,6 +321,19 @@ def _task_response(task: dict) -> dict:
         "status": task["status"],
         "output_dir": task["output_dir"],
     }
+
+
+def _resolve_agent_fixture(name: object) -> Path | None:
+    if name is None:
+        return None
+    if not isinstance(name, str):
+        raise AgentError("AGENT_PLANNER_FIXTURE_INVALID")
+    fixture = AGENT_FIXTURE_ROOT / name
+    if fixture.parent != AGENT_FIXTURE_ROOT or fixture.is_symlink():
+        raise AgentError("AGENT_PLANNER_FIXTURE_INVALID")
+    if not fixture.is_file():
+        raise AgentError("AGENT_PLANNER_FIXTURE_NOT_FOUND")
+    return fixture
 
 
 def _mark_task_failed(

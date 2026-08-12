@@ -102,6 +102,21 @@ Run the deterministic mock pipeline:
 python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo
 ```
 
+Run the bounded Agent orchestration path with a deterministic recorded planner:
+
+```bash
+python -m spectrail extract docs/sample_srs.md \
+  --model-mode mock \
+  --orchestration-mode agent \
+  --planner-mode recorded \
+  --planner-fixture fixtures/agent/sample_srs_agent_full.json \
+  --output outputs/agent-demo
+```
+
+`fixed` remains the default orchestration mode. Live Agent planning uses
+`--planner-mode live` and the same `SPECTRAIL_LLM_*` transport environment as
+live extraction; `--planner-model-name` can select a distinct planner model.
+
 Expected outputs:
 
 ```text
@@ -152,6 +167,15 @@ Create a task:
 curl -X POST http://127.0.0.1:8000/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"goal":"extract_requirements","model_mode":"mock"}'
+```
+
+To create the deterministic Agent demo task instead, select a bundled planner
+fixture by filename (arbitrary server filesystem paths are rejected):
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"goal":"extract_requirements","model_mode":"mock","orchestration_mode":"agent","planner_mode":"recorded","planner_fixture":"sample_srs_api_agent_full.json"}'
 ```
 
 Upload Markdown:

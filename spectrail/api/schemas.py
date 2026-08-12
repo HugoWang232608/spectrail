@@ -16,6 +16,47 @@ class TaskCreateRequest(BaseModel):
         "quote_only", "structured_if_available", "structured_required"
     ] = "structured_if_available"
     fail_fast: bool = False
+    orchestration_mode: Literal["fixed", "agent"] = "fixed"
+    planner_mode: Literal["recorded", "live"] | None = None
+    planner_fixture: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+    )
+    planner_model_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+
+    @model_validator(mode="after")
+    def validate_orchestration(self) -> "TaskCreateRequest":
+        planner_options = (
+            self.planner_mode,
+            self.planner_fixture,
+            self.planner_model_name,
+        )
+        if self.orchestration_mode == "fixed":
+            if any(value is not None for value in planner_options):
+                raise ValueError("planner options require orchestration_mode=agent")
+            return self
+        if self.fail_fast:
+            raise ValueError("Agent orchestration requires fail_fast=false")
+        if self.max_rendered_prompt_chars > 32_000:
+            raise ValueError("Agent prompt budget must not exceed 32000")
+        if self.overlap_blocks > 3:
+            raise ValueError("Agent overlap_blocks must not exceed 3")
+        if self.planner_mode is None:
+            raise ValueError("Agent orchestration requires planner_mode")
+        if self.planner_mode == "recorded":
+            if self.planner_fixture is None:
+                raise ValueError("recorded Agent planner requires planner_fixture")
+            if self.planner_model_name is not None:
+                raise ValueError(
+                    "recorded Agent planner does not accept planner_model_name"
+                )
+        elif self.planner_fixture is not None:
+            raise ValueError("live Agent planner does not accept planner_fixture")
+        return self
 
 
 class TaskResponse(BaseModel):

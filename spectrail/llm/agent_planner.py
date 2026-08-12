@@ -18,17 +18,23 @@ class AgentPlannerClient:
         self,
         transport: CompletionTransport,
         request_profile: ModelRequestProfile,
+        *,
+        insecure: bool = False,
     ) -> None:
         self.transport = transport
         self.request_profile = request_profile
+        self.insecure = insecure
 
     def decide(self, planner_input: AgentPlannerInput) -> AgentDecision:
         prompt = build_agent_planner_prompt(planner_input)
+        metadata = {"prompt_version": AGENT_PLANNER_PROMPT_VERSION}
+        if self.insecure:
+            metadata["insecure"] = True
         response = self.transport.complete(
             CompletionRequest(
                 prompt=prompt,
                 request_profile=self.request_profile,
-                metadata={"prompt_version": AGENT_PLANNER_PROMPT_VERSION},
+                metadata=metadata,
             )
         )
         return parse_agent_decision(response.raw_text)

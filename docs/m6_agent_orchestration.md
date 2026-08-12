@@ -237,6 +237,25 @@ publish a failed tool-result event, but only
 failure therefore cannot republish or overwrite the immutable summary for the
 preceding extraction attempt.
 
+## M6.5 CLI and API orchestration mode
+
+The existing extraction entry points now select `fixed` or `agent`
+orchestration explicitly, with `fixed` remaining the compatibility default.
+Agent mode builds the frozen default policy, keeps `fail_fast=false`, and
+selects either a strict recorded planner fixture or the separate live
+completion transport. Planner options are rejected in fixed mode, and the
+inherited prompt/overlap settings are checked against the same bounds applied
+to planner-supplied tool arguments.
+
+The API persists orchestration and planner selection in the task's pipeline
+configuration. Recorded API fixtures are selected by filename from
+`fixtures/agent/`; path separators, symlinks, missing fixtures, and arbitrary
+server paths fail closed. Run responses retain the existing manifest schema,
+while Agent manifests add orchestration metadata and point to the durable
+`agent/events`, `agent/trace.jsonl`, `agent/attempts`, and final state artifacts.
+The frontend continues to create fixed tasks unless it explicitly adopts the
+new request fields in a later milestone.
+
 ## Roadmap
 
 - [x] M6.0 — freeze backend, frontend, evaluation, PDF corpus, and visual gates
@@ -247,5 +266,5 @@ preceding extraction attempt.
   durable trace events
 - [x] M6.4 — inspect, same-generation extraction retry, and replanning
 - [x] M6.4.1 — observable recoverable extraction failures and attempt isolation
-- [ ] M6.5 — CLI/API orchestration mode
+- [x] M6.5 — CLI/API orchestration mode
 - [ ] M6.6 — deterministic Agent evaluation gate and read-only trace UI

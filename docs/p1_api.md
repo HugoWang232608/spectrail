@@ -94,9 +94,12 @@ curl -L "http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx?exp
 Export responses repeat the accepted generation in
 `X-Spectrail-Run-Generation`.
 
-## Current Non-Goals
+## P1 Non-Goals
 
-P1 does not include DOCX/PDF input, OCR, a database, async queues, authentication, a frontend UI, live LLM calls, Agent Planner, Gherkin, ReqIF, or SysML.
+The original P1 slice did not include DOCX/PDF input, OCR, a database, async
+queues, authentication, a frontend UI, live LLM calls, Agent Planner, Gherkin,
+ReqIF, or SysML. Later milestones added several of these capabilities; see the
+current README and milestone documents for the active interface.
 
 ## Common Errors
 

@@ -56,12 +56,15 @@ class RunRequirementExtractionTool:
     ) -> None:
         self.pipeline_runner = pipeline_runner
         self.pipeline_config = pipeline_config
+        self._attempts_started = 0
 
     def invoke(
         self,
         context: AgentExecutionContext,
         arguments: RunRequirementExtractionArgs,
     ) -> ToolResult:
+        self._attempts_started += 1
+        attempt = self._attempts_started
         base_chunking = self.pipeline_config.chunking
         chunking = ChunkingConfig(
             mode=arguments.chunking_mode,
@@ -106,7 +109,7 @@ class RunRequirementExtractionTool:
             ),
             summary="Deterministic requirement extraction attempt completed.",
             metrics={
-                "attempt": 1,
+                "attempt": attempt,
                 "pipeline_status": pipeline_status,
                 "validated_requirements": counts.get("validated_requirements", 0),
                 "quarantined_requirements": counts.get("quarantined_requirements", 0),

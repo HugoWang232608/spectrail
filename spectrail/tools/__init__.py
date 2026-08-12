@@ -2,6 +2,10 @@
 
 from spectrail.tools.base import AgentExecutionContext, AgentTool
 from spectrail.tools.document_profile import ProfileDocumentTool
+from spectrail.tools.extraction_inspection import (
+    InspectExtractionResultArgs,
+    InspectExtractionResultTool,
+)
 from spectrail.tools.requirement_extraction import (
     RunRequirementExtractionArgs,
     RunRequirementExtractionTool,
@@ -12,6 +16,8 @@ __all__ = [
     "AgentExecutionContext",
     "AgentTool",
     "ProfileDocumentTool",
+    "InspectExtractionResultTool",
+    "InspectExtractionResultArgs",
     "RunRequirementExtractionArgs",
     "RunRequirementExtractionTool",
     "ToolRegistry",

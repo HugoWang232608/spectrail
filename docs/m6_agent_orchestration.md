@@ -179,6 +179,47 @@ or abandoned temporary artifacts fail closed with
 `orchestration.mode=fixed`; successful Agent runs replace it with bounded
 planner metadata and generation-bound counters.
 
+## M6.4 inspection and same-generation replanning
+
+M6.4 adds a diagnostic tool whose observation is materially richer than the
+extraction summary. `inspect_extraction_result` reports chunk completion and
+failure counts, accepted/rejected candidates, validation/quarantine breakdown,
+quote and locator failures, and deterministic retry facts such as
+`CHUNK_PROMPT_OVER_BUDGET`. It validates the manifest generation before
+returning planner-visible facts.
+
+The runtime now has two explicit artifact cleanup contracts:
+
+- `prepare_new_agent_generation()` removes the fixed pipeline allowlist and
+  the previous `agent/` root before a top-level Agent run;
+- `reset_pipeline_artifacts_for_agent_retry()` removes only `plan.json`,
+  `run_manifest.json`, `parsed/`, `extracted/`, `review/`, and `exports/`.
+
+Both require the outer task transaction, validate every target before deleting
+anything, reject symlinked or type-mismatched managed targets, and preserve
+`task.json`, `input/`, current Agent events/attempts, and unrelated sentinel
+files. They do not recursively delete the task root.
+
+`fixtures/agent/sample_srs_replan_agent.json` freezes the first true replanning
+sequence:
+
+```text
+run(auto)
+  -> completed_with_warnings / PARTIAL_CHUNK_FAILURE
+inspect
+  -> CHUNK_PROMPT_OVER_BUDGET
+run(force, max_rendered_prompt_chars=8000)
+  -> completed
+finish(completed)
+```
+
+The acceptance test uses the real planner, policy, registry, reset, trace, and
+AgentRunner contracts with a deterministic two-outcome pipeline harness. It
+verifies four planner decisions, two extraction attempts, changed arguments,
+one unchanged run generation, one reused `ParsedDocument`, and two
+generation-bound attempt summaries. A production extraction retry uses the
+same public within-transaction pipeline entry.
+
 ## Roadmap
 
 - [x] M6.0 — freeze backend, frontend, evaluation, PDF corpus, and visual gates
@@ -187,6 +228,6 @@ planner metadata and generation-bound counters.
   completion transport separation
 - [x] M6.3 — bounded AgentRunner, frozen policy, budgets, finish lattice, and
   durable trace events
-- [ ] M6.4 — inspect, same-generation extraction retry, and replanning
+- [x] M6.4 — inspect, same-generation extraction retry, and replanning
 - [ ] M6.5 — CLI/API orchestration mode
 - [ ] M6.6 — deterministic Agent evaluation gate and read-only trace UI

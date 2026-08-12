@@ -9,6 +9,10 @@ from spectrail.agent.errors import (
     AgentPolicyViolationError,
     AgentRunnerError,
 )
+from spectrail.agent.artifacts import (
+    prepare_new_agent_generation,
+    reset_pipeline_artifacts_for_agent_retry,
+)
 from spectrail.agent.models import AgentRunState, PlannerObservation
 from spectrail.agent.planner import (
     AGENT_PLANNER_PROMPT_VERSION,
@@ -40,6 +44,7 @@ from spectrail.pipeline import PipelineConfig, PipelineRunner
 from spectrail.task_transactions import task_operation
 from spectrail.tools.base import AgentExecutionContext
 from spectrail.tools.document_profile import ProfileDocumentTool
+from spectrail.tools.extraction_inspection import InspectExtractionResultTool
 from spectrail.tools.registry import ToolRegistry
 from spectrail.tools.requirement_extraction import RunRequirementExtractionTool
 
@@ -97,6 +102,7 @@ class AgentRunner:
     ) -> AgentRunResult:
         if run_generation < 1:
             raise ValueError("run_generation must be positive")
+        prepare_new_agent_generation(output)
         task_id = output.name
         parsed = parse_document(document, document_id="doc_001")
         evidence_index = ensure_evidence_index(document, parsed)
@@ -108,6 +114,7 @@ class AgentRunner:
         registry = ToolRegistry(
             [
                 ProfileDocumentTool(),
+                InspectExtractionResultTool(),
                 RunRequirementExtractionTool(
                     pipeline_runner=self.pipeline_runner,
                     pipeline_config=self.pipeline_config,
@@ -238,10 +245,13 @@ class AgentRunner:
                         raise AgentPolicyViolationError(
                             "AGENT_PIPELINE_ATTEMPT_BUDGET_EXHAUSTED"
                         )
-                    if state.pipeline_attempts >= 1:
-                        raise AgentPolicyViolationError(
-                            "AGENT_RETRY_NOT_AVAILABLE_M6_3"
-                        )
+                if (
+                    decision.tool == "inspect_extraction_result"
+                    and state.pipeline_attempts == 0
+                ):
+                    raise AgentPolicyViolationError(
+                        "AGENT_INSPECTION_REQUIRES_ATTEMPT"
+                    )
                 signature = build_action_signature(
                     decision,
                     state.latest_observation,
@@ -265,6 +275,11 @@ class AgentRunner:
                 )
 
             action_signatures.add(signature)
+            if (
+                decision.tool == "run_requirement_extraction"
+                and state.pipeline_attempts > 0
+            ):
+                reset_pipeline_artifacts_for_agent_retry(output)
             if decision.tool == "run_requirement_extraction":
                 state.pipeline_attempts += 1
             state.tool_invocations += 1

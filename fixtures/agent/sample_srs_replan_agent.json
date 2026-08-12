@@ -1,0 +1,58 @@
+{
+  "schema_version": "agent_planner_fixture_v1",
+  "metadata": {
+    "planner_prompt_version": "agent_planner_v1",
+    "request_profile": {
+      "provider_adapter": "openai_compatible_v1",
+      "provider_endpoint_id": "recorded-agent-replan",
+      "model_name": "recorded-agent-replan-v1",
+      "temperature": 0.0,
+      "response_format": {
+        "type": "json_object"
+      },
+      "safe_request_options": {}
+    }
+  },
+  "steps": [
+    {
+      "request_fingerprint": "354f61251e8bb7ba540d17e1439923126a665cfebcd4fa4f611e4f507875d2ed",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "run_requirement_extraction",
+        "arguments": {
+          "chunking_mode": "auto"
+        },
+        "reason": "Start with automatic chunking."
+      }
+    },
+    {
+      "request_fingerprint": "134f0ea0cb2d88ae7492e581f4267dbc169e5250a8c04855ee42d3ff8fd570bc",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "inspect_extraction_result",
+        "arguments": {},
+        "reason": "Inspect the partial chunk failure before changing strategy."
+      }
+    },
+    {
+      "request_fingerprint": "8a3aab95c37b718d76b4a0d485d8f0bff9d917e43bccf9dfb1eb39d304a525fd",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "run_requirement_extraction",
+        "arguments": {
+          "chunking_mode": "force",
+          "max_rendered_prompt_chars": 8000
+        },
+        "reason": "Retry with forced smaller chunks after the prompt-budget diagnostic."
+      }
+    },
+    {
+      "request_fingerprint": "f010ad24ed60d55313fe0e55a6bb1c31fec51fa77f242e044c18c46b54d8d202",
+      "response": {
+        "action": "finish",
+        "outcome": "completed",
+        "reason": "The second extraction attempt completed cleanly."
+      }
+    }
+  ]
+}

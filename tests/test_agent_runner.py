@@ -11,9 +11,10 @@ from spectrail.agent.policy import AgentPolicy
 from spectrail.agent.runner import AgentRunner
 from spectrail.agent.trace import AgentTraceRecoveryError, AgentTraceWriter
 from spectrail.core.io import read_json
+from spectrail.core.io import write_json
 from spectrail.llm.recorded_agent_planner import RecordedAgentPlanner
 from spectrail.llm.request_profile import ModelRequestProfile
-from spectrail.pipeline import PipelineConfig
+from spectrail.pipeline import PipelineConfig, PipelineResult
 
 
 def _policy(**overrides) -> AgentPolicy:
@@ -303,3 +304,143 @@ def test_pipeline_within_transaction_entry_rejects_unlocked_call(tmp_path: Path)
             "docs/sample_srs.md",
             tmp_path / "demo",
         )
+
+
+class ReplanPipelineRunner:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def extract_within_transaction(
+        self,
+        document_path,
+        output_dir,
+        *,
+        run_generation,
+        config,
+        parsed_document,
+        **kwargs,
+    ):
+        output = Path(output_dir)
+        attempt = len(self.calls) + 1
+        self.calls.append(
+            {
+                "attempt": attempt,
+                "run_generation": run_generation,
+                "chunking_mode": config.chunking.mode,
+                "max_rendered_prompt_chars": config.chunking.max_rendered_prompt_chars,
+                "parsed_document": parsed_document,
+            }
+        )
+        for name in ("parsed", "extracted", "review", "exports"):
+            (output / name).mkdir(parents=True, exist_ok=True)
+        write_json(output / "plan.json", {"attempt": attempt})
+        write_json(output / "exports" / "reqir.json", {"items": []})
+        (output / "exports" / "requirements.xlsx").write_bytes(b"xlsx")
+
+        if attempt == 1:
+            status = "completed_with_warnings"
+            warning_codes = ["PARTIAL_CHUNK_FAILURE"]
+            counts = {
+                "chunks": 2,
+                "chunks_completed": 1,
+                "chunks_failed": 1,
+                "model_items_accepted": 3,
+                "model_items_rejected": 1,
+                "validated_requirements": 2,
+                "quarantined_requirements": 1,
+                "source_quote_failed": 1,
+                "source_locator_failed": 0,
+            }
+            chunks = [
+                {"warnings": []},
+                {"warnings": ["CHUNK_PROMPT_OVER_BUDGET"]},
+            ]
+        else:
+            status = "completed"
+            warning_codes = []
+            counts = {
+                "chunks": 2,
+                "chunks_completed": 2,
+                "chunks_failed": 0,
+                "model_items_accepted": 4,
+                "model_items_rejected": 0,
+                "validated_requirements": 4,
+                "quarantined_requirements": 0,
+                "source_quote_failed": 0,
+                "source_locator_failed": 0,
+            }
+            chunks = [{"warnings": []}, {"warnings": []}]
+        write_json(output / "parsed" / "chunks.json", chunks)
+        write_json(
+            output / "run_manifest.json",
+            {
+                "task_id": output.name,
+                "run_generation": run_generation,
+                "status": status,
+                "warning_codes": warning_codes,
+                "counts": counts,
+                "zero_result_reason": None,
+                "error_code": None,
+            },
+        )
+        return PipelineResult(
+            task_id=output.name,
+            output_dir=output,
+            plan_path=output / "plan.json",
+            manifest_path=output / "run_manifest.json",
+            validated_reqir_path=output / "extracted" / "reqir.validated.json",
+            exported_reqir_path=output / "exports" / "reqir.json",
+            xlsx_path=output / "exports" / "requirements.xlsx",
+            validated_count=counts["validated_requirements"],
+            status=status,
+        )
+
+
+def test_agent_runner_inspects_and_replans_within_one_generation(tmp_path: Path):
+    output = tmp_path / "agent_replan"
+    pipeline_runner = ReplanPipelineRunner()
+    policy = AgentPolicy(
+        allowed_tools=[
+            "inspect_extraction_result",
+            "run_requirement_extraction",
+        ],
+        evidence_policy="structured_if_available",
+        validation_policy="strict",
+        allow_chunking_modes=["auto", "force"],
+    )
+    runner = AgentRunner(
+        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_replan_agent.json"),
+        policy=policy,
+        pipeline_config=PipelineConfig(model_mode="mock"),
+        pipeline_runner=pipeline_runner,
+    )
+
+    result = runner.run("docs/sample_srs.md", output, run_generation=7)
+
+    assert result.final_state.outcome == "completed"
+    assert result.final_state.steps_used == 4
+    assert result.final_state.planner_calls == 4
+    assert result.final_state.tool_invocations == 4  # profile, run, inspect, retry
+    assert result.final_state.pipeline_attempts == 2
+    assert [call["run_generation"] for call in pipeline_runner.calls] == [7, 7]
+    assert pipeline_runner.calls[0]["parsed_document"] is pipeline_runner.calls[1]["parsed_document"]
+    assert [call["chunking_mode"] for call in pipeline_runner.calls] == ["auto", "force"]
+    assert pipeline_runner.calls[1]["max_rendered_prompt_chars"] == 8000
+    assert sorted(path.name for path in (output / "agent" / "attempts").glob("*.json")) == [
+        "attempt_0001.json",
+        "attempt_0002.json",
+    ]
+    first_attempt = read_json(output / "agent" / "attempts" / "attempt_0001.json")
+    second_attempt = read_json(output / "agent" / "attempts" / "attempt_0002.json")
+    assert first_attempt["pipeline_status"] == "completed_with_warnings"
+    assert second_attempt["pipeline_status"] == "completed"
+    assert first_attempt["run_generation"] == second_attempt["run_generation"] == 7
+    events = [read_json(path) for path in sorted((output / "agent" / "events").glob("*.json"))]
+    inspect_result = next(
+        event
+        for event in events
+        if event["event_type"] == "tool_result"
+        and event["tool"] == "inspect_extraction_result"
+    )
+    assert inspect_result["payload"]["observation"]["metrics"]["chunk_prompt_over_budget"] is True
+    assert read_json(output / "run_manifest.json")["run_generation"] == 7

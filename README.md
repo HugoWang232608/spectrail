@@ -66,15 +66,15 @@ flowchart LR
 M6 is in progress. Its completed foundation includes deterministic
 `DocumentProfile v1`, an internal allowlisted Tool Registry, frozen Agent
 policy and typed decisions, strict Recorded Planner replay, a shared completion
-transport, and a single-attempt bounded AgentRunner with durable trace events.
-The fixed pipeline remains the default; CLI and API Agent opt-in arrive after
-same-generation retry.
+transport, and a bounded AgentRunner with durable trace events and
+same-generation extraction replanning. The fixed pipeline remains the default;
+CLI and API Agent opt-in are the next stage.
 
-The next slice adds extraction inspection and same-generation retry, followed
-by CLI/API opt-in and a deterministic replanning evaluation gate. The Agent
-chooses only coarse-grained tools and safe chunking parameters; Evidence,
-validation, review, task identity, model credentials, and filesystem paths
-remain owned by the deterministic runtime.
+The next slice adds CLI/API opt-in, followed by a deterministic replanning
+evaluation gate and read-only trace UI. The Agent chooses only coarse-grained
+tools and safe chunking parameters; Evidence, validation, review, task
+identity, model credentials, and filesystem paths remain owned by the
+deterministic runtime.
 
 See [docs/m6_agent_orchestration.md](docs/m6_agent_orchestration.md) for the
 frozen pre-Agent baseline, M6.1 contracts, and stage status.

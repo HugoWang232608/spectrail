@@ -7,6 +7,10 @@ from spectrail.agent.models import (
     ToolResult,
     ToolSpec,
 )
+from spectrail.agent.artifacts import (
+    prepare_new_agent_generation,
+    reset_pipeline_artifacts_for_agent_retry,
+)
 from spectrail.agent.planner import (
     AgentBudgetState,
     AgentDecision,
@@ -29,6 +33,8 @@ __all__ = [
     "AgentRunner",
     "AgentFinalState",
     "AgentTraceEvent",
+    "prepare_new_agent_generation",
+    "reset_pipeline_artifacts_for_agent_retry",
     "DocumentProfile",
     "DocumentProfiler",
     "FinishDecision",

@@ -61,6 +61,23 @@ flowchart LR
     L --> M[ReqIR JSON / Excel / source map]
 ```
 
+## M6 Agent orchestration roadmap
+
+M6 is in progress. Its first completed slice adds a deterministic
+`DocumentProfile v1` plus an internal allowlisted Tool Registry. These are the
+contracts the later AgentRunner will use; the fixed pipeline remains the
+default and no planner can yet run production extraction.
+
+The bounded runtime will add, in order: strict recorded planner replay,
+policy and budget enforcement, durable trace events, same-generation retry,
+CLI/API opt-in, and a deterministic replanning evaluation gate. The Agent will
+choose only coarse-grained tools and safe chunking parameters; Evidence,
+validation, review, task identity, model credentials, and filesystem paths
+remain owned by the deterministic runtime.
+
+See [docs/m6_agent_orchestration.md](docs/m6_agent_orchestration.md) for the
+frozen pre-Agent baseline, M6.1 contracts, and stage status.
+
 ## Quick start
 
 ```bash

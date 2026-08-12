@@ -61,23 +61,20 @@ flowchart LR
     L --> M[ReqIR JSON / Excel / source map]
 ```
 
-## M6 Agent orchestration roadmap
+## Agent orchestration
 
-M6 is in progress. Its completed foundation includes deterministic
-`DocumentProfile v1`, an internal allowlisted Tool Registry, frozen Agent
-policy and typed decisions, strict Recorded Planner replay, a shared completion
-transport, and a bounded AgentRunner with durable trace events and
-same-generation extraction replanning. The fixed pipeline remains the default;
-CLI and API Agent opt-in are the next stage.
+Agent orchestration is an opt-in, bounded execution mode built around a typed
+document profile, allowlisted tools, frozen policy, durable trace events, and
+same-generation extraction retries. The Agent can choose coarse-grained tools
+and safe chunking parameters; Evidence, validation, review, task identity,
+model credentials, and filesystem paths remain owned by the deterministic
+runtime. The fixed pipeline remains the default.
 
-The next slice adds CLI/API opt-in, followed by a deterministic replanning
-evaluation gate and read-only trace UI. The Agent chooses only coarse-grained
-tools and safe chunking parameters; Evidence, validation, review, task
-identity, model credentials, and filesystem paths remain owned by the
-deterministic runtime.
-
-See [docs/m6_agent_orchestration.md](docs/m6_agent_orchestration.md) for the
-frozen pre-Agent baseline, M6.1 contracts, and stage status.
+Recorded Agent planner fixtures are bundled in source distributions and wheels.
+CLI and API callers select a bundled fixture by filename, so no
+repository-relative fixture path is required after installation. See
+[docs/m6_agent_orchestration.md](docs/m6_agent_orchestration.md) for the Agent
+contracts and audit model.
 
 ## Quick start
 
@@ -88,7 +85,7 @@ python -m spectrail extract docs/sample_srs.md --model-mode mock --output output
 
 Then inspect `outputs/demo/exports/reqir.json` and `outputs/demo/exports/requirements.xlsx`, or start the API and Review UI using the walkthrough below.
 
-## P0 Demo
+## CLI workflow
 
 Install dependencies:
 
@@ -109,7 +106,7 @@ python -m spectrail extract docs/sample_srs.md \
   --model-mode mock \
   --orchestration-mode agent \
   --planner-mode recorded \
-  --planner-fixture fixtures/agent/sample_srs_agent_full.json \
+  --planner-fixture sample_srs_agent_full.json \
   --output outputs/agent-demo
 ```
 
@@ -168,7 +165,7 @@ Run tests:
 pytest
 ```
 
-## P1 API Demo
+## API workflow
 
 Start the local API:
 
@@ -233,9 +230,9 @@ curl -L "http://127.0.0.1:8000/api/tasks/{task_id}/exports/requirements.xlsx?exp
   -o requirements.xlsx
 ```
 
-## P1b Review UI Demo
+## Review UI
 
-See the full walkthrough in [docs/p1b_review_ui.md](docs/p1b_review_ui.md).
+See the [Review UI walkthrough](docs/p1b_review_ui.md).
 
 Install Python and frontend dependencies:
 
@@ -277,9 +274,10 @@ cd frontend
 npm run build
 ```
 
-## P2 DOCX / Text PDF Demo
+## Document formats
 
-SpecTrail P2 adds best-effort input adapters for DOCX and text-based PDF files. The downstream pipeline is the same as Markdown:
+SpecTrail provides best-effort input adapters for DOCX and text-based PDF files.
+The downstream pipeline is the same as Markdown:
 
 ```text
 DOCX / text PDF
@@ -324,25 +322,24 @@ https://www.cin.ufpe.br/~in1020/docs/publicacoes/IEEE29148-srs_example.pdf
 
 It is used only for parser smoke testing with a real text-based SRS PDF; the mock end-to-end pipeline demos use the project-authored `docs/sample_srs.*` files so source block IDs stay aligned with `fixtures/mock_reqir_response.json`.
 
-Historical P2 boundaries:
+Format boundaries:
 
 ```text
 Supported: Markdown, DOCX, text-based PDF
 Not supported: scanned PDF, OCR, complex two-column layout recovery, image/chart understanding
-At the P2 milestone, PDF page numbers were best-effort source context and bbox
-highlighting/table-cell grounding were not implemented.
 ```
 
-P5 supersedes the historical PDF review limitation with typed text, page-region,
-and table-cell Evidence for supported text PDFs and DOCX tables. OCR, scanned
-PDFs, image/chart understanding, and arbitrary complex-layout restoration
-remain out of scope.
+Supported text PDFs and DOCX tables can produce typed text, page-region, and
+table-cell Evidence. OCR, scanned PDFs, image/chart understanding, and arbitrary
+complex-layout restoration remain out of scope.
 
-See [docs/p2_docx_pdf_best_effort.md](docs/p2_docx_pdf_best_effort.md) for details.
+See the [document format notes](docs/p2_docx_pdf_best_effort.md) for details.
 
-## P3 LLM Adapter Demo
+## Model adapters
 
-SpecTrail P3 adds a model-client layer with deterministic `mock`, replayable `recorded`, and locally configured `live` modes. All modes still pass through ReqIR extraction and source quote validation before export.
+SpecTrail provides deterministic `mock`, replayable `recorded`, and locally
+configured `live` model modes. All modes pass through ReqIR extraction and
+source quote validation before export.
 
 Run the sample-aligned recorded mode:
 
@@ -377,7 +374,9 @@ If your local provider uses a self-signed certificate chain and you accept that 
 python -m spectrail extract docs/sample_srs.md --model-mode live --output outputs/demo_live --insecure
 ```
 
-Recorded fixtures are tied to their source document blocks; the default recorded fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads. See [docs/p3_llm_extraction_adapter.md](docs/p3_llm_extraction_adapter.md) for details.
+Recorded fixtures are tied to their source document blocks; the default recorded
+fixture is for `docs/sample_srs.md` regression testing, not arbitrary uploads.
+See the [model adapter notes](docs/p3_llm_extraction_adapter.md) for details.
 
 Migrate a persisted task created with an older ReqIR, quote-match, or Evidence
 schema before reviewing it:
@@ -406,9 +405,11 @@ python -m spectrail validate outputs/demo/exports/reqir.json \
 Key changes from an older ReqIR identity algorithm require `migrate`; ordinary
 validation never silently rebinds persisted source identities.
 
-## P4 Evaluation and chunked extraction
+## Evaluation and chunked extraction
 
-P4 adds deterministic, section-aware chunking for long documents, overlap-safe candidate aggregation, per-item model-output isolation, request fingerprints, quarantine mode, and a checked-in evaluation quality gate.
+The pipeline provides deterministic, section-aware chunking for long documents,
+overlap-safe candidate aggregation, per-item model-output isolation, request
+fingerprints, quarantine mode, and a checked-in evaluation quality gate.
 
 Split sections retain budgeted heading context, while top-level response failures are isolated only when they are known model/contract errors. Unexpected code and file-system failures stop the pipeline instead of being converted into warning completion.
 
@@ -431,22 +432,24 @@ python -m spectrail evaluate eval/cases/sample_srs/case.json \
   --output outputs/evaluation
 ```
 
-The evaluation command exits non-zero when a checked threshold fails, making it suitable for CI. See [docs/p4_evaluation_chunking.md](docs/p4_evaluation_chunking.md) for artifact formats, statuses, API parameters, and validation behavior.
+The evaluation command exits non-zero when a checked threshold fails, making it
+suitable for CI. See the
+[evaluation and chunking contract](docs/p4_evaluation_chunking.md) for artifact
+formats, statuses, API parameters, and validation behavior.
 
 The checked evaluation suite currently covers the original single-pass sample, a three-chunk long-document mock run, strict replay of the same long document from a request-fingerprint-bound Recorded bundle, and a selected-scope case over the included IEEE 29148 text PDF. All four gate source alignment recall, requirement exact recall, and export grounding at `1.0`.
 
-## P5 Evidence Review
+## Evidence review
 
-P5 consumes the typed locator artifacts produced by the DOCX/PDF V2
-pipeline. For PDF sources with a validated `page_locator`, the Review UI renders
+The Review UI consumes typed locator artifacts produced by the DOCX/PDF
+pipeline. For PDF sources with a validated `page_locator`, it renders
 the corresponding page and overlays the source bounding box in the canonical
 rotated preview coordinate space. For DOCX sources with a validated
 `table_locator`, it renders the block's occurrence-aware table grid and
 highlights the selected physical-row cells by canonical cell ID.
-M5 extends the same table path to complete grids detected in PDF files.
 `PdfParserV2` emits stable logical cells, cell occurrences, page geometry, and
 all three structured capabilities, while the existing table API and Review grid
-remain unchanged. M5.1 also accepts horizontal and vertical merged cells when a
+remain unchanged. Horizontal and vertical merged cells are accepted when a
 boundary-lattice proof yields a unique anchor, contiguous spans, and exact
 single-owner coverage of every physical coordinate. Vertical merges use the
 same logical cell ID with `row_span_projection` occurrences on subsequent
@@ -505,10 +508,9 @@ large PDF while any replacement still forces revalidation. The signature is
 checked again after rendering, and a page produced while the source changes is
 discarded.
 
-See [docs/p5_evidence_review.md](docs/p5_evidence_review.md) for the current
-contract and next acceptance steps.
+See the [Evidence review contract](docs/p5_evidence_review.md) for details.
 
-## M5.3 Real-World PDF Corpus
+## Real-world PDF corpus
 
 The parser-level `pdf_corpus_v1` gate complements requirement extraction
 evaluation with selected real-document observations. It checks source and

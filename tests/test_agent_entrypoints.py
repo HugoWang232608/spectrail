@@ -23,7 +23,7 @@ def test_cli_runs_recorded_agent_orchestration(tmp_path: Path):
             "--planner-mode",
             "recorded",
             "--planner-fixture",
-            "fixtures/agent/sample_srs_agent_full.json",
+            "sample_srs_agent_full.json",
         ]
     )
 

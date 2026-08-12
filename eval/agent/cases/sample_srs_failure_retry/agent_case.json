@@ -2,7 +2,7 @@
   "schema_version": "agent_evaluation_case_v1",
   "name": "sample_srs_agent_failure_retry",
   "document": "../../../../docs/sample_srs.md",
-  "planner_fixture": "../../../../fixtures/agent/sample_srs_agent_failure_retry_full.json",
+  "planner_fixture": "../../../../spectrail/fixtures/agent/sample_srs_agent_failure_retry_full.json",
   "pipeline_scenario": "production_provider_failure_then_success",
   "model_mode": "mock",
   "expected": {

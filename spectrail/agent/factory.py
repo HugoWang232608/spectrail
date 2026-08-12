@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from spectrail.agent.errors import AgentConfigurationError
+from spectrail.agent.fixtures import resolve_recorded_agent_fixture
 from spectrail.agent.planner import AgentPlanner
 from spectrail.agent.policy import AgentPolicy
 from spectrail.llm.agent_planner import AgentPlannerClient
@@ -47,7 +48,9 @@ def create_agent_planner(
             raise AgentConfigurationError(
                 "AGENT_RECORDED_PLANNER_MODEL_NOT_ALLOWED"
             )
-        return RecordedAgentPlanner(recorded_fixture)
+        return RecordedAgentPlanner(
+            resolve_recorded_agent_fixture(recorded_fixture)
+        )
     if planner_mode == "live":
         if recorded_fixture is not None:
             raise AgentConfigurationError(

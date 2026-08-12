@@ -81,7 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=["recorded", "live"],
         default=None,
     )
-    extract_parser.add_argument("--planner-fixture", default=None)
+    extract_parser.add_argument(
+        "--planner-fixture",
+        default=None,
+        help="recorded planner fixture path or bundled fixture filename",
+    )
     extract_parser.add_argument("--planner-model-name", default=None)
     extract_parser.add_argument(
         "--insecure",

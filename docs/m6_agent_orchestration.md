@@ -119,7 +119,7 @@ contracts, latest path-free observation, structured history, and budget.
 Timestamps, artifact paths, display summaries, and planner reasons cannot enter
 the replay identity.
 
-`fixtures/agent/sample_srs_agent.json` demonstrates a strict two-step clean
+`spectrail/fixtures/agent/sample_srs_agent.json` demonstrates a strict two-step clean
 replay. A fingerprint mismatch, exhausted fixture, invalid decision, or unused
 required step fails closed.
 
@@ -200,7 +200,7 @@ anything, reject symlinked or type-mismatched managed targets, and preserve
 `task.json`, `input/`, current Agent events/attempts, and unrelated sentinel
 files. They do not recursively delete the task root.
 
-`fixtures/agent/sample_srs_replan_agent.json` freezes the first true replanning
+`spectrail/fixtures/agent/sample_srs_replan_agent.json` freezes the first true replanning
 sequence:
 
 ```text
@@ -249,8 +249,9 @@ to planner-supplied tool arguments.
 
 The API persists orchestration and planner selection in the task's pipeline
 configuration. Recorded API fixtures are selected by filename from
-`fixtures/agent/`; path separators, symlinks, missing fixtures, and arbitrary
-server paths fail closed. Run responses retain the existing manifest schema,
+`spectrail/fixtures/agent/` and ship as wheel package data; path separators,
+symlinks, missing fixtures, and arbitrary server paths fail closed. Run
+responses retain the existing manifest schema,
 while Agent manifests add orchestration metadata and point to the durable
 `agent/events`, `agent/trace.jsonl`, `agent/attempts`, and final state artifacts.
 The frontend continues to create fixed tasks unless it explicitly adopts the

@@ -12,3 +12,14 @@ def test_agent_evaluation_is_a_first_class_ci_gate():
         "name: Upload evaluation reports",
         maxsplit=1,
     )[1]
+
+
+def test_ci_builds_and_verifies_bundled_agent_fixture_wheel():
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "name: Build wheel and verify bundled Agent fixtures" in workflow
+    assert "python -m pip wheel --no-deps --wheel-dir dist ." in workflow
+    assert (
+        "python scripts/verify_agent_fixture_wheel.py "
+        "dist/spectrail-*.whl"
+    ) in workflow

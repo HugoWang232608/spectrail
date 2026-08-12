@@ -57,7 +57,7 @@ def test_agent_evaluation_gate_fails_exact_expectation(tmp_path: Path):
     )
     payload["document"] = Path("docs/sample_srs.md").resolve().as_posix()
     payload["planner_fixture"] = Path(
-        "fixtures/agent/sample_srs_agent_full.json"
+        "spectrail/fixtures/agent/sample_srs_agent_full.json"
     ).resolve().as_posix()
     payload["expected"]["steps_used"] = 99
     write_json(case_dir / "agent_case.json", payload)

@@ -37,7 +37,9 @@ def _policy(**overrides) -> AgentPolicy:
 def test_agent_runner_completes_clean_recorded_run_with_durable_trace(tmp_path: Path):
     output = tmp_path / "agent_demo"
     runner = AgentRunner(
-        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_agent.json"),
+        planner=RecordedAgentPlanner(
+            "spectrail/fixtures/agent/sample_srs_agent.json"
+        ),
         policy=_policy(),
         pipeline_config=PipelineConfig(model_mode="mock"),
     )
@@ -95,7 +97,9 @@ def test_agent_runner_parses_source_once(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("spectrail.agent.runner.parse_document", counted_parse)
     runner = AgentRunner(
-        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_agent.json"),
+        planner=RecordedAgentPlanner(
+            "spectrail/fixtures/agent/sample_srs_agent.json"
+        ),
         policy=_policy(),
         pipeline_config=PipelineConfig(model_mode="mock"),
     )
@@ -275,7 +279,9 @@ def test_agent_runner_stops_before_planner_call_after_budget_exhaustion(tmp_path
 def test_agent_trace_rebuilds_jsonl_from_immutable_events(tmp_path: Path):
     output = tmp_path / "agent_demo"
     AgentRunner(
-        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_agent.json"),
+        planner=RecordedAgentPlanner(
+            "spectrail/fixtures/agent/sample_srs_agent.json"
+        ),
         policy=_policy(),
         pipeline_config=PipelineConfig(model_mode="mock"),
     ).run("docs/sample_srs.md", output, run_generation=3)
@@ -293,7 +299,9 @@ def test_agent_trace_rebuilds_jsonl_from_immutable_events(tmp_path: Path):
 def test_agent_trace_fails_closed_on_sequence_gap(tmp_path: Path):
     output = tmp_path / "agent_demo"
     AgentRunner(
-        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_agent.json"),
+        planner=RecordedAgentPlanner(
+            "spectrail/fixtures/agent/sample_srs_agent.json"
+        ),
         policy=_policy(),
         pipeline_config=PipelineConfig(model_mode="mock"),
     ).run("docs/sample_srs.md", output, run_generation=1)
@@ -417,7 +425,9 @@ def test_agent_runner_inspects_and_replans_within_one_generation(tmp_path: Path)
         allow_chunking_modes=["auto", "force"],
     )
     runner = AgentRunner(
-        planner=RecordedAgentPlanner("fixtures/agent/sample_srs_replan_agent.json"),
+        planner=RecordedAgentPlanner(
+            "spectrail/fixtures/agent/sample_srs_replan_agent.json"
+        ),
         policy=policy,
         pipeline_config=PipelineConfig(model_mode="mock"),
         pipeline_runner=pipeline_runner,

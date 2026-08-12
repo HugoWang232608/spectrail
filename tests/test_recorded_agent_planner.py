@@ -78,7 +78,9 @@ def test_recorded_agent_planner_replays_exact_fingerprints(tmp_path: Path):
 
 
 def test_checked_in_recorded_agent_fixture_is_current():
-    planner = RecordedAgentPlanner("fixtures/agent/sample_srs_agent.json")
+    planner = RecordedAgentPlanner(
+        "spectrail/fixtures/agent/sample_srs_agent.json"
+    )
 
     first = planner.decide(planner_input())
     second = planner.decide(clean_completed_planner_input())

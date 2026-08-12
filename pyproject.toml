@@ -38,6 +38,9 @@ Issues = "https://github.com/HugoWang232608/spectrail/issues"
 [tool.setuptools.packages.find]
 include = ["spectrail*"]
 
+[tool.setuptools.package-data]
+"spectrail.fixtures.agent" = ["*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

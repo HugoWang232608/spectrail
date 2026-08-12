@@ -84,6 +84,10 @@ jobs:
           python-version: "3.11"
       - name: Install backend dependencies
         run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev]"
+      - name: Build wheel and verify bundled Agent fixtures
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python scripts/verify_agent_fixture_wheel.py dist/spectrail-*.whl
       - name: Run deterministic release smoke pipelines
         run: |
           python -m spectrail extract docs/sample_srs.md --model-mode mock --output outputs/demo

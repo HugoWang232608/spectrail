@@ -10,6 +10,7 @@ from spectrail.agent import (
     create_agent_planner,
 )
 from spectrail.agent.errors import AgentError
+from spectrail.agent.fixtures import resolve_bundled_agent_fixture
 from spectrail.agent.trace import (
     AgentTraceNotFoundError,
     AgentTraceRecoveryError,
@@ -51,9 +52,6 @@ from spectrail.task_transactions import TaskTransactionError, task_operation
 
 
 router = APIRouter(tags=["tasks"])
-AGENT_FIXTURE_ROOT = (
-    Path(__file__).resolve().parents[3] / "fixtures" / "agent"
-)
 
 
 @router.post("/tasks", response_model=TaskResponse)
@@ -363,16 +361,7 @@ def _task_response(task: dict) -> dict:
 
 
 def _resolve_agent_fixture(name: object) -> Path | None:
-    if name is None:
-        return None
-    if not isinstance(name, str):
-        raise AgentError("AGENT_PLANNER_FIXTURE_INVALID")
-    fixture = AGENT_FIXTURE_ROOT / name
-    if fixture.parent != AGENT_FIXTURE_ROOT or fixture.is_symlink():
-        raise AgentError("AGENT_PLANNER_FIXTURE_INVALID")
-    if not fixture.is_file():
-        raise AgentError("AGENT_PLANNER_FIXTURE_NOT_FOUND")
-    return fixture
+    return resolve_bundled_agent_fixture(name)
 
 
 def _mark_task_failed(

@@ -11,3 +11,11 @@ class AgentPlannerResponseError(AgentError):
 
 class AgentPlannerFixtureError(AgentError):
     """Raised when deterministic planner replay cannot continue safely."""
+
+
+class AgentPolicyViolationError(AgentError):
+    """Raised before a planner action can cross a policy boundary."""
+
+
+class AgentRunnerError(AgentError):
+    """Raised when the bounded AgentRunner fails closed."""

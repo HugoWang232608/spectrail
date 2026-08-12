@@ -16,6 +16,8 @@ from spectrail.agent.planner import (
 )
 from spectrail.agent.policy import AgentPolicy
 from spectrail.agent.profiler import DocumentProfiler
+from spectrail.agent.runner import AgentRunResult, AgentRunner
+from spectrail.agent.trace import AgentFinalState, AgentTraceEvent
 
 __all__ = [
     "AgentRunState",
@@ -23,6 +25,10 @@ __all__ = [
     "AgentDecision",
     "AgentPlannerInput",
     "AgentPolicy",
+    "AgentRunResult",
+    "AgentRunner",
+    "AgentFinalState",
+    "AgentTraceEvent",
     "DocumentProfile",
     "DocumentProfiler",
     "FinishDecision",

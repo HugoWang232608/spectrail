@@ -114,6 +114,7 @@ class AgentPlannerInput(AgentModel):
 
 class AgentPlanner(Protocol):
     planner_mode: str
+    request_profile: ModelRequestProfile
 
     def decide(self, planner_input: AgentPlannerInput) -> AgentDecision:
         ...

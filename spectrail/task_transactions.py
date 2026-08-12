@@ -155,6 +155,13 @@ def task_root_for_artifact(path: str | Path) -> Path | None:
     return None
 
 
+def task_operation_is_held(task_dir: str | Path) -> bool:
+    """Return whether this thread owns the task transaction for ``task_dir``."""
+
+    root = Path(task_dir).resolve(strict=False)
+    return _held_roots().get(root, 0) > 0
+
+
 def _acquire_lock_dir(
     lock_dir: Path,
     *,

@@ -23,6 +23,7 @@ def test_pipeline_runner_extract_generates_outputs(tmp_path: Path):
 
     manifest = read_json(result.manifest_path)
     assert manifest["status"] == "completed"
+    assert manifest["orchestration"] == {"mode": "fixed"}
     assert manifest["counts"]["validated_requirements"] == result.validated_count
 
 

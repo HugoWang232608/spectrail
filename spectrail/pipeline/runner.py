@@ -46,7 +46,7 @@ from spectrail.llm.request_profile import ModelRequestProfile, adapter_for_profi
 from spectrail.parsers import ParsedDocument, parse_document
 from spectrail.pipeline.config import PipelineConfig
 from spectrail.review.review_log import collect_review_log
-from spectrail.task_transactions import task_operation
+from spectrail.task_transactions import task_operation, task_operation_is_held
 from spectrail.validators.ears_validator import BasicEARSValidator
 from spectrail.validators.schema_validator import SchemaValidator
 from spectrail.validators.source_quote_validator import SourceQuoteValidator
@@ -118,6 +118,49 @@ class PipelineRunner:
                 config=config,
                 parsed_document=parsed_document,
             )
+
+    def extract_within_transaction(
+        self,
+        document_path: str | Path,
+        output_dir: str | Path,
+        model_mode: str = "mock",
+        model_name: str | None = None,
+        recorded_fixture: str | Path | None = None,
+        dump_prompt: bool = False,
+        insecure: bool = False,
+        *,
+        chunking_mode: str = "auto",
+        max_rendered_prompt_chars: int = 16000,
+        overlap_blocks: int = 1,
+        validation_policy: str = "strict",
+        evidence_policy: str = "structured_if_available",
+        fail_fast: bool = False,
+        run_generation: int = 1,
+        config: PipelineConfig | None = None,
+        parsed_document: ParsedDocument | None = None,
+    ) -> PipelineResult:
+        """Run inside an orchestration-owned task transaction."""
+
+        if not task_operation_is_held(output_dir):
+            raise PipelineError("PIPELINE_TRANSACTION_REQUIRED")
+        return self._extract_locked(
+            document_path=document_path,
+            output_dir=output_dir,
+            model_mode=model_mode,
+            model_name=model_name,
+            recorded_fixture=recorded_fixture,
+            dump_prompt=dump_prompt,
+            insecure=insecure,
+            chunking_mode=chunking_mode,
+            max_rendered_prompt_chars=max_rendered_prompt_chars,
+            overlap_blocks=overlap_blocks,
+            validation_policy=validation_policy,
+            evidence_policy=evidence_policy,
+            fail_fast=fail_fast,
+            run_generation=run_generation,
+            config=config,
+            parsed_document=parsed_document,
+        )
 
     def _extract_locked(
         self,
@@ -708,6 +751,7 @@ class PipelineRunner:
                 "response_chars": total_response_chars,
                 "estimated_tokens": sum(chunk.estimated_tokens for chunk in chunks),
             }
+            completed_manifest["orchestration"] = {"mode": "fixed"}
             write_json(manifest_path, completed_manifest)
         except Exception as exc:
             failed = fail_manifest(manifest, str(exc))
@@ -744,6 +788,7 @@ class PipelineRunner:
                 "response_chars": total_response_chars,
                 "estimated_tokens": sum(chunk.estimated_tokens for chunk in chunks),
             }
+            failed["orchestration"] = {"mode": "fixed"}
             if str(exc) in {
                 "NO_VALID_MODEL_ITEMS",
                 "ALL_CHUNKS_FAILED",

@@ -82,10 +82,7 @@ class ToolRegistry:
             tool = self._tools[name]
         except KeyError as exc:
             raise ToolNotFoundError(f"unknown tool: {name}") from exc
-        try:
-            validated_arguments = self._argument_models[name].model_validate(arguments)
-        except ValidationError as exc:
-            raise ToolContractError(f"TOOL_ARGUMENTS_INVALID: {name}") from exc
+        validated_arguments = self.validate_arguments(name, arguments)
 
         raw_result = tool.invoke(context, validated_arguments)
         try:
@@ -97,3 +94,15 @@ class ToolRegistry:
                 f"TOOL_RESULT_NAME_MISMATCH: expected {name}, got {result.tool}"
             )
         return result
+
+    def validate_arguments(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ):
+        if name not in self._tools:
+            raise ToolNotFoundError(f"unknown tool: {name}")
+        try:
+            return self._argument_models[name].model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolContractError(f"TOOL_ARGUMENTS_INVALID: {name}") from exc

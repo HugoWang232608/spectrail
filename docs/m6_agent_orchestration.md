@@ -129,13 +129,63 @@ wrapper, while `AgentPlannerClient` uses the same transport with its own prompt
 and parser. After M6.2, the complete backend suite passes with 506 tests and one
 skip.
 
+## M6.3 bounded single-attempt runtime
+
+The third implementation slice executes the contracts from M6.1/M6.2:
+
+```text
+parse once
+  -> profile_document prelude
+  -> planner request
+  -> policy + argument validation
+  -> run_requirement_extraction
+  -> path-free observation
+  -> planner request
+  -> deterministic finish validation
+```
+
+`AgentRunner` owns the outer task transaction and calls the new public
+`PipelineRunner.extract_within_transaction()` entry. The entry fails unless
+the caller already holds the task transaction. The parsed document is reused
+by the extraction attempt, so the source parser runs once.
+
+M6.3 supports one extraction attempt. A second attempt is rejected with
+`AGENT_RETRY_NOT_AVAILABLE_M6_3`; inspect and same-generation retry are M6.4.
+Planner arguments cannot set `fail_fast`, trust policies, model settings,
+paths, or generation identity. Chunking mode, prompt size, and overlap are
+checked against frozen policy before `tool_started` is emitted.
+
+The deterministic finish lattice prevents the planner from relabeling a
+failed, warning, zero-result, quarantined, or unreadable pipeline result as a
+clean completion. `needs_human` without an extraction attempt is allowed and
+maps to `completed_with_warnings` plus `AGENT_NEEDS_HUMAN`.
+
+Agent artifacts now include:
+
+```text
+agent/policy.json
+agent/profile.json
+agent/events/000001.json ...
+agent/trace.jsonl
+agent/attempts/attempt_0001.json
+agent/final_state.json
+```
+
+The numbered event files are authoritative immutable facts. Every event is
+fsynced and atomically published; `trace.jsonl` is rebuilt from them. Sequence
+gaps, mixed generations, unexpected event files, invalid attempts, symlinks,
+or abandoned temporary artifacts fail closed with
+`AGENT_TRACE_RECOVERY_REQUIRED`. Fixed runs now explicitly write
+`orchestration.mode=fixed`; successful Agent runs replace it with bounded
+planner metadata and generation-bound counters.
+
 ## Roadmap
 
 - [x] M6.0 — freeze backend, frontend, evaluation, PDF corpus, and visual gates
 - [x] M6.1 — DocumentProfile v1 and internal Tool Registry contracts
 - [x] M6.2 — typed planner decisions, strict Recorded Planner replay, and LLM
   completion transport separation
-- [ ] M6.3 — bounded AgentRunner, frozen policy, budgets, finish lattice, and
+- [x] M6.3 — bounded AgentRunner, frozen policy, budgets, finish lattice, and
   durable trace events
 - [ ] M6.4 — inspect, same-generation extraction retry, and replanning
 - [ ] M6.5 — CLI/API orchestration mode

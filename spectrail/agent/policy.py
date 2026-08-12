@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from spectrail.agent.models import AgentModel
+from spectrail.agent.errors import AgentPolicyViolationError
 from spectrail.evidence.models import EvidencePolicy
+from spectrail.llm.fingerprints import sha256_hex
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from spectrail.agent.models import PlannerObservation
+    from spectrail.agent.planner import FinishDecision, InvokeToolDecision
+    from spectrail.tools.registry import ToolRegistry
 
 
 MAX_PIPELINE_ATTEMPTS_HARD_LIMIT = 4
@@ -66,3 +75,135 @@ class AgentPolicy(AgentModel):
         if unknown:
             raise ValueError(f"AgentPolicy contains unknown tool: {', '.join(unknown)}")
         return self
+
+
+HUMAN_ACTIONABLE_WARNING_CODES = frozenset(
+    {
+        "ALL_CANDIDATES_QUARANTINED",
+        "NO_REQUIREMENTS_FOUND",
+        "PARTIAL_CHUNK_FAILURE",
+    }
+)
+HUMAN_ACTIONABLE_ERROR_CODES = frozenset(
+    {
+        "ALL_CHUNKS_FAILED",
+        "NO_EXTRACTABLE_CONTENT",
+        "NO_VALID_MODEL_ITEMS",
+    }
+)
+
+
+def validate_tool_decision(
+    policy: AgentPolicy,
+    registry: "ToolRegistry",
+    decision: "InvokeToolDecision",
+) -> "BaseModel":
+    try:
+        validated = registry.validate_arguments(decision.tool, decision.arguments)
+    except ValueError as exc:
+        raise AgentPolicyViolationError(str(exc)) from exc
+    if decision.tool not in policy.allowed_tools:
+        raise AgentPolicyViolationError(
+            f"AGENT_TOOL_FORBIDDEN: {decision.tool}"
+        )
+    if decision.tool == "run_requirement_extraction":
+        if validated.chunking_mode not in policy.allow_chunking_modes:
+            raise AgentPolicyViolationError("AGENT_CHUNKING_MODE_FORBIDDEN")
+        if (
+            validated.max_rendered_prompt_chars is not None
+            and not (
+                policy.min_prompt_chars
+                <= validated.max_rendered_prompt_chars
+                <= policy.max_prompt_chars
+            )
+        ):
+            raise AgentPolicyViolationError("AGENT_PROMPT_BUDGET_OUT_OF_RANGE")
+        if (
+            validated.overlap_blocks is not None
+            and validated.overlap_blocks > policy.max_overlap_blocks
+        ):
+            raise AgentPolicyViolationError("AGENT_OVERLAP_OUT_OF_RANGE")
+    return validated
+
+
+def validate_finish_decision(
+    decision: "FinishDecision",
+    *,
+    pipeline_attempts: int,
+    latest_observation: "PlannerObservation | None",
+) -> None:
+    outcome = decision.outcome
+    if pipeline_attempts == 0:
+        if outcome in {"needs_human", "failed"}:
+            return
+        _invalid_finish()
+    if latest_observation is None:
+        _invalid_finish()
+
+    assert latest_observation is not None
+    pipeline_status = latest_observation.metrics.get("pipeline_status")
+    validated = latest_observation.metrics.get("validated_requirements", 0)
+    quarantined = latest_observation.metrics.get("quarantined_requirements", 0)
+    readable = latest_observation.metrics.get("readable_final_artifact", False)
+    zero_result_reason = latest_observation.metrics.get("zero_result_reason")
+
+    if pipeline_status == "failed":
+        if outcome == "failed":
+            return
+        if (
+            outcome == "needs_human"
+            and latest_observation.error_code in HUMAN_ACTIONABLE_ERROR_CODES
+        ):
+            return
+        _invalid_finish()
+    if pipeline_status == "completed_with_warnings":
+        if outcome == "completed_with_warnings":
+            return
+        if outcome == "needs_human" and (
+            set(latest_observation.warning_codes)
+            & HUMAN_ACTIONABLE_WARNING_CODES
+        ):
+            return
+        _invalid_finish()
+    if pipeline_status == "completed":
+        clean_success = (
+            isinstance(validated, int)
+            and not isinstance(validated, bool)
+            and validated > 0
+            and quarantined == 0
+            and readable is True
+            and not latest_observation.warning_codes
+        )
+        if clean_success and outcome == "completed":
+            return
+        zero_is_human_actionable = zero_result_reason in (
+            HUMAN_ACTIONABLE_WARNING_CODES | HUMAN_ACTIONABLE_ERROR_CODES
+        )
+        if not clean_success and (
+            outcome == "failed"
+            or (outcome == "needs_human" and zero_is_human_actionable)
+        ):
+            return
+        _invalid_finish()
+    _invalid_finish()
+
+
+def build_action_signature(
+    decision: "InvokeToolDecision",
+    observation: "PlannerObservation | None",
+) -> str:
+    return sha256_hex(
+        {
+            "tool": decision.tool,
+            "arguments": decision.arguments,
+            "observation": (
+                observation.model_dump(mode="json")
+                if observation is not None
+                else None
+            ),
+        }
+    )
+
+
+def _invalid_finish() -> None:
+    raise AgentPolicyViolationError("AGENT_FINAL_STATE_INVALID")

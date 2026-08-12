@@ -1,0 +1,30 @@
+{
+  "schema_version": "agent_evaluation_case_v1",
+  "name": "sample_srs_agent_needs_human",
+  "document": "../../../../docs/sample_srs.md",
+  "planner_fixture": "../../../../fixtures/agent/sample_srs_agent_needs_human_full.json",
+  "model_mode": "mock",
+  "expected": {
+    "outcome": "needs_human",
+    "manifest_status": "completed_with_warnings",
+    "final_pipeline_status": null,
+    "steps_used": 1,
+    "planner_calls": 1,
+    "tool_invocations": 1,
+    "pipeline_attempts": 0,
+    "tool_sequence": [],
+    "decision_actions": [
+      "finish"
+    ],
+    "attempt_statuses": [],
+    "event_types": [
+      "profile",
+      "planner_request",
+      "decision",
+      "finish"
+    ],
+    "warning_codes": [
+      "AGENT_NEEDS_HUMAN"
+    ]
+  }
+}

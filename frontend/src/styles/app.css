@@ -246,6 +246,11 @@ a {
   background: #fff2c6;
 }
 
+.status-badge.needs_human {
+  color: #665014;
+  background: #fff2c6;
+}
+
 .status-badge.failed {
   color: #8a2a2a;
   background: #fde4e1;
@@ -987,6 +992,106 @@ pre {
   white-space: pre-wrap;
 }
 
+.agent-trace-panel {
+  min-height: 180px;
+}
+
+.trace-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.trace-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.trace-timeline {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-timeline li {
+  min-width: 0;
+  border: 1px solid #e1e5eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcfd;
+}
+
+.trace-event-heading {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.trace-event-heading strong {
+  color: #1d2430;
+}
+
+.trace-event-heading code,
+.trace-attempts code {
+  overflow: hidden;
+  color: #475467;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-sequence {
+  color: #1f6f68;
+  font-weight: 800;
+}
+
+.trace-timeline details {
+  margin-top: 9px;
+}
+
+.trace-timeline summary {
+  color: #475467;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trace-timeline pre {
+  margin-top: 8px;
+}
+
+.trace-attempts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trace-attempts article {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid #e1e5eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.trace-attempts article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.compact-empty {
+  min-height: auto;
+  padding: 12px 0 0;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     width: min(100vw - 24px, 1180px);
@@ -1004,6 +1109,20 @@ pre {
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trace-summary,
+  .trace-attempts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trace-event-heading {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .trace-event-heading code,
+  .trace-event-heading time {
+    grid-column: 2 / -1;
   }
 
   .review-summary {

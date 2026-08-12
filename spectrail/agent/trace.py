@@ -33,6 +33,10 @@ class AgentTraceRecoveryError(ValueError):
     pass
 
 
+class AgentTraceNotFoundError(ValueError):
+    pass
+
+
 class AgentTraceEvent(AgentModel):
     schema_version: Literal["agent_trace_event_v1"] = "agent_trace_event_v1"
     sequence: int = Field(ge=1)
@@ -72,6 +76,169 @@ class AgentAttemptSummary(AgentModel):
     error_code: str | None = None
     started_at: datetime
     completed_at: datetime
+
+
+class AgentTraceSnapshot(AgentModel):
+    schema_version: Literal["agent_trace_snapshot_v1"] = (
+        "agent_trace_snapshot_v1"
+    )
+    task_id: str = Field(min_length=1, max_length=128)
+    run_generation: int = Field(ge=1)
+    events: list[AgentTraceEvent]
+    attempts: list[AgentAttemptSummary]
+    final_state: AgentFinalState
+
+
+def read_agent_trace_snapshot(
+    agent_root: str | Path,
+    *,
+    task_id: str,
+    run_generation: int,
+) -> AgentTraceSnapshot:
+    """Read authoritative Agent artifacts without rebuilding or mutating them."""
+
+    root = Path(agent_root)
+    if root.is_symlink():
+        _snapshot_recovery_required("Agent trace root is symlinked")
+    if not root.exists():
+        raise AgentTraceNotFoundError("AGENT_TRACE_NOT_FOUND")
+    if not root.is_dir():
+        _snapshot_recovery_required("Agent trace root is not a directory")
+    for directory in (root, root / "events", root / "attempts"):
+        if directory.is_symlink() or not directory.is_dir():
+            _snapshot_recovery_required("Agent trace directory is invalid")
+        if any(
+            path.name.startswith(".") and path.name.endswith(".tmp")
+            for path in directory.iterdir()
+        ):
+            _snapshot_recovery_required("temporary Agent artifact exists")
+
+    events = _read_snapshot_events(root / "events", run_generation)
+    attempts = _read_snapshot_attempts(root / "attempts", run_generation)
+    final_path = root / "final_state.json"
+    if final_path.is_symlink() or not final_path.is_file():
+        _snapshot_recovery_required("Agent final state is missing")
+    try:
+        final_state = AgentFinalState.model_validate(
+            json.loads(final_path.read_text(encoding="utf-8"))
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _snapshot_recovery_required("Agent final state is invalid", cause=exc)
+    if (
+        final_state.task_id != task_id
+        or final_state.run_generation != run_generation
+    ):
+        _snapshot_recovery_required("Agent final state identity differs")
+    _validate_snapshot_consistency(events, attempts, final_state)
+    return AgentTraceSnapshot(
+        task_id=task_id,
+        run_generation=run_generation,
+        events=events,
+        attempts=attempts,
+        final_state=final_state,
+    )
+
+
+def _validate_snapshot_consistency(
+    events: list[AgentTraceEvent],
+    attempts: list[AgentAttemptSummary],
+    final_state: AgentFinalState,
+) -> None:
+    if not events or events[0].event_type != "profile":
+        _snapshot_recovery_required("Agent trace does not start with profile")
+    if events[-1].event_type not in {"finish", "error"}:
+        _snapshot_recovery_required("Agent trace has no terminal event")
+    if final_state.steps_used != sum(
+        event.event_type == "decision" for event in events
+    ):
+        _snapshot_recovery_required("Agent step count differs from events")
+    if final_state.planner_calls != sum(
+        event.event_type == "planner_request" for event in events
+    ):
+        _snapshot_recovery_required("Agent planner count differs from events")
+    if final_state.tool_invocations != 1 + sum(
+        event.event_type == "tool_started" for event in events
+    ):
+        _snapshot_recovery_required("Agent tool count differs from events")
+    if final_state.pipeline_attempts != len(attempts):
+        _snapshot_recovery_required("Agent attempt count differs from artifacts")
+
+
+def _read_snapshot_events(
+    events_dir: Path,
+    run_generation: int,
+) -> list[AgentTraceEvent]:
+    indexed: list[tuple[int, Path]] = []
+    for path in events_dir.iterdir():
+        match = _EVENT_FILE_RE.fullmatch(path.name)
+        if match is None or path.is_symlink() or not path.is_file():
+            _snapshot_recovery_required(
+                f"unexpected event artifact: {path.name}"
+            )
+        indexed.append((int(match.group(1)), path))
+    indexed.sort()
+    if [sequence for sequence, _ in indexed] != list(
+        range(1, len(indexed) + 1)
+    ):
+        _snapshot_recovery_required("Agent event sequence has a gap")
+
+    events: list[AgentTraceEvent] = []
+    try:
+        for sequence, path in indexed:
+            event = AgentTraceEvent.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            if (
+                event.sequence != sequence
+                or event.run_generation != run_generation
+            ):
+                _snapshot_recovery_required("Agent event identity differs")
+            events.append(event)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        if isinstance(exc, AgentTraceRecoveryError):
+            raise
+        _snapshot_recovery_required("Agent event is invalid", cause=exc)
+    return events
+
+
+def _read_snapshot_attempts(
+    attempts_dir: Path,
+    run_generation: int,
+) -> list[AgentAttemptSummary]:
+    attempts: list[AgentAttemptSummary] = []
+    for expected, path in enumerate(sorted(attempts_dir.iterdir()), start=1):
+        if (
+            path.name != f"attempt_{expected:04d}.json"
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            _snapshot_recovery_required("Agent attempt sequence is invalid")
+        try:
+            summary = AgentAttemptSummary.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            _snapshot_recovery_required("Agent attempt is invalid", cause=exc)
+        if (
+            summary.attempt != expected
+            or summary.run_generation != run_generation
+        ):
+            _snapshot_recovery_required("Agent attempt identity differs")
+        attempts.append(summary)
+    return attempts
+
+
+def _snapshot_recovery_required(
+    message: str,
+    *,
+    cause: Exception | None = None,
+) -> None:
+    error = AgentTraceRecoveryError(
+        f"{AGENT_TRACE_RECOVERY_REQUIRED}: {message}"
+    )
+    if cause is not None:
+        raise error from cause
+    raise error
 
 
 class AgentTraceWriter:

@@ -23,6 +23,10 @@ export type TaskRecord = {
     overlap_blocks?: number
     validation_policy?: 'strict' | 'quarantine'
     fail_fast?: boolean
+    orchestration_mode?: 'fixed' | 'agent'
+    planner_mode?: 'recorded' | 'live' | null
+    planner_fixture?: string | null
+    planner_model_name?: string | null
   }
 }
 
@@ -40,6 +44,71 @@ export type TaskManifest = {
   error: string | null
   warning_codes: string[]
   zero_result_reason: string | null
+  orchestration?: {
+    mode: 'fixed' | 'agent'
+    planner_mode?: 'recorded' | 'live'
+    planner_model?: string
+    steps_used?: number
+    planner_calls?: number
+    tool_invocations?: number
+    pipeline_attempts?: number
+    outcome?: 'completed' | 'completed_with_warnings' | 'needs_human' | 'failed'
+  }
+}
+
+export type AgentTraceEvent = {
+  schema_version: 'agent_trace_event_v1'
+  sequence: number
+  run_generation: number
+  event_type:
+    | 'profile'
+    | 'planner_request'
+    | 'decision'
+    | 'tool_started'
+    | 'tool_result'
+    | 'policy_rejection'
+    | 'finish'
+    | 'error'
+  step: number
+  planner_request_fingerprint: string | null
+  tool: string | null
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export type AgentAttemptSummary = {
+  schema_version: 'agent_attempt_summary_v1'
+  run_generation: number
+  attempt: number
+  arguments: Record<string, unknown>
+  pipeline_status: string
+  warning_codes: string[]
+  counts: Record<string, number>
+  error_code: string | null
+  started_at: string
+  completed_at: string
+}
+
+export type AgentFinalState = {
+  schema_version: 'agent_final_state_v1'
+  task_id: string
+  run_generation: number
+  outcome: 'completed' | 'completed_with_warnings' | 'needs_human' | 'failed'
+  steps_used: number
+  planner_calls: number
+  tool_invocations: number
+  pipeline_attempts: number
+  final_pipeline_status: string | null
+  reason: string
+}
+
+export type AgentTraceSnapshot = {
+  schema_version: 'agent_trace_snapshot_v1'
+  task_id: string
+  run_generation: number
+  events: AgentTraceEvent[]
+  attempts: AgentAttemptSummary[]
+  final_state: AgentFinalState
 }
 
 export type DocumentUploadResponse = {

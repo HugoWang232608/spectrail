@@ -48,6 +48,16 @@ curl http://127.0.0.1:8000/api/tasks/{task_id}
 
 Save the returned `run_generation`. The examples below use generation `1`.
 
+For Agent tasks, read the immutable orchestration snapshot with the same
+generation guard:
+
+```bash
+curl "http://127.0.0.1:8000/api/tasks/{task_id}/agent/trace?expected_run_generation=1"
+```
+
+The response is private/no-store and repeats the accepted generation in
+`X-Spectrail-Run-Generation`. Fixed tasks return `AGENT_TRACE_NOT_FOUND`.
+
 Read ReqIR:
 
 ```bash
@@ -112,5 +122,7 @@ INVALID_REVIEW_ACTION review action or patch is not allowed
 RUN_GENERATION_CHANGED the task was rerun after the client loaded it
 REVIEW_REVISION_CHANGED the requirement changed after the client loaded it
 TASK_REVIEW_RECOVERY_REQUIRED an interrupted review publication must be recovered
+AGENT_TRACE_NOT_FOUND fixed task or Agent trace is unavailable
+AGENT_TRACE_RECOVERY_REQUIRED authoritative Agent artifacts are inconsistent
 EXPORT_NOT_FOUND      requested export file is missing
 ```

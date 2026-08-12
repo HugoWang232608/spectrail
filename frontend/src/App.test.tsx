@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
+  AgentTraceSnapshot,
   BlocksResponse,
   ReqIRResponse,
   TaskRunResponse,
@@ -14,6 +15,7 @@ import App from './App'
 const api = vi.hoisted(() => ({
   createTask: vi.fn(),
   downloadExport: vi.fn(),
+  getAgentTrace: vi.fn(),
   getBlocks: vi.fn(),
   getReqIR: vi.fn(),
   getTask: vi.fn(),
@@ -40,6 +42,33 @@ afterEach(() => {
 })
 
 describe('App pipeline run reconciliation', () => {
+  it('loads the generation-bound trace for an Agent task', async () => {
+    const task = completedTask(1)
+    task.task.pipeline_config.orchestration_mode = 'agent'
+    task.manifest!.orchestration = {
+      mode: 'agent',
+      outcome: 'completed'
+    }
+    api.getTask.mockResolvedValueOnce(task)
+    api.getReqIR.mockResolvedValueOnce(
+      reqirPackage('req_agent', 'Agent evidence')
+    )
+    api.getBlocks.mockResolvedValueOnce(
+      blocksResponse(EVIDENCE_FINGERPRINT, 'Agent evidence')
+    )
+    api.getAgentTrace.mockResolvedValueOnce(agentTraceSnapshot())
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Task ID'), {
+      target: { value: 'task-1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load' }))
+
+    expect(await screen.findByText('tool_started')).toBeTruthy()
+    expect(api.getAgentTrace).toHaveBeenCalledWith('task-1', 1)
+    expect(screen.getByText('Attempt 1')).toBeTruthy()
+  })
+
   it('binds review writes to the loaded run generation', async () => {
     const task = completedTask(1)
     api.getTask.mockResolvedValueOnce(task)
@@ -799,6 +828,49 @@ function completedRun(
       started_at: '2026-07-18T00:01:00Z',
       completed_at: '2026-07-18T00:01:01Z',
       counts
+    }
+  }
+}
+
+function agentTraceSnapshot(): AgentTraceSnapshot {
+  return {
+    schema_version: 'agent_trace_snapshot_v1',
+    task_id: 'task-1',
+    run_generation: 1,
+    events: [{
+      schema_version: 'agent_trace_event_v1',
+      sequence: 1,
+      run_generation: 1,
+      event_type: 'tool_started',
+      step: 1,
+      planner_request_fingerprint: null,
+      tool: 'run_requirement_extraction',
+      payload: { arguments: { chunking_mode: 'auto' } },
+      created_at: '2026-08-12T00:00:00Z'
+    }],
+    attempts: [{
+      schema_version: 'agent_attempt_summary_v1',
+      run_generation: 1,
+      attempt: 1,
+      arguments: { chunking_mode: 'auto' },
+      pipeline_status: 'completed',
+      warning_codes: [],
+      counts: {},
+      error_code: null,
+      started_at: '2026-08-12T00:00:00Z',
+      completed_at: '2026-08-12T00:00:01Z'
+    }],
+    final_state: {
+      schema_version: 'agent_final_state_v1',
+      task_id: 'task-1',
+      run_generation: 1,
+      outcome: 'completed',
+      steps_used: 2,
+      planner_calls: 2,
+      tool_invocations: 2,
+      pipeline_attempts: 1,
+      final_pipeline_status: 'completed',
+      reason: 'Completed.'
     }
   }
 }

@@ -10,6 +10,11 @@ from spectrail.agent import (
     create_agent_planner,
 )
 from spectrail.agent.errors import AgentError
+from spectrail.agent.trace import (
+    AgentTraceNotFoundError,
+    AgentTraceRecoveryError,
+    AgentTraceSnapshot,
+)
 from spectrail.api.deps import get_task_store
 from spectrail.api.schemas import (
     DocumentUploadResponse,
@@ -244,6 +249,40 @@ def get_task(
         "task": task,
         "manifest": manifest,
     }
+
+
+@router.get(
+    "/tasks/{task_id}/agent/trace",
+    response_model=AgentTraceSnapshot,
+)
+def get_agent_trace(
+    task_id: str,
+    response: Response,
+    expected_run_generation: int = Query(ge=1),
+    store: LocalTaskStore = Depends(get_task_store),
+) -> AgentTraceSnapshot:
+    try:
+        snapshot = store.read_agent_trace(
+            task_id,
+            expected_run_generation=expected_run_generation,
+        )
+    except TaskNotFoundError as exc:
+        raise _error(404, "TASK_NOT_FOUND", str(exc)) from exc
+    except RunGenerationChangedError as exc:
+        raise _error(409, "RUN_GENERATION_CHANGED", str(exc)) from exc
+    except AgentTraceNotFoundError as exc:
+        raise _error(404, "AGENT_TRACE_NOT_FOUND", str(exc)) from exc
+    except AgentTraceRecoveryError as exc:
+        raise _error(
+            409,
+            "AGENT_TRACE_RECOVERY_REQUIRED",
+            str(exc),
+        ) from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Spectrail-Run-Generation"] = str(
+        snapshot.run_generation
+    )
+    return snapshot
 
 
 @router.get("/tasks/{task_id}/reqir")

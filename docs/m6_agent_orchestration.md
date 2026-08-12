@@ -254,7 +254,35 @@ server paths fail closed. Run responses retain the existing manifest schema,
 while Agent manifests add orchestration metadata and point to the durable
 `agent/events`, `agent/trace.jsonl`, `agent/attempts`, and final state artifacts.
 The frontend continues to create fixed tasks unless it explicitly adopts the
-new request fields in a later milestone.
+new task-creation fields. It can still load and inspect an Agent task.
+
+## M6.6 deterministic Agent gate and read-only Trace UI
+
+`spectrail evaluate-agent` discovers `agent_case.json` fixtures and runs each
+case with the production AgentRunner, frozen default policy, and strict Recorded
+Planner replay. Production cases use the real pipeline; the recoverability case
+injects one deterministic provider failure at the pipeline boundary before
+delegating its retry to the real pipeline. The gate compares the exact final outcome,
+manifest and pipeline statuses, step/planner/tool/attempt counters, tool and
+decision sequences, attempt statuses, warning codes, and authoritative event
+types. Its owned output directory contains JSON and Markdown suite/case reports;
+unowned non-empty outputs fail closed. The checked suite covers clean extraction
+completion, a recoverable failed extraction followed by a Planner-selected retry,
+and a zero-attempt `needs_human` finish.
+
+The generation-bound trace endpoint reads immutable `agent/events/*.json`,
+`agent/attempts/*.json`, and `agent/final_state.json` under the task transaction.
+It never rebuilds `trace.jsonl` and validates sequence, generation, task identity,
+terminal event, and cross-artifact counters before returning
+`agent_trace_snapshot_v1`. Stale generations, missing fixed-mode traces, and
+corruption have distinct HTTP errors.
+
+The Review UI loads this snapshot only for Agent manifests and renders a
+read-only final-state summary, event timeline with expandable payloads, and
+attempt cards. Same-task artifact reads are intentionally sequenced because the
+local task transaction is exclusive. Desktop and 390px responsive layouts were
+verified in the local browser in addition to component and App integration
+tests.
 
 ## Roadmap
 
@@ -267,4 +295,4 @@ new request fields in a later milestone.
 - [x] M6.4 — inspect, same-generation extraction retry, and replanning
 - [x] M6.4.1 — observable recoverable extraction failures and attempt isolation
 - [x] M6.5 — CLI/API orchestration mode
-- [ ] M6.6 — deterministic Agent evaluation gate and read-only trace UI
+- [x] M6.6 — deterministic Agent evaluation gate and read-only trace UI

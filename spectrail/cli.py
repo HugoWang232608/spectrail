@@ -33,6 +33,7 @@ from spectrail.parsers import DocumentParseError, ParsedDocument
 from spectrail.pipeline import PipelineConfig, PipelineError, PipelineRunner
 from spectrail.task_transactions import task_operation, task_root_for_artifact
 from spectrail.evaluation.pdf_corpus import PdfCorpusRunner
+from spectrail.evaluation.agent_runner import AgentEvaluationRunner
 from spectrail.evaluation.runner import EvaluationRunner
 from spectrail.review.service import (
     apply_review_to_package,
@@ -136,6 +137,20 @@ def main(argv: list[str] | None = None) -> int:
     evaluate_parser.add_argument("case", help="case.json or directory containing evaluation cases")
     evaluate_parser.add_argument("--output", default="outputs/evaluation")
     evaluate_parser.set_defaults(func=run_evaluate)
+
+    agent_evaluate_parser = subparsers.add_parser(
+        "evaluate-agent",
+        help="run deterministic Agent orchestration evaluation",
+    )
+    agent_evaluate_parser.add_argument(
+        "case",
+        help="agent_case.json or directory containing Agent cases",
+    )
+    agent_evaluate_parser.add_argument(
+        "--output",
+        default="outputs/agent-evaluation",
+    )
+    agent_evaluate_parser.set_defaults(func=run_agent_evaluate)
 
     pdf_corpus_parser = subparsers.add_parser(
         "evaluate-pdf-corpus",
@@ -244,6 +259,19 @@ def run_evaluate(args: argparse.Namespace) -> int:
             print(f"\nFailed evaluation report: {markdown_path}")
             if markdown_path.exists():
                 print(markdown_path.read_text(encoding="utf-8").rstrip())
+    return 0 if report["passed"] else 1
+
+
+def run_agent_evaluate(args: argparse.Namespace) -> int:
+    try:
+        report = AgentEvaluationRunner().run(args.case, args.output)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(
+        "Evaluated "
+        f"{report['case_count']} Agent case(s): "
+        f"{report['case_passed']} passed"
+    )
     return 0 if report["passed"] else 1
 
 

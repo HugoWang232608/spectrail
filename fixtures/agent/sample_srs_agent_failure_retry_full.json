@@ -1,0 +1,49 @@
+{
+  "schema_version": "agent_planner_fixture_v1",
+  "metadata": {
+    "planner_prompt_version": "agent_planner_v1",
+    "request_profile": {
+      "provider_adapter": "openai_compatible_v1",
+      "provider_endpoint_id": "recorded-agent-failure-retry",
+      "model_name": "recorded-agent-failure-retry-v1",
+      "temperature": 0.0,
+      "response_format": {
+        "type": "json_object"
+      },
+      "safe_request_options": {}
+    }
+  },
+  "steps": [
+    {
+      "request_fingerprint": "121123530de429f2ce5f448d71792592ec1ae40c714a82f4150cf8f065774bda",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "run_requirement_extraction",
+        "arguments": {
+          "chunking_mode": "auto"
+        },
+        "reason": "Start extraction."
+      }
+    },
+    {
+      "request_fingerprint": "9469d0c9687164cad67d1b20a1d70c3508b017e7b8ca91d7547a4e1ae6d52a90",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "run_requirement_extraction",
+        "arguments": {
+          "chunking_mode": "force",
+          "max_rendered_prompt_chars": 8000
+        },
+        "reason": "Retry the recoverable pipeline failure."
+      }
+    },
+    {
+      "request_fingerprint": "617607a97f3df30ab9b46ce4edf5c3c8b265f375d72f480695005fe6c2bd410a",
+      "response": {
+        "action": "finish",
+        "outcome": "completed",
+        "reason": "The retry completed cleanly."
+      }
+    }
+  ]
+}

@@ -117,6 +117,19 @@ python -m spectrail extract docs/sample_srs.md \
 `--planner-mode live` and the same `SPECTRAIL_LLM_*` transport environment as
 live extraction; `--planner-model-name` can select a distinct planner model.
 
+Run the deterministic Agent orchestration gate:
+
+```bash
+python -m spectrail evaluate-agent eval/agent/cases \
+  --output outputs/agent-evaluation
+```
+
+The command exits non-zero when any frozen final state, counter, tool sequence,
+attempt status, or authoritative event sequence differs. Agent task traces are
+available read-only at
+`GET /api/tasks/{task_id}/agent/trace?expected_run_generation={generation}`
+and are rendered by the Review UI when an Agent task is loaded.
+
 Expected outputs:
 
 ```text

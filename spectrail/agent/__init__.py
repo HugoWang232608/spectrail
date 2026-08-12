@@ -25,7 +25,12 @@ from spectrail.agent.factory import (
 )
 from spectrail.agent.profiler import DocumentProfiler
 from spectrail.agent.runner import AgentRunResult, AgentRunner
-from spectrail.agent.trace import AgentFinalState, AgentTraceEvent
+from spectrail.agent.trace import (
+    AgentFinalState,
+    AgentTraceEvent,
+    AgentTraceSnapshot,
+    read_agent_trace_snapshot,
+)
 
 __all__ = [
     "AgentRunState",
@@ -39,6 +44,8 @@ __all__ = [
     "AgentRunner",
     "AgentFinalState",
     "AgentTraceEvent",
+    "AgentTraceSnapshot",
+    "read_agent_trace_snapshot",
     "prepare_new_agent_generation",
     "reset_pipeline_artifacts_for_agent_retry",
     "DocumentProfile",

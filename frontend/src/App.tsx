@@ -4,6 +4,7 @@ import {
   API_BASE_URL,
   createTask,
   downloadExport,
+  getAgentTrace,
   getBlocks,
   getReqIR,
   getTask,
@@ -12,6 +13,7 @@ import {
   reviewRequirement
 } from './api/client'
 import type {
+  AgentTraceSnapshot,
   ApiError,
   DocumentBlock,
   ReqIRPackage,
@@ -19,6 +21,7 @@ import type {
   TaskRunResponse,
   TaskStatusResponse
 } from './api/types'
+import AgentTracePanel from './components/AgentTracePanel'
 import ErrorBanner from './components/ErrorBanner'
 import ExportPanel from './components/ExportPanel'
 import NoticeBanner from './components/NoticeBanner'
@@ -64,6 +67,9 @@ function App() {
   const [error, setError] = useState<ApiError | null>(null)
   const [notice, setNotice] = useState<ApiError | null>(null)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
+  const [agentTrace, setAgentTrace] = useState<AgentTraceSnapshot | null>(null)
+  const [agentTraceError, setAgentTraceError] = useState<ApiError | null>(null)
+  const [agentTraceLoading, setAgentTraceLoading] = useState(false)
   const busyActionRef = useRef<BusyAction>(null)
 
   const busy = busyAction !== null
@@ -99,6 +105,7 @@ function App() {
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
+      clearAgentTrace()
     })
   }
 
@@ -112,7 +119,9 @@ function App() {
       const loaded = await getTask(nextTaskId)
       setTask(loaded)
       clearReviewEvidence()
+      clearAgentTrace()
       await loadReqIRIfCompleted(loaded)
+      await loadAgentTraceIfAvailable(loaded)
     })
   }
 
@@ -140,6 +149,7 @@ function App() {
       setBlocksEvidenceFingerprint(null)
       setBlocksError(null)
       setSelectedRequirementId(null)
+      clearAgentTrace()
     })
   }
 
@@ -177,6 +187,7 @@ function App() {
     const previousRunGeneration = task.run_generation
     await perform('run', async () => {
       clearReviewEvidence()
+      clearAgentTrace()
       let runResult: TaskRunResponse | null = null
       let runFailed = false
       let runFailure: unknown
@@ -207,6 +218,7 @@ function App() {
       }
       if (refreshed) {
         setTask(refreshed)
+        await loadAgentTraceIfAvailable(refreshed)
         try {
           evidenceLoad = await loadReqIRIfCompleted(refreshed)
         } catch (caught) {
@@ -302,6 +314,7 @@ function App() {
       setTask(loaded)
       clearReviewEvidence()
       await loadReqIRIfCompleted(loaded)
+      await loadAgentTraceIfAvailable(loaded)
     })
   }
 
@@ -313,6 +326,41 @@ function App() {
     setBlocksEvidenceFingerprint(null)
     setBlocksError(null)
     setSelectedRequirementId(null)
+  }
+
+  function clearAgentTrace() {
+    setAgentTrace(null)
+    setAgentTraceError(null)
+    setAgentTraceLoading(false)
+  }
+
+  async function loadAgentTraceIfAvailable(loaded: TaskStatusResponse) {
+    if (
+      loaded.run_generation < 1
+      || loaded.manifest?.orchestration?.mode !== 'agent'
+    ) {
+      clearAgentTrace()
+      return
+    }
+    setAgentTrace(null)
+    setAgentTraceError(null)
+    setAgentTraceLoading(true)
+    try {
+      const trace = await getAgentTrace(
+        loaded.task_id,
+        loaded.run_generation
+      )
+      requireRunGeneration(
+        trace.run_generation,
+        loaded.run_generation,
+        'Agent trace'
+      )
+      setAgentTrace(trace)
+    } catch (caught) {
+      setAgentTraceError(toApiError(caught))
+    } finally {
+      setAgentTraceLoading(false)
+    }
   }
 
   async function loadReqIRIfCompleted(
@@ -474,6 +522,12 @@ function App() {
 
         <div className="main-stack">
           <StatusPanel task={task} reqir={reqir} />
+          <AgentTracePanel
+            task={task}
+            trace={agentTrace}
+            error={agentTraceError}
+            loading={agentTraceLoading}
+          />
           <ReviewSummary requirements={requirements} />
 
           <div className="review-grid">

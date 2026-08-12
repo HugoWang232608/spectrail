@@ -1,0 +1,45 @@
+{
+  "schema_version": "agent_evaluation_case_v1",
+  "name": "sample_srs_agent_failure_retry",
+  "document": "../../../../docs/sample_srs.md",
+  "planner_fixture": "../../../../fixtures/agent/sample_srs_agent_failure_retry_full.json",
+  "pipeline_scenario": "recoverable_failure_then_success",
+  "model_mode": "mock",
+  "expected": {
+    "outcome": "completed",
+    "manifest_status": "completed",
+    "final_pipeline_status": "completed",
+    "steps_used": 3,
+    "planner_calls": 3,
+    "tool_invocations": 3,
+    "pipeline_attempts": 2,
+    "tool_sequence": [
+      "run_requirement_extraction",
+      "run_requirement_extraction"
+    ],
+    "decision_actions": [
+      "invoke_tool",
+      "invoke_tool",
+      "finish"
+    ],
+    "attempt_statuses": [
+      "failed",
+      "completed"
+    ],
+    "event_types": [
+      "profile",
+      "planner_request",
+      "decision",
+      "tool_started",
+      "tool_result",
+      "planner_request",
+      "decision",
+      "tool_started",
+      "tool_result",
+      "planner_request",
+      "decision",
+      "finish"
+    ],
+    "warning_codes": []
+  }
+}

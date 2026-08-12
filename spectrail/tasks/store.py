@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from spectrail.agent.trace import AgentTraceSnapshot, read_agent_trace_snapshot
 from spectrail.core.io import ensure_dir, read_json, write_json
 from spectrail.core.models import DocumentBlock
 from spectrail.evidence import (
@@ -281,6 +282,32 @@ class LocalTaskStore:
                 if not manifest_path.exists():
                     return None
                 return read_json(manifest_path)
+        except TaskTransactionError as exc:
+            raise TaskTransactionInProgressError(exc) from exc
+
+    def read_agent_trace(
+        self,
+        task_id: str,
+        *,
+        expected_run_generation: int,
+    ) -> AgentTraceSnapshot:
+        task_dir = self.get_task_dir(task_id)
+        try:
+            with task_operation(task_dir, "agent_trace_read"):
+                task = _normalize_task_record(
+                    read_json(task_dir / "task.json")
+                )
+                run_generation = task["run_generation"]
+                if run_generation != expected_run_generation:
+                    raise RunGenerationChangedError(
+                        "expected task run generation "
+                        f"{expected_run_generation}, found {run_generation}"
+                    )
+                return read_agent_trace_snapshot(
+                    task_dir / "agent",
+                    task_id=task_id,
+                    run_generation=run_generation,
+                )
         except TaskTransactionError as exc:
             raise TaskTransactionInProgressError(exc) from exc
 

@@ -1,0 +1,26 @@
+{
+  "schema_version": "agent_planner_fixture_v1",
+  "metadata": {
+    "planner_prompt_version": "agent_planner_v1",
+    "request_profile": {
+      "provider_adapter": "openai_compatible_v1",
+      "provider_endpoint_id": "recorded-agent-full",
+      "model_name": "recorded-agent-full-v1",
+      "temperature": 0.0,
+      "response_format": {
+        "type": "json_object"
+      },
+      "safe_request_options": {}
+    }
+  },
+  "steps": [
+    {
+      "request_fingerprint": "638ed25c8f149e6afaed13434c8a8bdca58b803d17f02b7eb27a569d53086c58",
+      "response": {
+        "action": "finish",
+        "outcome": "needs_human",
+        "reason": "The bounded planner requests human direction before extraction."
+      }
+    }
+  ]
+}

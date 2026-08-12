@@ -17,3 +17,6 @@ __all__ = [
     "build_locator_metrics",
     "match_requirements",
 ]
+from spectrail.evaluation.agent_runner import AgentEvaluationRunner
+
+__all__ = ["AgentEvaluationRunner"]

@@ -1,4 +1,5 @@
 import type {
+  AgentTraceSnapshot,
   ApiError,
   BlocksResponse,
   DocumentChunk,
@@ -38,6 +39,19 @@ export async function runTask(taskId: string): Promise<TaskRunResponse> {
 
 export async function getTask(taskId: string): Promise<TaskStatusResponse> {
   return request<TaskStatusResponse>(`/tasks/${taskId}`)
+}
+
+export async function getAgentTrace(
+  taskId: string,
+  expectedRunGeneration: number
+): Promise<AgentTraceSnapshot> {
+  return (
+    await versionedRequest<AgentTraceSnapshot>(
+      `/tasks/${encodeURIComponent(taskId)}/agent/trace` +
+        `?expected_run_generation=${expectedRunGeneration}`,
+      expectedRunGeneration
+    )
+  ).payload
 }
 
 export async function getReqIR(

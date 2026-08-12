@@ -38,6 +38,19 @@ jobs:
         run: python -m pip install -c constraints-pdf-fixtures.txt -e ".[dev]"
       - name: Run evaluation quality gate
         run: python -m spectrail evaluate eval/cases --output outputs/evaluation
+      - name: Run Agent orchestration quality gate
+        if: always()
+        run: |
+          set +e
+          python -m spectrail evaluate-agent \
+            eval/agent/cases \
+            --output outputs/agent-evaluation
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "Agent orchestration quality gate failed; report follows:"
+            cat outputs/agent-evaluation/agent_evaluation_report.md 2>/dev/null || true
+          fi
+          exit "$status"
       - name: Run real-world PDF corpus quality gate
         if: always()
         run: |
@@ -58,6 +71,7 @@ jobs:
           name: evaluation-reports
           path: |
             outputs/evaluation
+            outputs/agent-evaluation
             outputs/pdf-corpus
           if-no-files-found: warn
 

@@ -4,7 +4,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from spectrail.aggregation import CandidateAggregator
 from spectrail.chunking import ChunkPlanningError, ChunkingConfig, SectionAwareChunker
@@ -32,7 +32,7 @@ from spectrail.evidence.enricher import SourceEvidenceEnricher
 from spectrail.evidence.models import EvidenceIndex
 from spectrail.evidence.quote_matcher import build_quote_match_registry
 from spectrail.evidence.source_identity import canonicalize_source_cell_ids
-from spectrail.llm.base import ModelRequest, ModelResponse
+from spectrail.llm.base import ModelClient, ModelRequest, ModelResponse
 from spectrail.llm.errors import (
     ModelPayloadContractError,
     ModelProviderError,
@@ -79,6 +79,13 @@ class PipelineResult:
 
 
 class PipelineRunner:
+    def __init__(
+        self,
+        *,
+        model_client_factory: Callable[..., ModelClient] | None = None,
+    ) -> None:
+        self._model_client_factory = model_client_factory
+
     def extract(
         self,
         document_path: str | Path,
@@ -270,7 +277,10 @@ class PipelineRunner:
                 evidence_index.model_dump(mode="json"),
             )
 
-            model_client = create_model_client(
+            model_client_factory = (
+                self._model_client_factory or create_model_client
+            )
+            model_client = model_client_factory(
                 model_mode=model_mode,
                 model_name=pipeline_config.model_name,
                 recorded_fixture=pipeline_config.recorded_fixture,

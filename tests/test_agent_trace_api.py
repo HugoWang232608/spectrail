@@ -104,6 +104,64 @@ def test_agent_trace_api_rejects_cross_artifact_counter_mismatch(
     )
 
 
+def test_agent_trace_api_rejects_terminal_outcome_mismatch(
+    api_client: TestClient,
+):
+    task_id, task_dir = _create_and_run_agent_task(api_client)
+    event_path = sorted((task_dir / "agent" / "events").glob("*.json"))[-1]
+    terminal_event = json.loads(event_path.read_text(encoding="utf-8"))
+    terminal_event["payload"]["outcome"] = "failed"
+    event_path.write_text(json.dumps(terminal_event), encoding="utf-8")
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/agent/trace?expected_run_generation=1"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "AGENT_TRACE_RECOVERY_REQUIRED"
+    )
+
+
+def test_agent_trace_api_rejects_error_terminal_with_completed_state(
+    api_client: TestClient,
+):
+    task_id, task_dir = _create_and_run_agent_task(api_client)
+    event_path = sorted((task_dir / "agent" / "events").glob("*.json"))[-1]
+    terminal_event = json.loads(event_path.read_text(encoding="utf-8"))
+    terminal_event["event_type"] = "error"
+    terminal_event["payload"] = {"error_code": "AGENT_RUNNER_FAILED"}
+    event_path.write_text(json.dumps(terminal_event), encoding="utf-8")
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/agent/trace?expected_run_generation=1"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "AGENT_TRACE_RECOVERY_REQUIRED"
+    )
+
+
+def test_agent_trace_api_rejects_final_pipeline_status_mismatch(
+    api_client: TestClient,
+):
+    task_id, task_dir = _create_and_run_agent_task(api_client)
+    final_state_path = task_dir / "agent" / "final_state.json"
+    final_state = json.loads(final_state_path.read_text(encoding="utf-8"))
+    final_state["final_pipeline_status"] = "failed"
+    final_state_path.write_text(json.dumps(final_state), encoding="utf-8")
+
+    response = api_client.get(
+        f"/api/tasks/{task_id}/agent/trace?expected_run_generation=1"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "AGENT_TRACE_RECOVERY_REQUIRED"
+    )
+
+
 def test_agent_trace_api_rejects_symlinked_agent_root(
     api_client: TestClient,
 ):

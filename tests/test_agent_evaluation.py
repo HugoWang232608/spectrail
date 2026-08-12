@@ -35,6 +35,10 @@ def test_agent_evaluation_gate_passes_frozen_suite(tmp_path: Path):
         "failed",
         "completed",
     ]
+    assert retry["checks"]["attempt_error_codes"]["actual"] == [
+        "ModelProviderError",
+        None,
+    ]
     assert main(
         [
             "evaluate-agent",

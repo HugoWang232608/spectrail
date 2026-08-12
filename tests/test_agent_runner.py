@@ -9,7 +9,11 @@ from spectrail.agent.errors import AgentError
 from spectrail.agent.planner import FinishDecision, InvokeToolDecision
 from spectrail.agent.policy import AgentPolicy
 from spectrail.agent.runner import AgentRunner
-from spectrail.agent.trace import AgentTraceRecoveryError, AgentTraceWriter
+from spectrail.agent.trace import (
+    AgentTraceRecoveryError,
+    AgentTraceWriter,
+    read_agent_trace_snapshot,
+)
 from spectrail.core.io import read_json
 from spectrail.core.io import write_json
 from spectrail.llm.errors import ModelProviderError
@@ -584,6 +588,13 @@ def test_inspect_failure_does_not_overwrite_extraction_attempt(
     assert inspect_failure["payload"]["observation"]["error_code"] == (
         "AGENT_INSPECTION_GENERATION_MISMATCH"
     )
+    snapshot = read_agent_trace_snapshot(
+        output / "agent",
+        task_id=output.name,
+        run_generation=9,
+    )
+    assert snapshot.final_state.outcome == "failed"
+    assert snapshot.final_state.final_pipeline_status == "completed"
 
 
 class HardFailurePipelineRunner:
@@ -637,4 +648,12 @@ def test_unallowlisted_pipeline_failure_remains_hard_failure(tmp_path: Path):
         ).run("docs/sample_srs.md", output, run_generation=10)
 
     assert len(planner.inputs) == 1
-    assert read_json(output / "agent" / "final_state.json")["outcome"] == "failed"
+    final_state = read_json(output / "agent" / "final_state.json")
+    assert final_state["outcome"] == "failed"
+    assert final_state["final_pipeline_status"] == "failed"
+    snapshot = read_agent_trace_snapshot(
+        output / "agent",
+        task_id=output.name,
+        run_generation=10,
+    )
+    assert snapshot.attempts[-1].pipeline_status == "failed"

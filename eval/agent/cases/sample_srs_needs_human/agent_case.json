@@ -17,6 +17,7 @@
       "finish"
     ],
     "attempt_statuses": [],
+    "attempt_error_codes": [],
     "event_types": [
       "profile",
       "planner_request",

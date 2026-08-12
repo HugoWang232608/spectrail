@@ -22,6 +22,9 @@
     "attempt_statuses": [
       "completed"
     ],
+    "attempt_error_codes": [
+      null
+    ],
     "event_types": [
       "profile",
       "planner_request",

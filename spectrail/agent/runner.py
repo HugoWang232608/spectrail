@@ -410,11 +410,7 @@ class AgentRunner:
         profile,
         decision: FinishDecision,
     ) -> AgentRunResult:
-        pipeline_status = (
-            str(state.latest_observation.metrics.get("pipeline_status"))
-            if state.latest_observation is not None
-            else None
-        )
+        pipeline_status = _latest_attempt_pipeline_status(trace, state)
         trace.append(
             "finish",
             step=state.step_count,
@@ -550,10 +546,9 @@ class AgentRunner:
                 planner_calls=state.planner_calls,
                 tool_invocations=state.tool_invocations,
                 pipeline_attempts=state.pipeline_attempts,
-                final_pipeline_status=(
-                    str(state.latest_observation.metrics.get("pipeline_status"))
-                    if state.latest_observation is not None
-                    else None
+                final_pipeline_status=_latest_attempt_pipeline_status(
+                    trace,
+                    state,
                 ),
                 reason=safe_code,
             ),
@@ -589,6 +584,25 @@ def _attempt_counts(observation: PlannerObservation) -> dict[str, int]:
         for key, value in observation.metrics.items()
         if isinstance(value, int) and not isinstance(value, bool)
     }
+
+
+def _latest_attempt_pipeline_status(
+    trace: AgentTraceWriter,
+    state: AgentRunState,
+) -> str | None:
+    if state.pipeline_attempts == 0:
+        return None
+    path = trace.attempts_dir / f"attempt_{state.pipeline_attempts:04d}.json"
+    try:
+        attempt = AgentAttemptSummary.model_validate(read_json(path))
+    except (OSError, ValueError) as exc:
+        raise AgentRunnerError("AGENT_ATTEMPT_STATE_INVALID") from exc
+    if (
+        attempt.attempt != state.pipeline_attempts
+        or attempt.run_generation != trace.run_generation
+    ):
+        raise AgentRunnerError("AGENT_ATTEMPT_STATE_MISMATCH")
+    return attempt.pipeline_status
 
 
 def _safe_error_code(value: object) -> str:

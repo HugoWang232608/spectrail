@@ -261,21 +261,25 @@ new task-creation fields. It can still load and inspect an Agent task.
 `spectrail evaluate-agent` discovers `agent_case.json` fixtures and runs each
 case with the production AgentRunner, frozen default policy, and strict Recorded
 Planner replay. Production cases use the real pipeline; the recoverability case
-injects one deterministic provider failure at the pipeline boundary before
-delegating its retry to the real pipeline. The gate compares the exact final outcome,
-manifest and pipeline statuses, step/planner/tool/attempt counters, tool and
-decision sequences, attempt statuses, warning codes, and authoritative event
-types. Its owned output directory contains JSON and Markdown suite/case reports;
-unowned non-empty outputs fail closed. The checked suite covers clean extraction
-completion, a recoverable failed extraction followed by a Planner-selected retry,
-and a zero-attempt `needs_human` finish.
+injects one deterministic provider failure through `PipelineRunner`'s model-client
+boundary. The real runner writes the failed manifest, the extraction tool classifies
+it, and the Planner selects a retry that succeeds through the same runner. The gate
+compares the exact final outcome, manifest and pipeline statuses,
+step/planner/tool/attempt counters, tool and decision sequences, attempt statuses
+and error codes, warning codes, and authoritative event types. Its owned output
+directory contains JSON and Markdown suite/case reports; unowned non-empty outputs
+fail closed. The checked suite covers clean extraction completion, a recoverable
+failed extraction followed by a Planner-selected retry, and a zero-attempt
+`needs_human` finish. CI executes this as an independent evaluation job step and
+publishes `outputs/agent-evaluation` with the other evaluation reports.
 
 The generation-bound trace endpoint reads immutable `agent/events/*.json`,
 `agent/attempts/*.json`, and `agent/final_state.json` under the task transaction.
 It never rebuilds `trace.jsonl` and validates sequence, generation, task identity,
 terminal event, and cross-artifact counters before returning
-`agent_trace_snapshot_v1`. Stale generations, missing fixed-mode traces, and
-corruption have distinct HTTP errors.
+`agent_trace_snapshot_v1`. It also cross-checks terminal outcomes and reasons,
+plus the final pipeline status against the last extraction attempt. Stale
+generations, missing fixed-mode traces, and corruption have distinct HTTP errors.
 
 The Review UI loads this snapshot only for Agent manifests and renders a
 read-only final-state summary, event timeline with expandable payloads, and

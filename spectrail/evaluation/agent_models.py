@@ -21,6 +21,7 @@ class AgentEvaluationExpected(BaseModel):
     tool_sequence: list[str] = Field(default_factory=list)
     decision_actions: list[str] = Field(default_factory=list)
     attempt_statuses: list[str] = Field(default_factory=list)
+    attempt_error_codes: list[str | None] = Field(default_factory=list)
     event_types: list[str] = Field(default_factory=list)
     warning_codes: list[str] = Field(default_factory=list)
 
@@ -36,7 +37,7 @@ class AgentEvaluationCase(BaseModel):
     planner_fixture: str = Field(min_length=1)
     pipeline_scenario: Literal[
         "production",
-        "recoverable_failure_then_success",
+        "production_provider_failure_then_success",
     ] = "production"
     model_mode: Literal["mock", "recorded"] = "mock"
     recorded_fixture: str | None = None

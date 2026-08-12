@@ -15,8 +15,10 @@ from spectrail.agent import (
 from spectrail.chunking import ChunkingConfig
 from spectrail.core.io import read_json, write_json
 from spectrail.evaluation.agent_models import AgentEvaluationCase
+from spectrail.llm.base import ModelRequest, ModelResponse
 from spectrail.llm.recorded_agent_planner import RecordedAgentPlanner
 from spectrail.llm.errors import ModelProviderError
+from spectrail.llm.mock_model import MockModel
 from spectrail.pipeline import PipelineConfig, PipelineRunner
 
 
@@ -162,6 +164,9 @@ class AgentEvaluationRunner:
             "attempt_statuses": [
                 attempt.pipeline_status for attempt in snapshot.attempts
             ],
+            "attempt_error_codes": [
+                attempt.error_code for attempt in snapshot.attempts
+            ],
             "event_types": [event.event_type for event in snapshot.events],
             "warning_codes": manifest.get("warning_codes", []),
         }
@@ -186,56 +191,26 @@ class AgentEvaluationRunner:
         return report
 
 
-class _RecoverableFailureThenSuccessRunner:
+class _FailOnceModel:
+    model_mode = "mock"
+
     def __init__(self) -> None:
         self.calls = 0
-        self.delegate = PipelineRunner()
+        self.delegate = MockModel()
 
-    def extract_within_transaction(
-        self,
-        document_path,
-        output_dir,
-        *,
-        run_generation,
-        config,
-        parsed_document,
-        **kwargs,
-    ):
+    def generate(self, request: ModelRequest) -> ModelResponse:
         self.calls += 1
-        if self.calls > 1:
-            return self.delegate.extract_within_transaction(
-                document_path,
-                output_dir,
-                run_generation=run_generation,
-                config=config,
-                parsed_document=parsed_document,
-                **kwargs,
+        if self.calls == 1:
+            raise ModelProviderError(
+                "deterministic recoverable evaluation provider failure"
             )
-        output = Path(output_dir)
-        write_json(
-            output / "run_manifest.json",
-            {
-                "task_id": output.name,
-                "run_generation": run_generation,
-                "status": "failed",
-                "warning_codes": [],
-                "counts": {
-                    "chunks": 1,
-                    "chunks_failed": 1,
-                    "validated_requirements": 0,
-                    "quarantined_requirements": 0,
-                    "model_items_rejected": 0,
-                },
-                "zero_result_reason": None,
-                "error_code": "ModelProviderError",
-            },
-        )
-        raise ModelProviderError("synthetic recoverable evaluation failure")
+        return self.delegate.generate(request)
 
 
 def _pipeline_runner_for(scenario: str):
-    if scenario == "recoverable_failure_then_success":
-        return _RecoverableFailureThenSuccessRunner()
+    if scenario == "production_provider_failure_then_success":
+        model = _FailOnceModel()
+        return PipelineRunner(model_client_factory=lambda **_: model)
     return PipelineRunner()
 
 

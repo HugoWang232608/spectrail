@@ -125,7 +125,9 @@ python -m spectrail evaluate-agent eval/agent/cases \
 ```
 
 The command exits non-zero when any frozen final state, counter, tool sequence,
-attempt status, or authoritative event sequence differs. Agent task traces are
+attempt status/error code, or authoritative event sequence differs. CI runs this
+as an independent gate and uploads `outputs/agent-evaluation` with the evaluation
+reports. Agent task traces are
 available read-only at
 `GET /api/tasks/{task_id}/agent/trace?expected_run_generation={generation}`
 and are rendered by the Review UI when an Agent task is loaded.

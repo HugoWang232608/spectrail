@@ -3,7 +3,7 @@
   "name": "sample_srs_agent_failure_retry",
   "document": "../../../../docs/sample_srs.md",
   "planner_fixture": "../../../../fixtures/agent/sample_srs_agent_failure_retry_full.json",
-  "pipeline_scenario": "recoverable_failure_then_success",
+  "pipeline_scenario": "production_provider_failure_then_success",
   "model_mode": "mock",
   "expected": {
     "outcome": "completed",
@@ -25,6 +25,10 @@
     "attempt_statuses": [
       "failed",
       "completed"
+    ],
+    "attempt_error_codes": [
+      "ModelProviderError",
+      null
     ],
     "event_types": [
       "profile",

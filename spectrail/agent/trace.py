@@ -146,8 +146,27 @@ def _validate_snapshot_consistency(
 ) -> None:
     if not events or events[0].event_type != "profile":
         _snapshot_recovery_required("Agent trace does not start with profile")
-    if events[-1].event_type not in {"finish", "error"}:
+    terminal_event = events[-1]
+    if terminal_event.event_type not in {"finish", "error"}:
         _snapshot_recovery_required("Agent trace has no terminal event")
+    if terminal_event.event_type == "error":
+        if final_state.outcome != "failed":
+            _snapshot_recovery_required(
+                "Agent error terminal differs from final outcome"
+            )
+        if terminal_event.payload.get("error_code") != final_state.reason:
+            _snapshot_recovery_required(
+                "Agent error terminal differs from final reason"
+            )
+    else:
+        if terminal_event.payload.get("outcome") != final_state.outcome:
+            _snapshot_recovery_required(
+                "Agent finish terminal differs from final outcome"
+            )
+        if terminal_event.payload.get("reason") != final_state.reason:
+            _snapshot_recovery_required(
+                "Agent finish terminal differs from final reason"
+            )
     if final_state.steps_used != sum(
         event.event_type == "decision" for event in events
     ):
@@ -162,6 +181,13 @@ def _validate_snapshot_consistency(
         _snapshot_recovery_required("Agent tool count differs from events")
     if final_state.pipeline_attempts != len(attempts):
         _snapshot_recovery_required("Agent attempt count differs from artifacts")
+    last_pipeline_status = (
+        attempts[-1].pipeline_status if attempts else None
+    )
+    if final_state.final_pipeline_status != last_pipeline_status:
+        _snapshot_recovery_required(
+            "Agent final pipeline status differs from last attempt"
+        )
 
 
 def _read_snapshot_events(

@@ -18,6 +18,17 @@ RUN_REQUIREMENT_EXTRACTION_DESCRIPTION = (
     "chunking arguments."
 )
 
+RECOVERABLE_PIPELINE_FAILURE_CODES = frozenset(
+    {
+        "ALL_CHUNKS_FAILED",
+        "ModelPayloadContractError",
+        "ModelProviderError",
+        "ModelResponseParseError",
+        "NO_VALID_MODEL_ITEMS",
+    }
+)
+TERMINAL_PIPELINE_FAILURE_CODES = frozenset({"NO_EXTRACTABLE_CONTENT"})
+
 
 class RunRequirementExtractionArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -87,13 +98,22 @@ class RunRequirementExtractionTool:
             validation_policy=context.policy.validation_policy,
             evidence_policy=context.policy.evidence_policy,
         )
-        result = self.pipeline_runner.extract_within_transaction(
-            context.document_path,
-            context.task_dir,
-            run_generation=context.run_generation,
-            config=config,
-            parsed_document=context.parsed_document,
-        )
+        try:
+            result = self.pipeline_runner.extract_within_transaction(
+                context.document_path,
+                context.task_dir,
+                run_generation=context.run_generation,
+                config=config,
+                parsed_document=context.parsed_document,
+            )
+        except Exception:
+            failed_result = _observable_failed_result(
+                context,
+                attempt=attempt,
+            )
+            if failed_result is not None:
+                return failed_result
+            raise
         manifest = read_json(result.manifest_path)
         counts = manifest.get("counts", {})
         pipeline_status = manifest.get("status", result.status)
@@ -127,3 +147,54 @@ class RunRequirementExtractionTool:
                 or "PARTIAL_CHUNK_FAILURE" in warning_codes
             ),
         )
+
+
+def _observable_failed_result(
+    context: AgentExecutionContext,
+    *,
+    attempt: int,
+) -> ToolResult | None:
+    manifest_path = context.task_dir / "run_manifest.json"
+    if not manifest_path.is_file():
+        return None
+    manifest = read_json(manifest_path)
+    if (
+        manifest.get("status") != "failed"
+        or manifest.get("run_generation") != context.run_generation
+    ):
+        return None
+    error_code = manifest.get("error_code")
+    if not isinstance(error_code, str):
+        return None
+    if error_code in RECOVERABLE_PIPELINE_FAILURE_CODES:
+        retryable = True
+    elif error_code in TERMINAL_PIPELINE_FAILURE_CODES:
+        retryable = False
+    else:
+        return None
+
+    counts = manifest.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    return ToolResult(
+        tool="run_requirement_extraction",
+        status="failed",
+        summary="Deterministic requirement extraction attempt failed.",
+        metrics={
+            "attempt": attempt,
+            "pipeline_status": "failed",
+            "validated_requirements": counts.get("validated_requirements", 0),
+            "quarantined_requirements": counts.get("quarantined_requirements", 0),
+            "chunks": counts.get("chunks", 0),
+            "chunks_failed": counts.get("chunks_failed", 0),
+            "model_items_rejected": counts.get("model_items_rejected", 0),
+            "zero_result_reason": manifest.get("zero_result_reason"),
+            "readable_final_artifact": (
+                context.task_dir / "exports" / "reqir.json"
+            ).is_file(),
+        },
+        warning_codes=list(manifest.get("warning_codes", [])),
+        artifacts={"manifest": manifest_path.as_posix()},
+        error_code=error_code,
+        retryable=retryable,
+    )

@@ -300,14 +300,29 @@ class AgentRunner:
                     ),
                 )
             except Exception as exc:
-                self._publish_failed_attempt(
-                    trace,
-                    output,
-                    state,
-                    decision,
-                    started_at,
-                    exc,
+                error_observation = PlannerObservation(
+                    tool=decision.tool,
+                    status="failed",
+                    error_code=_safe_error_code(exc),
+                    retryable=False,
                 )
+                trace.append(
+                    "tool_result",
+                    step=state.step_count,
+                    tool=decision.tool,
+                    payload={
+                        "observation": error_observation.model_dump(mode="json")
+                    },
+                )
+                if decision.tool == "run_requirement_extraction":
+                    self._publish_failed_attempt(
+                        trace,
+                        output,
+                        state,
+                        decision,
+                        started_at,
+                        exc,
+                    )
                 self._fail(
                     trace,
                     state,

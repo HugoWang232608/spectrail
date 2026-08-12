@@ -220,6 +220,23 @@ one unchanged run generation, one reused `ParsedDocument`, and two
 generation-bound attempt summaries. A production extraction retry uses the
 same public within-transaction pipeline entry.
 
+## M6.4.1 recoverable failure observations
+
+The extraction tool boundary now converts only explicitly classified pipeline
+failures with a generation-matching failed manifest into a failed
+`ToolResult`. Provider, response parsing, payload contract, all-chunks-failed,
+and no-valid-items failures are retryable; no-extractable-content is observable
+but terminal. The Planner receives that observation and remains responsible
+for choosing retry or finish. Transaction violations, evidence or generation
+identity mismatches, artifact/trace corruption, policy failures, and unknown
+exceptions still fail the Agent run immediately.
+
+Tool exceptions also have distinct trace semantics. Every invocation can
+publish a failed tool-result event, but only
+`run_requirement_extraction` publishes an `AgentAttemptSummary`. An inspection
+failure therefore cannot republish or overwrite the immutable summary for the
+preceding extraction attempt.
+
 ## Roadmap
 
 - [x] M6.0 — freeze backend, frontend, evaluation, PDF corpus, and visual gates
@@ -229,5 +246,6 @@ same public within-transaction pipeline entry.
 - [x] M6.3 — bounded AgentRunner, frozen policy, budgets, finish lattice, and
   durable trace events
 - [x] M6.4 — inspect, same-generation extraction retry, and replanning
+- [x] M6.4.1 — observable recoverable extraction failures and attempt isolation
 - [ ] M6.5 — CLI/API orchestration mode
 - [ ] M6.6 — deterministic Agent evaluation gate and read-only trace UI

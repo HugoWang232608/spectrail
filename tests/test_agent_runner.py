@@ -12,6 +12,8 @@ from spectrail.agent.runner import AgentRunner
 from spectrail.agent.trace import AgentTraceRecoveryError, AgentTraceWriter
 from spectrail.core.io import read_json
 from spectrail.core.io import write_json
+from spectrail.llm.errors import ModelProviderError
+from spectrail.llm.mock_model import MockModel
 from spectrail.llm.recorded_agent_planner import RecordedAgentPlanner
 from spectrail.llm.request_profile import ModelRequestProfile
 from spectrail.pipeline import PipelineConfig, PipelineResult
@@ -110,8 +112,10 @@ class StaticPlanner:
 
     def __init__(self, decisions):
         self.decisions = list(decisions)
+        self.inputs = []
 
     def decide(self, planner_input):
+        self.inputs.append(planner_input)
         return self.decisions.pop(0)
 
     def assert_consumed(self):
@@ -444,3 +448,193 @@ def test_agent_runner_inspects_and_replans_within_one_generation(tmp_path: Path)
     )
     assert inspect_result["payload"]["observation"]["metrics"]["chunk_prompt_over_budget"] is True
     assert read_json(output / "run_manifest.json")["run_generation"] == 7
+
+
+class FailOnceModel:
+    model_mode = "mock"
+
+    def __init__(self) -> None:
+        self.delegate = MockModel()
+        self.calls = 0
+
+    def generate(self, request):
+        self.calls += 1
+        if self.calls == 1:
+            raise ModelProviderError("synthetic recoverable provider failure")
+        return self.delegate.generate(request)
+
+
+def test_failed_extraction_becomes_observation_and_can_retry(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output = tmp_path / "agent_failed_retry"
+    model = FailOnceModel()
+    monkeypatch.setattr(
+        "spectrail.pipeline.runner.create_model_client",
+        lambda **kwargs: model,
+    )
+    planner = StaticPlanner(
+        [
+            InvokeToolDecision(
+                action="invoke_tool",
+                tool="run_requirement_extraction",
+                arguments={"chunking_mode": "auto"},
+                reason="Run extraction.",
+            ),
+            InvokeToolDecision(
+                action="invoke_tool",
+                tool="run_requirement_extraction",
+                arguments={
+                    "chunking_mode": "auto",
+                    "max_rendered_prompt_chars": 16000,
+                },
+                reason="Retry the recoverable provider failure.",
+            ),
+            FinishDecision(
+                action="finish",
+                outcome="completed",
+                reason="The retry completed cleanly.",
+            ),
+        ]
+    )
+    runner = AgentRunner(
+        planner=planner,
+        policy=_policy(),
+        pipeline_config=PipelineConfig(model_mode="mock"),
+    )
+
+    result = runner.run("docs/sample_srs.md", output, run_generation=8)
+
+    failed_observation = planner.inputs[1].latest_observation
+    assert failed_observation is not None
+    assert failed_observation.status == "failed"
+    assert failed_observation.error_code == "ModelProviderError"
+    assert failed_observation.retryable is True
+    assert failed_observation.metrics["pipeline_status"] == "failed"
+    assert result.final_state.outcome == "completed"
+    assert result.final_state.pipeline_attempts == 2
+    assert read_json(output / "agent" / "attempts" / "attempt_0001.json")[
+        "pipeline_status"
+    ] == "failed"
+    assert read_json(output / "agent" / "attempts" / "attempt_0002.json")[
+        "pipeline_status"
+    ] == "completed"
+
+
+def test_inspect_failure_does_not_overwrite_extraction_attempt(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output = tmp_path / "agent_inspect_failure"
+    policy = AgentPolicy(
+        allowed_tools=[
+            "inspect_extraction_result",
+            "run_requirement_extraction",
+        ],
+        evidence_policy="structured_if_available",
+        validation_policy="strict",
+        allow_chunking_modes=["auto", "force"],
+    )
+    planner = StaticPlanner(
+        [
+            InvokeToolDecision(
+                action="invoke_tool",
+                tool="run_requirement_extraction",
+                arguments={"chunking_mode": "auto"},
+                reason="Run extraction.",
+            ),
+            InvokeToolDecision(
+                action="invoke_tool",
+                tool="inspect_extraction_result",
+                arguments={},
+                reason="Inspect the extraction artifact.",
+            ),
+        ]
+    )
+
+    def fail_inspection(self, context, arguments):
+        raise ValueError("AGENT_INSPECTION_GENERATION_MISMATCH")
+
+    monkeypatch.setattr(
+        "spectrail.agent.runner.InspectExtractionResultTool.invoke",
+        fail_inspection,
+    )
+
+    with pytest.raises(AgentError, match="AGENT_INSPECTION_GENERATION_MISMATCH"):
+        AgentRunner(
+            planner=planner,
+            policy=policy,
+            pipeline_config=PipelineConfig(model_mode="mock"),
+        ).run("docs/sample_srs.md", output, run_generation=9)
+
+    attempts = sorted((output / "agent" / "attempts").glob("*.json"))
+    assert [path.name for path in attempts] == ["attempt_0001.json"]
+    assert read_json(attempts[0])["pipeline_status"] == "completed"
+    events = [
+        read_json(path)
+        for path in sorted((output / "agent" / "events").glob("*.json"))
+    ]
+    inspect_failure = next(
+        event
+        for event in events
+        if event["event_type"] == "tool_result"
+        and event["tool"] == "inspect_extraction_result"
+    )
+    assert inspect_failure["payload"]["observation"]["error_code"] == (
+        "AGENT_INSPECTION_GENERATION_MISMATCH"
+    )
+
+
+class HardFailurePipelineRunner:
+    def extract_within_transaction(
+        self,
+        document_path,
+        output_dir,
+        *,
+        run_generation,
+        **kwargs,
+    ):
+        output = Path(output_dir)
+        write_json(
+            output / "run_manifest.json",
+            {
+                "task_id": output.name,
+                "run_generation": run_generation,
+                "status": "failed",
+                "warning_codes": [],
+                "counts": {},
+                "error_code": "PREPARSED_DOCUMENT_MISMATCH",
+            },
+        )
+        raise ValueError("PREPARSED_DOCUMENT_MISMATCH")
+
+
+def test_unallowlisted_pipeline_failure_remains_hard_failure(tmp_path: Path):
+    output = tmp_path / "agent_hard_failure"
+    planner = StaticPlanner(
+        [
+            InvokeToolDecision(
+                action="invoke_tool",
+                tool="run_requirement_extraction",
+                arguments={"chunking_mode": "auto"},
+                reason="Run extraction.",
+            ),
+            FinishDecision(
+                action="finish",
+                outcome="failed",
+                reason="This must not be reached.",
+            ),
+        ]
+    )
+
+    with pytest.raises(AgentError, match="PREPARSED_DOCUMENT_MISMATCH"):
+        AgentRunner(
+            planner=planner,
+            policy=_policy(),
+            pipeline_config=PipelineConfig(model_mode="mock"),
+            pipeline_runner=HardFailurePipelineRunner(),
+        ).run("docs/sample_srs.md", output, run_generation=10)
+
+    assert len(planner.inputs) == 1
+    assert read_json(output / "agent" / "final_state.json")["outcome"] == "failed"

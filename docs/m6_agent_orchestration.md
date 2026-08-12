@@ -87,11 +87,53 @@ registered argument-model contract, and validates that the returned
 `ToolResult.tool` matches the invoked name. `PlannerObservation` intentionally
 removes internal artifact paths and free-text summaries.
 
+## M6.2 planner and transport contracts
+
+The second implementation slice adds:
+
+```text
+AgentPlannerInput
+  -> versioned planner prompt
+  -> CompletionTransport
+  -> strict agent_decision_v1 parser
+
+canonical structured planner input
+  -> request fingerprint
+  -> RecordedAgentPlanner exact-step replay
+```
+
+`AgentPolicy v1` is frozen and uses immutable tool/chunking allowlists. It
+freezes `fail_fast=false`, requires positive budgets, caps extraction attempts
+at the product hard limit of four, and must validate every allowed tool against
+the active registry.
+
+Planner decisions are discriminated `invoke_tool` or `finish` objects. The
+parser accepts one strict JSON object only: Markdown fences, prose, duplicate
+keys, non-JSON numeric constants, extra fields, unknown actions, and reasons
+over 512 Unicode code points are rejected. This parser is independent from the
+ReqIR response parser.
+
+The planner request fingerprint binds the prompt version, safe model request
+profile, document profile and estimator identity, frozen policy, sorted tool
+contracts, latest path-free observation, structured history, and budget.
+Timestamps, artifact paths, display summaries, and planner reasons cannot enter
+the replay identity.
+
+`fixtures/agent/sample_srs_agent.json` demonstrates a strict two-step clean
+replay. A fingerprint mismatch, exhausted fixture, invalid decision, or unused
+required step fails closed.
+
+The OpenAI-compatible provider code now lives in a generic
+`CompletionTransport`. `OpenAICompatibleModel` remains the ReqIR-compatible
+wrapper, while `AgentPlannerClient` uses the same transport with its own prompt
+and parser. After M6.2, the complete backend suite passes with 506 tests and one
+skip.
+
 ## Roadmap
 
 - [x] M6.0 — freeze backend, frontend, evaluation, PDF corpus, and visual gates
 - [x] M6.1 — DocumentProfile v1 and internal Tool Registry contracts
-- [ ] M6.2 — typed planner decisions, strict Recorded Planner replay, and LLM
+- [x] M6.2 — typed planner decisions, strict Recorded Planner replay, and LLM
   completion transport separation
 - [ ] M6.3 — bounded AgentRunner, frozen policy, budgets, finish lattice, and
   durable trace events

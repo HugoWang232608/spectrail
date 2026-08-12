@@ -1,0 +1,37 @@
+{
+  "schema_version": "agent_planner_fixture_v1",
+  "metadata": {
+    "planner_prompt_version": "agent_planner_v1",
+    "request_profile": {
+      "provider_adapter": "openai_compatible_v1",
+      "provider_endpoint_id": "recorded-agent",
+      "model_name": "recorded-agent-v1",
+      "temperature": 0.0,
+      "response_format": {
+        "type": "json_object"
+      },
+      "safe_request_options": {}
+    }
+  },
+  "steps": [
+    {
+      "request_fingerprint": "9e8ed37084cc62dd00518181102709dee4f41deb7b966e2823d9a9b7fde8d26f",
+      "response": {
+        "action": "invoke_tool",
+        "tool": "run_requirement_extraction",
+        "arguments": {
+          "chunking_mode": "auto"
+        },
+        "reason": "Start with the bounded default extraction strategy."
+      }
+    },
+    {
+      "request_fingerprint": "acea130bf10d3b1c4e6f76211a2d43d80e63b907a75b6580147cdcb23f887bfb",
+      "response": {
+        "action": "finish",
+        "outcome": "completed",
+        "reason": "The deterministic extraction observation is complete and readable."
+      }
+    }
+  ]
+}

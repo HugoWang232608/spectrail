@@ -167,6 +167,15 @@ def test_planner_observation_drops_internal_paths_and_free_text():
     assert "/tmp/private" not in observation.model_dump_json()
 
 
+def test_planner_observation_rejects_artifact_paths_in_metrics():
+    with pytest.raises(ValueError, match="artifact paths"):
+        PlannerObservation(
+            tool="echo",
+            status="ok",
+            metrics={"manifest": "/tmp/private/run_manifest.json"},
+        )
+
+
 def test_profile_document_tool_has_no_planner_controlled_arguments():
     context = _context()
     registry = ToolRegistry([ProfileDocumentTool()])

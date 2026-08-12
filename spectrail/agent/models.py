@@ -13,6 +13,8 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _WARNING_CODE_RE = re.compile(
     r"^[A-Z][A-Z0-9_]*(?::[a-z][a-z0-9_]*=-?\d+(?:,[a-z][a-z0-9_]*=-?\d+)*)?$"
 )
+_METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_ABSOLUTE_PATH_RE = re.compile(r"^(?:/|[A-Za-z]:[\\/]|file://)")
 
 
 class AgentModel(BaseModel):
@@ -89,6 +91,8 @@ class DocumentProfile(AgentModel):
 
 
 class ToolSpec(AgentModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=64)
     description: str = Field(min_length=1, max_length=512)
     side_effects: Literal["none", "task_artifacts"]
@@ -117,6 +121,11 @@ class ToolResult(AgentModel):
             raise ValueError("invalid tool warning code")
         return value
 
+    @field_validator("metrics")
+    @classmethod
+    def validate_metrics(cls, value: dict[str, MetricValue]) -> dict[str, MetricValue]:
+        return _validate_planner_safe_metrics(value)
+
 
 class PlannerObservation(AgentModel):
     schema_version: Literal["planner_observation_v1"] = "planner_observation_v1"
@@ -126,6 +135,11 @@ class PlannerObservation(AgentModel):
     warning_codes: list[str] = Field(default_factory=list, max_length=64)
     error_code: str | None = Field(default=None, max_length=128)
     retryable: bool = False
+
+    @field_validator("metrics")
+    @classmethod
+    def validate_metrics(cls, value: dict[str, MetricValue]) -> dict[str, MetricValue]:
+        return _validate_planner_safe_metrics(value)
 
     @classmethod
     def from_tool_result(cls, result: ToolResult) -> "PlannerObservation":
@@ -145,3 +159,19 @@ class AgentRunState(AgentModel):
     tool_invocations: int = Field(default=0, ge=0)
     pipeline_attempts: int = Field(default=0, ge=0)
     latest_observation: PlannerObservation | None = None
+
+
+def _validate_planner_safe_metrics(
+    value: dict[str, MetricValue],
+) -> dict[str, MetricValue]:
+    if len(value) > 64:
+        raise ValueError("tool metrics exceed the bounded key count")
+    for key, item in value.items():
+        if _METRIC_KEY_RE.fullmatch(key) is None:
+            raise ValueError("tool metric keys must be stable snake_case identifiers")
+        if isinstance(item, str):
+            if len(item) > 256:
+                raise ValueError("tool metric string exceeds the bounded length")
+            if _ABSOLUTE_PATH_RE.match(item):
+                raise ValueError("tool metrics must not contain artifact paths")
+    return value

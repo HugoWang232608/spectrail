@@ -148,7 +148,7 @@ def test_live_response_uses_request_prompt_version(monkeypatch):
         endpoint_id="test-endpoint",
     )
     monkeypatch.setattr(
-        model,
+        model.transport,
         "_complete",
         lambda *, body, config: ('{"items": []}', None),
     )
@@ -156,6 +156,7 @@ def test_live_response_uses_request_prompt_version(monkeypatch):
     request.metadata["prompt_version"] = "reqir_extraction_v2_chunked"
     response = model.generate(request)
     assert response.metadata["prompt_version"] == "reqir_extraction_v2_chunked"
+    assert response.metadata["model_name"] == "test-model"
     assert response.model_name == "test-model"
 
 

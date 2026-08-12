@@ -62,12 +62,15 @@ class ToolRegistry:
 
     def get_spec(self, name: str) -> ToolSpec:
         try:
-            return self._specs[name]
+            return self._specs[name].model_copy(deep=True)
         except KeyError as exc:
             raise ToolNotFoundError(f"unknown tool: {name}") from exc
 
     def specs(self) -> list[ToolSpec]:
-        return [self._specs[name] for name in sorted(self._specs)]
+        return [
+            self._specs[name].model_copy(deep=True)
+            for name in sorted(self._specs)
+        ]
 
     def invoke(
         self,

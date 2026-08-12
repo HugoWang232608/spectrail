@@ -7,14 +7,9 @@ from typing import Literal, Protocol, TypeVar
 from pydantic import BaseModel
 
 from spectrail.agent.models import DocumentProfile, ToolResult
+from spectrail.agent.policy import AgentPolicy
 from spectrail.evidence.models import EvidenceIndex
 from spectrail.parsers.base import ParsedDocument
-
-
-class AgentPolicyContract(Protocol):
-    """Structural placeholder until the frozen AgentPolicy lands in M6.3."""
-
-    schema_version: str
 
 
 @dataclass(frozen=True)
@@ -23,7 +18,7 @@ class AgentExecutionContext:
     run_generation: int
     task_dir: Path
     document_path: Path
-    policy: AgentPolicyContract
+    policy: AgentPolicy
     parsed_document: ParsedDocument
     evidence_index: EvidenceIndex
     document_profile: DocumentProfile

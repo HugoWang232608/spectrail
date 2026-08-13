@@ -304,6 +304,34 @@ def test_table_evidence_requires_table_document_block():
         validate_evidence_index_against_parsed_document(index, inconsistent)
 
 
+def test_unavailable_expected_table_capability_does_not_require_table_block():
+    parsed, index = _parsed_table_with_duplicate_and_empty_occurrences()
+    paragraph = parsed.blocks[0].model_copy(update={"type": "paragraph"})
+    expected_only = index.model_copy(
+        update={
+            "blocks": [
+                index.blocks[0].model_copy(
+                    update={
+                        "table_id": None,
+                        "table_row_start": None,
+                        "table_row_end": None,
+                        "cell_ids": [],
+                        "available_capabilities": ["text_range"],
+                    }
+                )
+            ],
+            "tables": [],
+            "cells": [],
+            "cell_occurrences": [],
+        }
+    )
+
+    validate_evidence_index_against_parsed_document(
+        expected_only,
+        replace(parsed, blocks=[paragraph]),
+    )
+
+
 def test_pipeline_rejects_table_evidence_type_mismatch_before_model_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

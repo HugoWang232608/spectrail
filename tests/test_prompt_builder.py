@@ -34,6 +34,8 @@ def test_reqir_prompt_requires_numeric_confidence():
     )
 
     assert "confidence is numeric 0.0..1.0" in prompt
+    assert 'exactly one JSON object with this shape: {"items":[...]}' in prompt
+    assert "Do not return a bare array" in prompt
 
 
 def test_reqir_v4_prompt_renders_table_cell_map_without_changing_canonical_text():

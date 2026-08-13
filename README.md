@@ -443,8 +443,11 @@ The checked evaluation suite currently covers the original single-pass sample, a
 
 The post-release v0.9 real-world Agent study uses a separate SHA-locked external
 corpus and is intentionally not a CI quality gate. Its first production-path
-run exposed live-provider contract blockers before a valid fixed-vs-Agent
-quality comparison could be made. See the
+run exposed live-provider JSON contract blockers and a PDF Evidence validation
+defect. v0.9.1 repairs those paths without relaxing strict validation; the same
+short live case now completes in fixed mode and in Agent mode after an observed
+inspect-and-retry sequence. The full paired corpus and human semantic review
+remain outstanding. See the
 [real-world Agent validation report](docs/evaluations/v0.9-real-world-agent.md)
 and the reproducible manifest in `eval/real_world_agent_v1/manifest.json`.
 

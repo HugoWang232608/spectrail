@@ -72,7 +72,7 @@ def test_agent_runner_completes_clean_recorded_run_with_durable_trace(tmp_path: 
         "mode": "agent",
         "planner_mode": "recorded",
         "planner_model": "recorded-agent-v1",
-        "planner_prompt_version": "agent_planner_v1",
+        "planner_prompt_version": "agent_planner_v2_json_contract",
         "policy_schema_version": "agent_policy_v1",
         "profile_schema_version": "document_profile_v1",
         "steps_used": 2,

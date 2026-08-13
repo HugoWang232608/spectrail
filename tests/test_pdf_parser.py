@@ -1734,6 +1734,7 @@ def test_pdf_v2_rejected_table_marks_only_related_mixed_page_blocks(
     assert evidence_by_text["Geometry unavailable"].available_capabilities == [
         "text_range"
     ]
+    assert ensure_evidence_index(source_path, parsed) == index
 
 
 @pytest.mark.parametrize(

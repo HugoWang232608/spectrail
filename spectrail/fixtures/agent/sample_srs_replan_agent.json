@@ -1,7 +1,7 @@
 {
   "schema_version": "agent_planner_fixture_v1",
   "metadata": {
-    "planner_prompt_version": "agent_planner_v1",
+    "planner_prompt_version": "agent_planner_v2_json_contract",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",
       "provider_endpoint_id": "recorded-agent-replan",
@@ -15,7 +15,7 @@
   },
   "steps": [
     {
-      "request_fingerprint": "354f61251e8bb7ba540d17e1439923126a665cfebcd4fa4f611e4f507875d2ed",
+      "request_fingerprint": "485a3e9967f9d060632f1c82d80ea2fc4aabb22179f6ac7387c537cd965d7099",
       "response": {
         "action": "invoke_tool",
         "tool": "run_requirement_extraction",
@@ -26,7 +26,7 @@
       }
     },
     {
-      "request_fingerprint": "134f0ea0cb2d88ae7492e581f4267dbc169e5250a8c04855ee42d3ff8fd570bc",
+      "request_fingerprint": "167ea3f588d3755343cf4023d8c05e21fa814b5616c0ddb3828a86e4f6e1afc8",
       "response": {
         "action": "invoke_tool",
         "tool": "inspect_extraction_result",
@@ -35,7 +35,7 @@
       }
     },
     {
-      "request_fingerprint": "8a3aab95c37b718d76b4a0d485d8f0bff9d917e43bccf9dfb1eb39d304a525fd",
+      "request_fingerprint": "da91074c082c2ff89776af1eae8975d464951ca95f55727b3f07266eb82b9f05",
       "response": {
         "action": "invoke_tool",
         "tool": "run_requirement_extraction",
@@ -47,7 +47,7 @@
       }
     },
     {
-      "request_fingerprint": "f010ad24ed60d55313fe0e55a6bb1c31fec51fa77f242e044c18c46b54d8d202",
+      "request_fingerprint": "ffca8ed71782842e02f60580880f3c4467802539ccab1ea0debaa48fd202eff5",
       "response": {
         "action": "finish",
         "outcome": "completed",

@@ -42,7 +42,6 @@ def validate_evidence_index_against_parsed_document(
             or evidence.table_row_start is not None
             or evidence.table_row_end is not None
             or bool(evidence.cell_ids)
-            or "table_cell" in evidence.expected_capabilities
             or "table_cell" in evidence.available_capabilities
         )
         if has_table_evidence and block.type != "table":

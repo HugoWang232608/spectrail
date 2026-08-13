@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Protocol
 
 
@@ -25,6 +25,7 @@ SECRET_KEY_FRAGMENTS = (
     "secret",
     "access_token",
 )
+JSON_OBJECT_RESPONSE_FORMAT: dict[str, str] = {"type": "json_object"}
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,15 @@ class ModelRequestProfile:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def require_json_object_response(
+    profile: ModelRequestProfile,
+) -> ModelRequestProfile:
+    """Apply the portable OpenAI-compatible JSON-object contract by default."""
+    if profile.response_format is not None:
+        return profile
+    return replace(profile, response_format=dict(JSON_OBJECT_RESPONSE_FORMAT))
 
 
 class ProviderRequestAdapter(Protocol):

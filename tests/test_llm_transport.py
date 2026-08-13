@@ -28,7 +28,7 @@ def test_openai_transport_returns_raw_completion_and_sanitized_metadata(monkeypa
             model_name="test-model",
             response_format={"type": "json_object"},
         ),
-        metadata={"prompt_version": "agent_planner_v1"},
+        metadata={"prompt_version": "agent_planner_v2_json_contract"},
     )
 
     response = transport.complete(request)
@@ -38,7 +38,7 @@ def test_openai_transport_returns_raw_completion_and_sanitized_metadata(monkeypa
     assert response.usage == {"total_tokens": 5}
     assert response.metadata == {
         "provider_endpoint_id": "test-endpoint",
-        "prompt_version": "agent_planner_v1",
+        "prompt_version": "agent_planner_v2_json_contract",
         "tls_verify": True,
     }
     assert "test-key" not in repr(response)

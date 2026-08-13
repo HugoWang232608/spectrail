@@ -12,7 +12,7 @@ from spectrail.evidence.models import (
 from spectrail.llm.base import ModelRequest
 
 
-PROMPT_VERSION = "reqir_extraction_v10_table_row_evidence_v5"
+PROMPT_VERSION = "reqir_extraction_v11_json_object_contract"
 CHUNKED_PROMPT_VERSION = PROMPT_VERSION
 
 
@@ -47,7 +47,8 @@ def build_reqir_prompt(request: ModelRequest, *, max_blocks: int | None = None) 
     table_overlap_contract = "- A table source_quote may select part of a cell's text.\n"
     return (
         "Extract software requirements into ReqIR JSON.\n"
-        "Return JSON only with top-level items.\n\n"
+        'Return exactly one JSON object with this shape: {"items":[...]}. '
+        "Do not return a bare array, Markdown fences, or prose.\n\n"
         "Item fields: title, type, ears_pattern, statement, subject, response, "
         "source_block_id, source_quote, confidence, tags. "
         f"{table_item_contract}"

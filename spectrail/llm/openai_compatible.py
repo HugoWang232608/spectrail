@@ -9,7 +9,10 @@ from spectrail.llm.openai_compatible_transport import (
     _load_dotenv,
 )
 from spectrail.llm.prompt_builder import PROMPT_VERSION, build_reqir_prompt
-from spectrail.llm.request_profile import ModelRequestProfile
+from spectrail.llm.request_profile import (
+    ModelRequestProfile,
+    require_json_object_response,
+)
 from spectrail.llm.response_parser import parse_model_response
 from spectrail.llm.transport import CompletionRequest
 
@@ -84,9 +87,11 @@ class OpenAICompatibleModel:
         *,
         insecure: bool = False,
     ) -> ModelRequestProfile:
-        return self.transport.resolve_request_profile(
-            explicit_profile,
-            insecure=insecure,
+        return require_json_object_response(
+            self.transport.resolve_request_profile(
+                explicit_profile,
+                insecure=insecure,
+            )
         )
 
     def _load_config(self, *, insecure: bool = False) -> dict[str, Any]:

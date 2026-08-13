@@ -1,7 +1,7 @@
 {
   "schema_version": "agent_planner_fixture_v1",
   "metadata": {
-    "planner_prompt_version": "agent_planner_v1",
+    "planner_prompt_version": "agent_planner_v2_json_contract",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",
       "provider_endpoint_id": "recorded-agent-failure-retry",
@@ -15,7 +15,7 @@
   },
   "steps": [
     {
-      "request_fingerprint": "121123530de429f2ce5f448d71792592ec1ae40c714a82f4150cf8f065774bda",
+      "request_fingerprint": "134767e76ef14a7e7f44e32f5f8c2a71e3feff641f47f4af49dbfd07ac18d813",
       "response": {
         "action": "invoke_tool",
         "tool": "run_requirement_extraction",
@@ -26,7 +26,7 @@
       }
     },
     {
-      "request_fingerprint": "9469d0c9687164cad67d1b20a1d70c3508b017e7b8ca91d7547a4e1ae6d52a90",
+      "request_fingerprint": "0800b63704fb9181db2bfb9ee35c04512ea022a4d5e47496b109faa5793a2b74",
       "response": {
         "action": "invoke_tool",
         "tool": "run_requirement_extraction",
@@ -38,7 +38,7 @@
       }
     },
     {
-      "request_fingerprint": "617607a97f3df30ab9b46ce4edf5c3c8b265f375d72f480695005fe6c2bd410a",
+      "request_fingerprint": "a7d2b6d1693cdfa75913431973a5228b2d33004d683720ef3c6adc83a599819a",
       "response": {
         "action": "finish",
         "outcome": "completed",

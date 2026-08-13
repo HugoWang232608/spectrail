@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -182,6 +183,11 @@ def test_planner_prompt_has_explicit_safe_sections_without_document_body_or_path
 
     assert AGENT_PLANNER_PROMPT_VERSION in prompt
     assert "SYSTEM / POLICY" in prompt
+    assert "DECISION CONTRACT" in prompt
+    assert '"schema_version":"agent_decision_v1"' in prompt
+    assert '"action":"invoke_tool"' in prompt
+    assert 'never use "args" instead of "arguments"'.lower() in prompt.lower()
+    assert 'never omit "reason"'.lower() in prompt.lower()
     assert "TOOL CONTRACTS" in prompt
     assert "DOCUMENT PROFILE (UNTRUSTED DATA)" in prompt
     assert "PREVIOUS OBSERVATION" in prompt
@@ -323,7 +329,27 @@ def test_live_agent_planner_uses_completion_transport_and_agent_parser():
     assert transport.requests[0].metadata == {
         "prompt_version": AGENT_PLANNER_PROMPT_VERSION
     }
+    assert transport.requests[0].request_profile.response_format == {
+        "type": "json_object"
+    }
 
     reqir_transport = FakeCompletionTransport('{"items": []}')
     with pytest.raises(ValueError, match="AGENT_PLANNER_RESPONSE_INVALID"):
         AgentPlannerClient(reqir_transport, planner_profile()).decide(planner_input())
+
+
+def test_live_agent_planner_defaults_to_json_object_without_overriding_explicit_format():
+    base = replace(planner_profile(), response_format=None)
+    client = AgentPlannerClient(FakeCompletionTransport("{}"), base)
+    assert client.request_profile.response_format == {"type": "json_object"}
+    assert base.response_format is None
+
+    explicit = replace(
+        base,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "decision"},
+        },
+    )
+    explicit_client = AgentPlannerClient(FakeCompletionTransport("{}"), explicit)
+    assert explicit_client.request_profile is explicit

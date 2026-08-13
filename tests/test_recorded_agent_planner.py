@@ -39,7 +39,7 @@ def _write_fixture(path: Path, fingerprints: list[str]) -> None:
             {
                 "schema_version": "agent_planner_fixture_v1",
                 "metadata": {
-                    "planner_prompt_version": "agent_planner_v1",
+                    "planner_prompt_version": "agent_planner_v2_json_contract",
                     "request_profile": planner_profile().to_dict(),
                 },
                 "steps": [

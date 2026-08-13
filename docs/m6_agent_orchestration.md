@@ -70,7 +70,7 @@ validated planner arguments
   prompt renderer over the current blocks and Evidence projection.
 
 The estimator identity is
-`reqir_prompt_renderer_v1:reqir_extraction_v10_table_row_evidence_v5`.
+`reqir_prompt_renderer_v1:reqir_extraction_v11_json_object_contract`.
 `LARGE_DOCUMENT` starts at 4,000 estimated prompt characters and
 `VERY_LARGE_DOCUMENT` at 16,000. A future estimator or threshold change must
 change the versioned contract and its tests.

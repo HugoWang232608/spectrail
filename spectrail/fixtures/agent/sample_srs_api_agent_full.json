@@ -1,7 +1,7 @@
 {
   "schema_version": "agent_planner_fixture_v1",
   "metadata": {
-    "planner_prompt_version": "agent_planner_v1",
+    "planner_prompt_version": "agent_planner_v2_json_contract",
     "request_profile": {
       "provider_adapter": "openai_compatible_v1",
       "provider_endpoint_id": "recorded-agent-api",
@@ -15,7 +15,7 @@
   },
   "steps": [
     {
-      "request_fingerprint": "de6832321e4b970defa3236fccc08baf93be4f15083954f8da41703da339ae78",
+      "request_fingerprint": "1708f61b10451aacb3ae26b6b76d23a994433c801680b3e99ac1093bca31a013",
       "response": {
         "action": "invoke_tool",
         "tool": "run_requirement_extraction",
@@ -26,7 +26,7 @@
       }
     },
     {
-      "request_fingerprint": "221998193bd285f74bc209d1fc74fd338de86f2b5ac1541dada0b0a3ff305a59",
+      "request_fingerprint": "bd208c39d91f34b9af68915d18991e96d5e65544c9d227bd5dd9666985f7fed5",
       "response": {
         "action": "finish",
         "outcome": "completed",

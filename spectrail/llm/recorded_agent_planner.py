@@ -18,7 +18,7 @@ from spectrail.llm.request_profile import ModelRequestProfile
 
 
 class RecordedPlannerMetadata(AgentModel):
-    planner_prompt_version: Literal["agent_planner_v1"]
+    planner_prompt_version: Literal["agent_planner_v2_json_contract"]
     request_profile: dict
 
 

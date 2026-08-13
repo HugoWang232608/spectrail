@@ -108,7 +108,9 @@ def test_live_explicit_profile_must_match_transport_identity():
         model_name="transport-model",
         temperature=0.2,
     )
-    assert model.resolve_request_profile(matching) is matching
+    resolved = model.resolve_request_profile(matching)
+    assert resolved.response_format == {"type": "json_object"}
+    assert matching.response_format is None
 
     with pytest.raises(ModelConfigurationError, match="LIVE_REQUEST_PROFILE_MISMATCH"):
         model.resolve_request_profile(
@@ -158,6 +160,24 @@ def test_live_response_uses_request_prompt_version(monkeypatch):
     assert response.metadata["prompt_version"] == "reqir_extraction_v2_chunked"
     assert response.metadata["model_name"] == "test-model"
     assert response.model_name == "test-model"
+
+
+def test_live_extraction_sends_json_object_response_format(monkeypatch):
+    model = OpenAICompatibleModel(
+        api_key="test-key",
+        model_name="test-model",
+        endpoint_id="test-endpoint",
+    )
+    captured = {}
+
+    def complete(*, body, config):
+        captured["body"] = body
+        return '{"items": []}', None
+
+    monkeypatch.setattr(model.transport, "_complete", complete)
+    model.generate(_request())
+
+    assert captured["body"]["response_format"] == {"type": "json_object"}
 
 
 def _request() -> ModelRequest:

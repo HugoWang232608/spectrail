@@ -449,7 +449,9 @@ short live case now completes in fixed mode and in Agent mode after an observed
 inspect-and-retry sequence. The full paired corpus and human semantic review
 remain outstanding. See the
 [real-world Agent validation report](docs/evaluations/v0.9-real-world-agent.md)
-and the reproducible manifest in `eval/real_world_agent_v1/manifest.json`.
+and the
+[v0.9.1 production follow-up](docs/evaluations/v0.9.1-real-world-agent.md).
+The reproducible manifest is in `eval/real_world_agent_v1/manifest.json`.
 
 ## Evidence review
 
